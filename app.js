@@ -266,6 +266,11 @@ async function leer(tipo, archivos, textoPegado) {
       pctMultiple: Motor.catalogos.AAC.rules.multiple_same_approach_pct });
     if (!filas.length || !filas.some((f) => f.paciente || f.procedimiento)) throw Object.assign(new Error("No se reconocieron pacientes: revisá el texto leído y completá a mano."), { texto });
     $("#texto-leido").textContent = texto;
+    if (tipo === "parte" && Lector.esEstudio(texto)) {
+      filas.forEach((f) => Object.assign(f, { incluir: false, estudio: true }));
+      aviso("Parece el informe de un estudio (TAC, ecografía…), no un procedimiento: quedó destildado.");
+    }
+    if (tipo === "parte" && !ajuste("apellido", "")) aviso("Cargá tu apellido en Valores → Mi cuenta para saber si fuiste cirujano o ayudante.");
     if (tipo === "parte" && filas.length > 1) {
       const pctMultiple = Motor.catalogos.AAC.rules.multiple_same_approach_pct;
       const lleno = (f) => Motor.estimar(d, { ...f, pct: 100, fecha: f.fecha || hoy() }).valor_estimado || 0;
@@ -294,7 +299,7 @@ function mostrarRevision(filas, titulo) {
       const x = filasRevision[i];
       div.className = "revision" + (x.incluir ? "" : " apagada");
       div.innerHTML = `<label class="check"><input type="checkbox" data-incluir ${x.incluir ? "checked" : ""}>
-        <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${fechaDudosa(x) ? ' <span class="chip vencida">revisá la fecha</span>' : ""}</label>` +
+        <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${x.estudio ? ' <span class="chip vencida">informe de estudio</span>' : ""}${fechaDudosa(x) ? ' <span class="chip vencida">revisá la fecha</span>' : ""}</label>` +
         camposPrestacion(x, false);
     };
     pintar();

@@ -4,7 +4,7 @@
     {
       "nombre": "PAMI",
       "categoria": "nacional",
-      "alias": "pami, pamiuc, inssjp, jubilados y pensionados",
+      "alias": "pami, pamiuc, pami uc, inssjp, jubilados y pensionados, instituto nacional de servicio, inss3p, inssip",
       "dias_pago": 60,
       "dia_presentacion": 15,
       "notas": "Transmitir por OME/CUP hasta el día 15 del mes siguiente; contrato: pago a 60 días de la factura (la prensa informa demoras reales de 85-105 días)."
@@ -36,7 +36,7 @@
     {
       "nombre": "SANCOR SALUD",
       "categoria": "prepaga",
-      "alias": "sancor",
+      "alias": "sancor, s.m.p.s.a, smpsa",
       "dias_pago": 60,
       "dia_presentacion": 18,
       "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
@@ -128,6 +128,14 @@
       "dias_pago": 15,
       "dia_presentacion": 15,
       "notas": "Presentación directa los días 15 y 30; paga en esas fechas (dato de 2022)."
+    },
+    {
+      "nombre": "PREVENCIÓN SALUD",
+      "categoria": "prepaga",
+      "alias": "prevencion, prevencion salud",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
     },
     {
       "nombre": "PARTICULAR",
