@@ -198,7 +198,7 @@ async function leer(tipo, archivos, textoPegado) {
       pctMultiple: Motor.catalogos.AAC.rules.multiple_same_approach_pct });
     if (!filas.length || !filas.some((f) => f.paciente || f.procedimiento)) throw Object.assign(new Error("No se reconocieron pacientes: revisá el texto leído y completá a mano."), { texto });
     $("#texto-leido").textContent = texto;
-    mostrarRevision(filas.map((f) => ({ ...f, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }), fecha: f.fecha })),
+    mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
   } catch (e) {
     aviso(e.message);
@@ -221,18 +221,24 @@ function mostrarRevision(filas, titulo) {
       const x = filasRevision[i];
       div.className = "revision" + (x.incluir ? "" : " apagada");
       div.innerHTML = `<label class="check"><input type="checkbox" data-incluir ${x.incluir ? "checked" : ""}>
-        <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${!x.fecha ? ' <span class="chip vencida">falta fecha</span>' : ""}</label>` +
+        <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${fechaDudosa(x) ? ' <span class="chip vencida">revisá la fecha</span>' : ""}</label>` +
         camposPrestacion(x, false);
     };
     pintar();
     div.addEventListener("change", (ev) => {
       if (ev.target.matches("[data-incluir]")) { filasRevision[i].incluir = ev.target.checked; div.classList.toggle("apagada", !ev.target.checked); }
-      else filasRevision[i] = { ...filasRevision[i], ...leerCampos(div, {}) };
+      else {
+        filasRevision[i] = { ...filasRevision[i], ...leerCampos(div, {}) };
+        if (ev.target.name === "fecha") filasRevision[i].fecha_leida = true;
+      }
     }, true);
     enlazarEstimacion(div, () => ({ ...filasRevision[i], ...leerCampos(div, {}) }), (p) => { filasRevision[i] = { ...filasRevision[i], ...p }; pintar(); });
     cont.appendChild(div);
   });
 }
+
+// Fecha no leída (se puso la de hoy) o de hace más de un año: casi siempre es otra fecha del documento
+const fechaDudosa = (x) => !x.fecha_leida || Math.abs(Date.now() - Date.parse(x.fecha)) > 366 * 864e5;
 
 function cerrarRevision() { $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
 
@@ -250,8 +256,11 @@ async function guardarLote() {
       await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
       n++;
     }
-    aviso(`Guardadas ${n}` + (repetidas.length ? ` · ya estaban: ${repetidas.join(", ")}` : ""));
+    const mesGuardado = elegidas[0].fecha.slice(0, 7);
+    aviso(`Guardadas ${n} en ${nombreMes(mesGuardado)}` + (repetidas.length ? ` · ya estaban: ${repetidas.join(", ")}` : ""));
     cerrarRevision();
+    $("#mes").value = mesGuardado;
+    ir("prestaciones");
   } catch (e) { aviso(e.message); }
 }
 

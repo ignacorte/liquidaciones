@@ -29,6 +29,27 @@ const Lector = (() => {
     return data.text;
   }
 
+  // Foto del celular (12 MP, a veces HEIC): girada según EXIF, a 2400 px de lado y en grises. Así el reconocimiento
+  // no se queda sin memoria en el teléfono y anda igual con cualquier formato que el navegador sepa mostrar.
+  async function preparar(archivo) {
+    let img;
+    try { img = await createImageBitmap(archivo, { imageOrientation: "from-image" }); }
+    catch {
+      img = await new Promise((ok, mal) => {
+        const i = new Image();
+        i.onload = () => ok(i); i.onerror = () => mal(new Error("No se pudo abrir la imagen. Probá con una captura de pantalla (PNG/JPG)."));
+        i.src = URL.createObjectURL(archivo);
+      });
+    }
+    const escala = Math.min(1, 2400 / Math.max(img.width, img.height));
+    const lienzo = document.createElement("canvas");
+    lienzo.width = Math.round(img.width * escala); lienzo.height = Math.round(img.height * escala);
+    const ctx = lienzo.getContext("2d");
+    ctx.filter = "grayscale(1) contrast(1.15)";
+    ctx.drawImage(img, 0, 0, lienzo.width, lienzo.height);
+    return lienzo;
+  }
+
   async function textoPDF(archivo, avance) {
     await script(PDFJS);
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
@@ -72,7 +93,7 @@ const Lector = (() => {
     const partes = [];
     for (const [i, a] of archivos.entries()) {
       avance && avance(`Leyendo ${i + 1} de ${archivos.length}…`);
-      partes.push(a.type === "application/pdf" ? await textoPDF(a, avance) : await ocr(a, avance));
+      partes.push(a.type === "application/pdf" ? await textoPDF(a, avance) : await ocr(await preparar(a), avance));
     }
     return partes.join("\n");
   }
@@ -95,31 +116,54 @@ const Lector = (() => {
   }
 
   // Etiquetas de los partes (las más largas primero, para que «diagnóstico postoperatorio» gane a «diagnóstico»)
+  // Sin etiqueta de fecha: la fecha del texto más cercana a hoy (último año), descartando nacimiento, ingreso y alta
+  function fechaProbable(texto) {
+    const hoy = Date.now();
+    const candidatas = texto.split(/\r?\n/).flatMap((linea) => {
+      const p = plano(linea);
+      return [...p.matchAll(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b|\b\d{1,2} de [a-z]+(?: de)? \d{4}\b/g)]
+        .filter((m) => !/nac|edad|ingres|egres|alta|vto|venc|emisi/.test(p.slice(Math.max(0, m.index - 25), m.index)))
+        .map((m) => fechaISO(m[0]));
+    }).filter((f) => f && Math.abs(hoy - Date.parse(f)) < 400 * 864e5);
+    return candidatas.sort((a, b) => Math.abs(hoy - Date.parse(a)) - Math.abs(hoy - Date.parse(b)))[0] || "";
+  }
+
+  // Etiquetas de los partes. En cada campo, de la más específica a la más genérica: si aparecen varias, gana la primera
+  // de la lista («cirugía realizada» le gana a «cirugía», que también aparece en «Fecha cirugía»).
   const ETIQUETAS = {
-    paciente: ["apellido y nombre", "nombre y apellido", "paciente", "nombre"],
-    dni: ["d.n.i.", "dni", "documento", "doc"],
-    obra_social: ["obra social", "cobertura", "financiador", "prepaga", "o. social", "os"],
-    afiliado: ["n° de afiliado", "nro. de afiliado", "nro de afiliado", "n° afiliado", "nro afiliado", "afiliado", "credencial"],
-    fecha: ["fecha de cirugia", "fecha de la cirugia", "fecha de intervencion", "fecha"],
-    hora: ["hora de inicio", "hora inicio", "inicio"],
+    paciente: ["apellido y nombre", "apellidos y nombres", "apellido/s y nombre/s", "nombre y apellido", "nombre del paciente",
+      "datos del paciente", "paciente", "beneficiario", "nombre"],
+    dni: ["d.n.i.", "dni", "documento", "nro. documento", "n° documento", "doc"],
+    obra_social: ["obra social", "cobertura medica", "cobertura", "financiador", "prepaga", "entidad", "o. social", "o.s.", "os"],
+    afiliado: ["n° de afiliado", "nro. de afiliado", "nro de afiliado", "n° afiliado", "nro afiliado", "nro. afiliado", "n° de beneficio",
+      "nro. beneficio", "beneficio", "credencial", "carnet", "n° socio", "nro socio", "afiliado"],
+    fecha: ["fecha de cirugia", "fecha de la cirugia", "fecha cirugia", "fecha de operacion", "fecha operacion", "fecha de intervencion",
+      "fecha intervencion", "fecha qx", "fecha del procedimiento", "fecha de la practica", "fecha"],
+    hora: ["hora de inicio", "hora inicio", "hora de comienzo", "comienzo", "inicio"],
     diagnostico: ["diagnostico postoperatorio", "diagnostico preoperatorio", "diagnostico post", "diagnostico pre", "diagnostico"],
-    procedimiento: ["procedimientos realizados", "procedimiento realizado", "cirugia realizada", "operacion realizada", "intervencion realizada",
-      "intervencion quirurgica", "practica realizada", "procedimiento", "intervencion", "operacion", "cirugia"],
+    procedimiento: ["procedimientos realizados", "procedimiento realizado", "procedimiento quirurgico", "cirugia realizada", "cirugia efectuada",
+      "operacion realizada", "operacion efectuada", "intervencion realizada", "intervencion efectuada", "intervencion quirurgica",
+      "acto quirurgico", "practica realizada", "procedimiento", "intervencion", "operacion", "cirugia"],
     cirujano: ["cirujano principal", "cirujano"],
     ayudantes: ["primer ayudante", "segundo ayudante", "1er ayudante", "2do ayudante", "ayudantes", "ayudante"],
     anestesista: ["anestesiologo", "anestesista"],
     institucion: ["institucion", "sanatorio", "clinica", "establecimiento"],
-    otros: ["edad", "sexo", "habitacion", "cama", "hc", "historia clinica", "hora de fin", "hora fin", "instrumentadora", "descripcion",
-      "hallazgos", "tecnica", "anatomia patologica", "telefono", "domicilio", "fecha de nacimiento", "plan", "medico"],
+    otros: ["edad", "sexo", "habitacion", "cama", "hc", "historia clinica", "hora de fin", "hora fin", "fin", "finalizacion", "instrumentadora",
+      "descripcion", "hallazgos", "tecnica", "anatomia patologica", "telefono", "domicilio", "fecha de nacimiento", "fecha nacimiento",
+      "fecha nac", "f. nac", "f. nacimiento", "nacimiento", "fecha de ingreso", "fecha ingreso", "fecha de egreso", "fecha de alta", "plan", "medico"],
   };
-  const LISTA = Object.entries(ETIQUETAS).flatMap(([campo, ls]) => ls.map((l) => ({ campo, l }))).sort((a, b) => b.l.length - a.l.length);
-  const RE_ETIQUETA = new RegExp("(?:^|\\s{2,}|[|;]\\s*|\\b)(" + LISTA.map((x) => x.l.replace(/[.]/g, "\\.").replace(/ /g, "\\s+")).join("|") + ")\\s*(?:n[°º]\\.?\\s*)?[:=]", "g");
+  const LISTA = Object.entries(ETIQUETAS).flatMap(([campo, ls]) => ls.map((l, prioridad) => ({ campo, l, prioridad })))
+    .sort((a, b) => b.l.length - a.l.length);
+  const patron = (l) => l.replace(/[.\/]/g, (c) => "\\" + c).replace(/ /g, "\\s+");
+  // Separador: «:» o «=»; también «-» o varios espacios / tabulación (tablas sin dos puntos)
+  const RE_ETIQUETA = new RegExp("(?:^|\\s{2,}|[|;]\\s*|\\b)(" + LISTA.map((x) => patron(x.l)).join("|") +
+    ")(?:\\s*(?:n[°º]\\.?\\s*)?[:=]|\\s+-\\s|\\s{2,}|\\t)", "g");
 
   // Valores por etiqueta: «Paciente: X   DNI: 123» → {paciente: X, dni: 123}. Si la etiqueta queda sola en el renglón,
   // el valor es el renglón siguiente (formularios en dos columnas).
   function porEtiqueta(texto) {
     const lineas = texto.split(/\r?\n/);
-    const out = {};
+    const out = {}, prioridad = {};
     lineas.forEach((linea, i) => {
       const p = plano(linea);
       const marcas = [];
@@ -127,15 +171,16 @@ const Lector = (() => {
       let m;
       while ((m = RE_ETIQUETA.exec(p))) {
         const etiqueta = m[1].replace(/\s+/g, " ");
-        const campo = LISTA.find((x) => x.l === etiqueta)?.campo;
-        if (campo) marcas.push({ campo, desde: m.index + m[0].length, inicio: m.index });
+        const def = LISTA.find((x) => x.l === etiqueta);
+        if (def) marcas.push({ ...def, desde: m.index + m[0].length, inicio: m.index });
       }
       marcas.forEach((mk, j) => {
         let valor = linea.slice(mk.desde, j + 1 < marcas.length ? marcas[j + 1].inicio : undefined).trim().replace(/^[-–:.\s]+|[|;\s]+$/g, "")
           .replace(/\s+(n[°º?o]?\.?|nro\.?|nº)$/i, ""); // «N°» que pertenece a la etiqueta siguiente
         if (!valor && j + 1 === marcas.length) valor = (lineas.slice(i + 1).find((l) => l.trim()) || "").trim();
-        if (valor && !(mk.campo in out)) out[mk.campo] = valor;
-        else if (valor && mk.campo === "ayudantes") out.ayudantes += ", " + valor;
+        if (!valor) return;
+        if (mk.campo === "ayudantes" && out.ayudantes) out.ayudantes += ", " + valor;
+        else if (!(mk.campo in out) || mk.prioridad < prioridad[mk.campo]) { out[mk.campo] = valor; prioridad[mk.campo] = mk.prioridad; }
       });
     });
     return out;
@@ -153,15 +198,20 @@ const Lector = (() => {
 
   const soloDigitos = (t) => (t || "").replace(/\D/g, "");
 
+  function nombreSinEtiqueta(texto) {
+    const m = texto.match(/(?:^|\s)([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ' ]{1,30}, ?[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ]{2,40})(?=\s{2,}|\s*$|\s+(?:DNI|HC|Edad))/m);
+    return m ? m[1].trim() : "";
+  }
+
   function parte(texto, obraSocial) {
     const e = porEtiqueta(texto);
     const dni = soloDigitos(e.dni || (plano(texto).match(/\bd\.?n\.?i\.?\s*:?\s*([\d.]{7,11})/) || [])[1]);
     const procs = (e.procedimiento || "").split(/\s*(?:\+|;|\/|\by\b(?= [A-ZÁÉÍÓÚ])|\d\)\s)\s*/).map((s) => s.trim()).filter((s) => s.length > 3);
     const osTexto = e.obra_social || "";
     return {
-      fecha: fechaISO(e.fecha || "") || fechaISO(texto),
+      fecha: fechaISO(e.fecha || "") || fechaProbable(texto),
       hora: ((e.hora || "").match(/\d{1,2}[:.]\d{2}/) || [""])[0].replace(".", ":"),
-      paciente: (e.paciente || "").replace(/\s*\b(dni|edad|h\.?c\.?)\b.*$/i, "").trim(),
+      paciente: (e.paciente || nombreSinEtiqueta(texto)).replace(/\s*\b(dni|edad|h\.?c\.?)\b.*$/i, "").replace(/[.,\s]+$/, "").trim(),
       dni: dni.length >= 7 && dni.length <= 8 ? dni : "",
       obra_social_texto: osTexto || (obraSocial(texto) || ""),
       afiliado: (e.afiliado || "").split(/\s{2,}/)[0],

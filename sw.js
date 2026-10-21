@@ -1,7 +1,7 @@
 // Funciona sin señal (quirófano): la app y el lector de texto quedan guardados en el celular.
 // App: se muestra lo guardado y se actualiza en segundo plano. Librerías (versión fija): se descargan una sola vez.
 // Nunca se guardan respuestas de Google (datos del profesional).
-const VERSION = "liquidaciones-v1";
+const VERSION = "liquidaciones-v2";
 const APP = ["./", "index.html", "estilos.css", "config.js", "motor.js", "lector.js", "almacen.js", "app.js", "manifest.webmanifest",
   "icono.svg", "icono-192.png", "privacidad.html", "datos/aac_2026_08.json", "datos/pami_2024_02.json", "datos/obras_sociales.json", "datos/valores.json"];
 const LIBRERIAS = ["cdn.jsdelivr.net", "cdnjs.cloudflare.com", "tessdata.projectnaptha.com"];
