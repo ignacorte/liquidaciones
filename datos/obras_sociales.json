@@ -1,0 +1,140 @@
+{
+  "nota": "Padrón inicial. dia_presentacion = día del mes siguiente en que vence la presentación de lo del mes; dias_pago = días desde la presentación hasta el pago. Fuente: investigacion/valores_2026-10.json (21/10/2026). Donde no hay dato público se usa el cierre del Colegio Médico Regional Río Cuarto (~día 18) y 60 días: ajustar con 'Cobros → Cuánto tarda cada una'.",
+  "obras_sociales": [
+    {
+      "nombre": "PAMI",
+      "categoria": "nacional",
+      "alias": "pami, inssjp, jubilados y pensionados",
+      "dias_pago": 60,
+      "dia_presentacion": 15,
+      "notas": "Transmitir por OME/CUP hasta el día 15 del mes siguiente; contrato: pago a 60 días de la factura (la prensa informa demoras reales de 85-105 días)."
+    },
+    {
+      "nombre": "APROSS",
+      "categoria": "provincial",
+      "alias": "apross, a.p.r.o.s.s",
+      "dias_pago": 60,
+      "dia_presentacion": 10,
+      "notas": "Preliquidación ~día 10 de cada mes. Plazo de pago no publicado."
+    },
+    {
+      "nombre": "OSDE",
+      "categoria": "prepaga",
+      "alias": "osde",
+      "dias_pago": 30,
+      "dia_presentacion": 28,
+      "notas": "Por el Colegio Médico RC: corte el día 28. Paga a 30 días del cierre si se factura en término (si no, 60)."
+    },
+    {
+      "nombre": "SWISS MEDICAL",
+      "categoria": "prepaga",
+      "alias": "swiss, smg",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "SANCOR SALUD",
+      "categoria": "prepaga",
+      "alias": "sancor",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "GALENO",
+      "categoria": "prepaga",
+      "alias": "galeno",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "MEDIFÉ",
+      "categoria": "prepaga",
+      "alias": "medife",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "MEDICUS",
+      "categoria": "prepaga",
+      "alias": "medicus",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "AVALIAN",
+      "categoria": "prepaga",
+      "alias": "avalian, aca salud",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "JERÁRQUICOS SALUD",
+      "categoria": "prepaga",
+      "alias": "jerarquicos, j.s.",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Plazo máximo de presentación: 90 días desde la prestación (fuera de plazo no paga)."
+    },
+    {
+      "nombre": "OSFA",
+      "categoria": "fuerzas",
+      "alias": "osfa, iosfa, obra social de las fuerzas armadas",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Desde 01/10/2026 reemplaza a IOSFA; está pagando la deuda de IOSFA por tandas."
+    },
+    {
+      "nombre": "OSFFESEG",
+      "categoria": "fuerzas",
+      "alias": "osffeseg, gendarmeria, prefectura",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "OSPRERA",
+      "categoria": "sindical",
+      "alias": "osprera",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "OSFATUN",
+      "categoria": "universitaria",
+      "alias": "osfatun",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "ASPURC",
+      "categoria": "universitaria",
+      "alias": "aspurc",
+      "dias_pago": 60,
+      "dia_presentacion": 18,
+      "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
+    },
+    {
+      "nombre": "MUTUAL MÉDICA",
+      "categoria": "mutual",
+      "alias": "mutual medica",
+      "dias_pago": 15,
+      "dia_presentacion": 15,
+      "notas": "Presentación directa los días 15 y 30; paga en esas fechas (dato de 2022)."
+    },
+    {
+      "nombre": "PARTICULAR",
+      "categoria": "particular",
+      "alias": "particular, privado, sin obra social, efectivo",
+      "dias_pago": 0,
+      "dia_presentacion": 0
+    }
+  ]
+}

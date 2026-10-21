@@ -1,0 +1,659 @@
+{
+ "payer": "PAMI",
+ "source": "Nomenclador de Prácticas Médicas PAMI, febrero 2024 (Departamento Nomenclador, INSSJP)",
+ "version": "2024-02",
+ "codes": [
+  {
+   "code": "301001",
+   "name": "MODULO 1 DE CIRUGIA ESOFAGICA",
+   "items": [
+    "Esofaguectomía total sin reconstrucción por perforación, por perforaciones esofágicas traumáticas o espontáneas de causa benigna"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301002",
+   "name": "MODULO 2 DE CIRUGIA ESOFAGICA",
+   "items": [
+    "Operación anti reflujo, Nissen o similar, por laparotomía o por laparoscopia, para el tratamiento del reflujo gastroesofágico y la hernia hiatal",
+    "Operación de Heller más funduplicatura, por laparotomía o por laparoscopia, para el tratamiento de la acalasia",
+    "Esofagorrafia cervical o torácica más drenaje, para el tratamiento de perforaciones esofágicas espontáneas o traumáticas",
+    "Escisión de divertículo esofágico intratorácico o tumor benigno de esófago por toracotomía, laparotomía, laparoscopia o toracoscopía, para tratamiento de divertículos esofágicos o tumores benignos intratorácicos",
+    "Escisión de divertículo esofágico cervical"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 4 (cuatro) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301003",
+   "name": "MODULO 3 DE CIRUGIA ESOFAGICA",
+   "items": [
+    "Esofagostomía temporaria o definitiva para el tratamiento de fistulas o perforaciones esofágicas, traumáticas o espontáneas",
+    "Cierre de esofagostoma de causa traumática o tumoral benigna"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301004",
+   "name": "MODULO 1 DE CIRUGIA GASTRICA Y DUODENAL",
+   "items": [
+    "Gastrectomía subtotal o re gastrectomía, tratamiento de la úlcera gástrica y/o duodenal, incluye reconstrucción",
+    "Resección segmentaria de duodeno para el tratamiento de patología benigna de duodeno, incluye reconstrucción",
+    "Cierre de fistulas duodenales., posteriores a cirugías de causas benignas"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301005",
+   "name": "MODULO 2 DE CIRUGIA GASTRICA Y DUODENAL",
+   "items": [
+    "Gastrotomía más gastrorrafia más piloroplastía y/o piloromiotomía. Tratamiento de la úlcera gastroduodenal, lesiones sangrantes, cuerpos extraños, heridas externas traumáticas, cierre de gastrostomía o fístulas gástricas",
+    "Duodenotomía más duodenorrafia, para el tratamiento de las ulceras gástricas y duodenales, cuerpos extraños, heridas externas traumáticas"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301006",
+   "name": "MODULO 3 DE CIRUGIA GASTRICA Y DUODENAL",
+   "items": [
+    "Devolvulación gástrica y gastropexia, para el tratamiento del vólvulo gástrico"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301007",
+   "name": "MODULO 4 DE CIRUGIA GASTRICA Y DUODENAL",
+   "items": [
+    "Gastrotomía para alimentación por todas las técnicas (incluye colocación de botón)"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día"
+   ],
+   "excludes": [
+    "Botón gástrico, que será provisto por el Instituto"
+   ]
+  },
+  {
+   "code": "301008",
+   "name": "MODULO 1 DE CIRUGIA DE INTESTINO DELGADO",
+   "items": [
+    "Cierre y reparación de fistulas enterocutáneas simples y complejas, secundaria a cirugía de casusa benigna",
+    "Enterectomía total"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301009",
+   "name": "MODULO 2 DE CIRUGIA DE INTESTINO DELGADO",
+   "items": [
+    "Enterectomia de yeyuno o íleon, incluye reconstrucción. Para el tratamiento de perforaciones, estenosis, necrosis o procesos inflamatorios",
+    "Derivaciones intestinales como única operación (enteroentéricas, yeyunoileales, ileotranversa, ileorectal, etc.) para la restitución del tránsito intestinal en oclusiones por patología inflamatoria irresecable"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301010",
+   "name": "MODULO 3 DE CIRUGIA DE INTESTINO DELGADO",
+   "items": [
+    "Plicatura de intestino delgado, operación de Noble, operación de Child, suboclusión intestinal recidivada",
+    "Laparotomía exploradora y enterolisis, con o sin toma de biopsia, como único procedimiento",
+    "Drenaje de absceso interasas, como único procedimiento",
+    "Escisión del divertículo de Meckel"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301011",
+   "name": "MODULO 4 DE CIRUGIA DE INTESTINO DELGADO",
+   "items": [
+    "Ileostomía de alimentación por todas las técnicas como única operación",
+    "Realización de ostomía de derivación en el intestino delgado como única operación",
+    "Ileostomía terminal o en asa, como única operación",
+    "Cierre o plástica de ileostomía",
+    "Reconfección de ileostomia por complicación de la previa (hundimiento, necrosis)"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301012",
+   "name": "MODULO 1 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Resección de cabeza de páncreas con conservación duodenal (operación de Berger), para el tratamiento de la pancreatitis crónica",
+    "Anastomosis biliodigestivas complejas y reparaciones de la vía biliar, para el tratamiento de las lesiones quirúrgicas de vía biliar"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301013",
+   "name": "MODULO 2 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Pancreatectomía mediana, para el tratamiento de lesiones pancreáticas"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301014",
+   "name": "MODULO 3 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Hepatectomía parcial para el tratamiento de quistes hepáticos",
+    "Resección de tumores hepáticos benignos de hígado, quistes simples y angiomas",
+    "Sutura o taponaje de hígado por traumatismo, herida o desgarro en trauma hepático",
+    "Papilotomía quirúrgica, con o sin coledocotomía para el tratamiento del cálculo enclavado",
+    "Wirzungyeyunoanastomosis con resección parcial de la cabeza del páncreas, operación de Frey, para el tratamiento de la pancreatitis crónica",
+    "Anastomosis pancreática-digestiva, pancreático-gástrica, pancreático- yeyunostomia, cistogastrostomía, cistoyeyunostomía, para el tratamiento del pseudoquiste del páncreas, pancreatitis aguda y crónica"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 4 (cuatro) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301015",
+   "name": "MODULO 4 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Colecistectomía + coledocotomía e instrumentación de vía biliar, con colocación de tubo de Kher, cierre primario, o colocación de stent, para el tratamiento de la litiasis coledociana y vesicular",
+    "Coledocotomía como único procedimiento quirúrgico, para el tratamiento de la litiasis coledociana., con cierre primario o colocación de Kher",
+    "Anastomosis biliodigestiva simple como único procedimiento. Derivaciones biliodigestivas, para el tratamiento de la litiasis coledociana múltiple",
+    "Enucleación de tumores benignos del páncreas",
+    "Secuestrectomía pancreática, para el tratamiento de la pancreatitis aguda",
+    "Necrosectomía pancreática para tratamiento de la pancreatitis aguda grave infectada"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 4 (cuatro) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301016",
+   "name": "MODULO 5 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Hepatostomía como único procedimiento, para marsupialización de quistes y/o abscesos hepáticos",
+    "Sutura de páncreas, para el tratamiento de heridas y traumatismos",
+    "Biopsia de páncreas, para el tratamiento de lesiones y tumores sin diagnóstico"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 4 (cuatro) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301017",
+   "name": "MODULO 6 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Colecistectomía. Incluye con instrumentación transcistica de la vía biliar (COLELAP)"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301018",
+   "name": "MODULO 7 DE CIRUGIA DE PANCREAS, HIGADO Y VIAS BILIARES",
+   "items": [
+    "Biopsia de hígado",
+    "Colecistostomía quirúrgica"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301019",
+   "name": "MODULO DE CIRUGIA DE BAZO",
+   "items": [
+    "Esplenectomía segmentaria como única intervención para el tratamiento de traumatismos, quistes y abscesos",
+    "Esplenectomía como única intervención, para el tratamiento de enfermedades hematológicas, traumatismos, quistes y abscesos",
+    "Sutura esplénica como única internación para el tratamiento del trauma esplénico"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 4 (cuatro) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301020",
+   "name": "MODULO DE TUMORES RETROPERITONEALES Y SUPRARRENALES",
+   "items": [
+    "Adrenalectomía uni o bilateral de causa benigna",
+    "Resección de tumores retroperitoneales de causa benigna"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301021",
+   "name": "MODULO 1 DE CIRUGIA DE COLON, RECTO Y ANO",
+   "items": [
+    "Protectomía total con reconstrucción y pouch ileal. Incluye Ileostomía, para el tratamiento de la colitis ulcerosa y la poliposis adenomatosa familiar"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301022",
+   "name": "MODULO 2 DE CIRUGIA DE COLON, RECTO Y ANO",
+   "items": [
+    "Resección anterior de recto, sigmoideoproctectomía, con reconstrucción en un tiempo, incluye realización de pouch colónico y ostomías de protección",
+    "Coloplastia y anastomosis, anastomosis colonanal. Incluye Ileostomía o colostomía de protección para el tratamiento de patología inflamatoria",
+    "Sigmoideoproctectomía (segundo tiempo), para el tratamiento de la colitis ulcerosa. Incluye Ileostomía de protección",
+    "Proctocolectomía total sin reconstrucción, para enfermedad inflamatoria. Incluye ostomías",
+    "Colectomía total sin recto con reconstrucción en un tiempo, para el tratamiento de la patología inflamatoria. Incluye ostomías de protección",
+    "Operaciones para el megacolon sigmoideorrectal, tipo Duhamel, Swenson o similares vía abdominoperineal, efectuada por 1 o 2 equipos quirúrgicos. Incluye ostomías"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301023",
+   "name": "MODULO 3 DE CIRUGIA DE COLON, RECTO Y ANO",
+   "items": [
+    "Colectomía total sin recto, sin reconstrucción en un tiempo, para el tratamiento de patología inflamatoria",
+    "Hemicolectomía derecha o Izquierda, colectomía segmentaria para el tratamiento de patología inflamatoria. Incluye ostomías",
+    "Operaciones para el tratamiento de las fístulas colorectales, colovaginales, colovesicales u otras, por vía abdominal. Incluye resección y reconstrucciones en un tiempo y ostomías",
+    "Excéresis de tumor presacro por vía abdominal",
+    "Tratamiento del prolapso de recto por vía abdominal, incluye proctopexia, con o sin resección colónica y anastomosis, incluye ostomías",
+    "Reconstrucción de cirugía de Hartman. Incluye enterolisis, reconstrucción de pared abdominal",
+    "Reconstrucción del piso pelviano con colgajos musculares (Gracilis, Bulbo cavernoso, etc.)",
+    "Operación de Hartman, para el tratamiento de patología inflamatoria",
+    "Protectomía parcial por vía posterior, incluye ostomías"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301024",
+   "name": "MODULO 4 DE CIRUGIA DE COLON, RECTO Y ANO",
+   "items": [
+    "Cierre de colostomía con o sin enterectomia, como único procedimiento",
+    "Tratamiento quirúrgico de la patología ano rectal compleja. Incluye cirugías para la incontinencia fecal, estenosis anal, fístulas complejas, reconstrucción del piso pelviano. Incluye la realización de anoplastías, colgajos cutáneos, colgajos mucosos, colgajos musculares simples, ligadura interesfinteriana para el tratamiento de fistulas perianales y rectovaginales",
+    "Tratamiento quirúrgico del prolapso de recto por vía anal (procedimiento de delorme, Altemeier o similar). Incluye ostomías",
+    "Perineorrafia anterior o posterior para tratamiento del rectocele o traumática",
+    "Apendicectomía"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301025",
+   "name": "MODULO 5 DE CIRUGIA DE COLON, RECTO Y ANO",
+   "items": [
+    "Colorrafia, sigmoideorrafia, proctorrafia, para tratamiento de patología inflamatoria o traumática como único procedimiento",
+    "Devolvulación colónica y colopexia, para el tratamiento del vólvulo de colon y megacolon",
+    "Miomectomia rectoanal",
+    "Operación de Lynn",
+    "Biopsia de pared rectal en megacolon",
+    "Hemorroidectomia, fistulectomia perianal, con o sin colocación de sedal, fistulotomia perianal, drenaje de abscesos perirectales, cerclaje de ano. Colocación de clips hemorroidales",
+    "Laparotomía o laparoscopía en blanco"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301026",
+   "name": "MODULO 6 DE CIRUGIA DE COLON, RECTO Y ANO",
+   "items": [
+    "Extracción de cuerpo extraño en ano y/o recto",
+    "Escisión de condilomas perianales y/o anales",
+    "Escisión de lesiones perianales",
+    "Biopsia de ano",
+    "Drenaje de abscesos perianales",
+    "Trombectomía, tratamiento de trombosis hemorroidal"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301027",
+   "name": "MODULO 1 DE CIRUGIA DE PIEL, GANGLIOS LINFATICOS Y PARTES BLANDAS",
+   "items": [
+    "Linfadenectomía cervical ganglionar funcional unilateral con conservación de esternocleidomastoideo y/o vena yugular, como único procedimiento",
+    "Linfadenectomía cervical selectiva supraomohioideo, carotídeo o posterolateral, como único procedimiento"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 5 (cinco) días",
+    "Internación en UTI / UCO hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301028",
+   "name": "MODULO 2 DE CIRUGIA DE PIEL, GANGLIOS LINFATICOS Y PARTES BLANDAS",
+   "items": [
+    "Escisión de conductos linfáticos. Linfangiomas, Higromas",
+    "Escisión de quiste sacrococcigeo, incluye colgajos o injertos"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301029",
+   "name": "MODULO 3 DE CIRUGIA DE PIEL, GANGLIOS LINFATICOS Y PARTES BLANDAS",
+   "items": [
+    "Escisión radical de angioma cavernoso, incluye reparación plástica",
+    "Escisión de lipoma gigante (mayor a 10 cm) o profundo subaponeurótico",
+    "Sutura de herida de músculo, tejido celular subcutáneo y piel mayor a 10 cm o mayor a 5 cm en cara con o sin cierre plástico por colgajo",
+    "Biopsia de ganglio centinela como único procedimiento"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301030",
+   "name": "MODULO 4 DE CIRUGIA DE PIEL, GANGLIOS LINFATICOS Y PARTES BLANDAS",
+   "items": [
+    "Resección de ganglio linfático de cualquier localización. Biopsia de ganglio linfático. Punción de ganglio linfático de cualquier localización",
+    "Escisión local de lesión de piel o glándula cicatrizal, inflamatoria, congénita o tumoral benigna"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "301031",
+   "name": "MODULO 1 DE CIRUGIA DE PARED ABDOMINAL Y RETROPERITONEO",
+   "items": [
+    "Eventroplastía diafragmática para el tratamiento de la eventración diafragmática post quirúrgica. Incluye colocación de malla",
+    "Hernioplastía diafragmática, para el tratamiento de la hernia diafragmática. Incluye colocación de malla"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": [
+    "Malla"
+   ]
+  },
+  {
+   "code": "301032",
+   "name": "MODULO 2 DE CIRUGIA DE PARED ABDOMINAL Y RETROPERITONEO",
+   "items": [
+    "Hernioplastía inguinal y/o crural bilateral, incluye técnicas pre peritoneales y colocación de malla",
+    "Hernioplastía recidivada inguinal y/o crural, incluye colocación de malla",
+    "Eventroplastía o cierre de pared abdominal por evisceración, incluye colocación de malla",
+    "Drenaje de absceso intraabdominal como único procedimiento",
+    "Drenaje percutáneo de colección o absceso abdominal o retroperitoneal, incluye guía ecográfica o tomográfica"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 2 (dos) días"
+   ],
+   "excludes": [
+    "Malla"
+   ]
+  },
+  {
+   "code": "301033",
+   "name": "MODULO 3 DE CIRUGIA DE PARED ABDOMINAL Y RETROPERITONEO",
+   "items": [
+    "Hernioplastía inguinal o crural unilateral, incluye colocación de malla",
+    "Hernioplastía recidivada epigástrica, recidivada umbilical, recidivada obturatriz o recidivada de spiegel. Incluye colocación de malla",
+    "Colocación de catéter para diálisis peritoneal"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día"
+   ],
+   "excludes": [
+    "Malla",
+    "Catéter de diálisis peritoneal"
+   ]
+  },
+  {
+   "code": "301034",
+   "name": "MODULO 4 DE CIRUGIA DE PARED ABDOMINAL Y RETROPERITONEO",
+   "items": [
+    "Hernioplastía epigástrica, obturatriz, umbilical o de Spiegel. Incluye colocación de malla",
+    "Abdomen abierto y contenido como único procedimiento, lavado y realización"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día"
+   ],
+   "excludes": [
+    "Malla"
+   ]
+  },
+  {
+   "code": "301035",
+   "name": "MODULO 5 DE CIRUGIA DE PARED ABDOMINAL Y RETROPERITONEO",
+   "items": [
+    "Peritoneocentesis para evacuación de ascitis. Incluye catéter multipropósito"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día",
+    "Estudio bioquímico, citológico y cultivo de líquido ascítico",
+    "Guía ecográfica"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303001",
+   "name": "MODULO 1 CIRUGIA PERCUTANEA",
+   "items": [
+    "Drenaje percutáneo de vía biliar transparieto-hepático",
+    "Drenaje biliar percutáneo transparieto-hepático con implante de endoprótesis biliar. Colocación de stent biliar por vía percutánea transfistular",
+    "Drenaje biliar percutáneo transparieto-hepático con extracción de cálculos biliares. Extracción instrumental completa de cálculos coledocianos por vía percutánea transfistular, para el tratamiento de los cálculos coledocianos residuales",
+    "Procedimientos biliares percutáneos transyugulares",
+    "Dilatación percutánea de estenosis de la vía biliar y/o anastomosis biliares o biliodigestivas",
+    "Colocación de stents duodenales o colónicos"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 3 (tres) días",
+    "Canastilla, guías y cuerdas de piano, agujas y todo material descartable necesario para la realización del procedimiento"
+   ],
+   "excludes": [
+    "Catéter de drenajes percutáneos, serán provistos por el Instituto",
+    "Stents y balones, que serán provistos por el Instituto"
+   ]
+  },
+  {
+   "code": "303002",
+   "name": "MODULO 2 CIRUGIA PERCUTANEA",
+   "items": [
+    "Infiltración percutánea del plexo solar",
+    "Drenaje percutáneo de colección intraabdominal, hematoma o absceso",
+    "Drenaje percutáneo de colección, absceso o hematoma hepático",
+    "Colecistostomía percutánea",
+    "Drenaje de absceso de psoas"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 3 (tres) días",
+    "Canastilla, guías y cuerdas de piano, agujas y todo material descartable necesario para la realización del procedimiento"
+   ],
+   "excludes": [
+    "Drenajes percutáneos según autorización previa o provisión del Instituto",
+    "Stents serán provistos por el Instituto"
+   ]
+  },
+  {
+   "code": "303003",
+   "name": "MODULO 3 CIRUGIA PERCUTANEA",
+   "items": [
+    "Colangiografía transparietohepática",
+    "Recambio de drenaje percutáneo",
+    "Recambio de set de gastrostomía",
+    "Fistulografia de cualquier ubicación",
+    "Toracocentesis y/o paracentesis",
+    "Nefrostomias percutáneas"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día",
+    "Canastilla, guías y cuerdas de piano, agujas y todo material descartable necesario para la realización del procedimiento"
+   ],
+   "excludes": [
+    "Drenajes percutáneas serán provistos por el Instituto",
+    "Stents serán provistos por el Instituto",
+    "Set de gastrostomía o botón gástrico, serán provistos por el Instituto"
+   ]
+  },
+  {
+   "code": "303004",
+   "name": "MODULO DE PUNCION BIOPSIA HEPATICA, PANCREATICA, RENAL y TUMORES ABDOMINOPELVIANOS NO ESPECIFICADOS BAJO CONTROL ECOGRAFICO",
+   "items": [
+    "Incluye punciones transvaginales y transrectales (excluye punción biopsia prostática). Incluye la realización de biopsia de tumores hepáticos, renales y de tumores abdominales no especificados por punción, bajo control ecográfico"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día",
+    "Aguja, trucut y descartables necesarios para la realización del procedimiento",
+    "Ecografía durante el procedimiento y post procedimiento inmediato"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303005",
+   "name": "MODULO DE PUNCION BIOPSIA HEPATICA, PANCREATICA, RENAL O DE TUMORES ABDOMINALES NO ESPECIFICADOS BAJO CONTROL TOMOGRAFICO",
+   "items": [],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día",
+    "Aguja, trucut y descartables necesarios para la realización del procedimiento",
+    "Tomografía para la realización del procedimiento y controles post procedimiento inmediato"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303006",
+   "name": "MODULO DE BIOPSIA HEPATICA POR VIA TRANSYUGULAR",
+   "items": [],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día",
+    "Biotomo descartable",
+    "Ecografía y ecodoppler"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303007",
+   "name": "MODULO DE PUNCION BIOPSIA DE TIROIDES, GLANDULAS SALIVALES Y OTROS TUMORES DE CABEZA Y CUELLO NO ESPECIFICADOS BAJO CONTROL ECOGRAFICO",
+   "items": [
+    "Incluye la realización de toma de biopsia de tumores de tiroides o de otros tumores de cabeza y cuello no especificados por punción, bajo control ecográfico o PAAF"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (uno) día",
+    "Aguja, trucut y descartables necesarios para la realización del procedimiento",
+    "Ecografía durante el procedimiento y post procedimiento inmediato"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303008",
+   "name": "MODULO DE PUNCION BIOPSIA DE GANGLIOS LINFATICOS Y TUMORES DE PARTES BLANDAS BAJO GUIA ECOGRAFICA",
+   "items": [
+    "Incluye la realización de biopsia de ganglios linfáticos y tumores de partes blandas por punción, bajo control ecográfico, PAAF"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día",
+    "Aguja, trucut y descartables necesarios para la realización del procedimiento",
+    "Ecografía durante el procedimiento y post procedimiento inmediato"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303009",
+   "name": "MODULO DE PUNCION BIOPSIA DE PULMON, TUMORES TORACICOS O MEDIASTINALES GUIADA POR TOMOGRAFIA",
+   "items": [
+    "Incluye la realización de toma de biopsia de tumores de pulmón o de otros tumores torácicos o mediastinales no especificados por punción, bajo control topográfico"
+   ],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día",
+    "Aguja, trucut y descartables necesarios para la realización del procedimiento",
+    "Tomografía para la realización del procedimiento y controles post procedimiento inmediato"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "303010",
+   "name": "MODULO DE PUNCION BIOPSIA OSEA BAJO CONTROL TOMOGRAFICO",
+   "items": [],
+   "includes": [
+    "Pensión en habitación compartida con baño privado hasta 1 (un) día",
+    "Aguja, trucut y descartables necesarios para la realización del procedimiento",
+    "Tomografía para la realización del procedimiento y controles post procedimiento inmediato"
+   ],
+   "excludes": []
+  },
+  {
+   "code": "820125",
+   "name": "CONSULTA PRIMERA VEZ CON ESPECIALISTA EN CIRUGIA",
+   "items": [
+    "Consulta primera vez con especialista en cirugía. Incluye curaciones, control de ostomas, retiro de puntos, retiro de drenajes"
+   ],
+   "includes": [],
+   "excludes": [],
+   "kind": "consulta"
+  },
+  {
+   "code": "820126",
+   "name": "CONSULTA DE SEGUIMIENTO CON ESPECIALISTA EN CIRUGIA",
+   "items": [
+    "Consulta de seguimiento con especialista en cirugía. Incluye curaciones, control de ostomas, retiro de puntos, retiro de drenajes"
+   ],
+   "includes": [],
+   "excludes": [],
+   "kind": "consulta"
+  }
+ ]
+}

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f5c4d">
+<title>Liquidaciones</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icono.svg">
+<link rel="apple-touch-icon" href="icono-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header>
+  <div><h1 id="titulo">Inicio</h1><small id="sync" style="opacity:.8;font-size:11px"></small></div>
+  <input type="month" id="mes" aria-label="Mes">
+</header>
+
+<main>
+  <!-- Primera vez: conectar el Drive del profesional -->
+  <section id="v-bienvenida" hidden>
+    <div class="card" style="text-align:center">
+      <img src="icono-192.png" alt="" width="72" height="72">
+      <h2>Liquidaciones</h2>
+      <p class="ayuda">Honorarios, obras sociales y cobros. Tus datos quedan en este celular y en <b>tu</b> Google Drive (carpeta «Liquidaciones»); nadie más los ve.</p>
+      <button class="boton" id="conectar-inicio" style="width:100%">Conectar mi Google Drive</button>
+      <p class="ayuda">o <a href="#" id="sin-drive">usar sin Drive por ahora</a> (los datos quedan solo en el celular)</p>
+    </div>
+  </section>
+
+  <!-- Inicio: resumen del mes -->
+  <section id="v-inicio">
+    <div class="kpis" id="kpis"></div>
+    <div class="card"><h2>Por obra social</h2><div class="tabla" id="por-os"></div></div>
+    <div class="card"><h2>Por paciente</h2><div class="tabla" id="por-paciente"></div></div>
+  </section>
+
+  <!-- Cargar: fotos o a mano -->
+  <section id="v-cargar" hidden>
+    <div id="cargar-botones">
+      <div class="card">
+        <h2>Cargar desde una foto</h2>
+        <p class="ayuda">Captura de pantalla, foto o PDF de la historia clínica. Se lee dentro del celular (nada sale del teléfono); la app reconoce la obra social y sugiere código y valor. Revisás antes de guardar.</p>
+        <label class="boton grande"><span>📋</span> Listado diario de consultas
+          <input type="file" accept="image/*,application/pdf" multiple hidden data-leer="listado"></label>
+        <div style="height:10px"></div>
+        <label class="boton grande"><span>🩺</span> Parte quirúrgico
+          <input type="file" accept="image/*,application/pdf" multiple hidden data-leer="parte"></label>
+        <details style="margin-top:10px"><summary class="ayuda">Pegar texto copiado de la historia clínica</summary>
+          <textarea id="texto-pegado" rows="6" placeholder="Pegá acá el parte o el listado"></textarea>
+          <div class="fila"><button class="boton chico secundario" data-pegado="parte">Leer como parte</button>
+          <button class="boton chico secundario" data-pegado="listado">Leer como listado</button></div></details>
+      </div>
+      <div class="card">
+        <h2>Cargar a mano</h2>
+        <div class="fila">
+          <button class="boton secundario" data-nueva="consulta">+ Consulta</button>
+          <button class="boton secundario" data-nueva="cirugia">+ Cirugía</button>
+          <button class="boton secundario" data-nueva="practica">+ Práctica</button>
+        </div>
+      </div>
+    </div>
+    <div id="leyendo" class="card" hidden><p class="cargando" id="leyendo-texto">Leyendo…</p><p class="ayuda">La primera vez descarga el lector (unos 15 MB); después funciona sin señal.</p></div>
+    <div id="revision" hidden>
+      <div class="card">
+        <h2 id="revision-titulo">Revisar</h2>
+        <p class="ayuda">Revisá los datos leídos y destildá lo que no corresponde (ausentes, repetidos).</p>
+        <details><summary class="ayuda">Ver texto leído</summary><pre id="texto-leido" style="white-space:pre-wrap;font-size:12px"></pre></details>
+        <div id="revision-filas"></div>
+        <div class="fila">
+          <button class="boton" id="guardar-lote">Guardar</button>
+          <button class="boton secundario" id="cancelar-lote">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Prestaciones -->
+  <section id="v-prestaciones" hidden>
+    <div class="card">
+      <div class="grid">
+        <label>Obra social<select id="f-os"><option value="">Todas</option></select></label>
+        <label>Estado<select id="f-estado">
+          <option value="">Todos</option><option value="a_cobrar">A cobrar</option><option value="vencida">Vencidas</option>
+          <option value="pendiente">Sin presentar</option><option value="presentada">Presentadas</option>
+          <option value="cobrada">Cobradas</option><option value="debitada">Debitadas</option></select></label>
+        <label class="ancho">Buscar<input id="f-q" type="search" placeholder="Paciente, DNI o procedimiento"></label>
+      </div>
+      <label class="check"><input type="checkbox" id="f-todos-meses"> Todos los meses</label>
+    </div>
+    <div class="card"><div id="lista"></div></div>
+    <div class="acciones-sel" id="acciones-sel" hidden>
+      <span id="n-sel"></span>
+      <button class="boton chico secundario" data-marcar="presentada">Presentadas</button>
+      <button class="boton chico" data-marcar="cobrada">Cobradas</button>
+      <button class="boton chico secundario" data-marcar="pendiente">Pendientes</button>
+    </div>
+  </section>
+
+  <!-- Cobros -->
+  <section id="v-cobros" hidden>
+    <div class="card"><h2>Cuándo cobro</h2><p class="ayuda">Lo que falta cobrar, por el mes en que debería entrar según el plazo de cada obra social.</p><div id="flujo"></div></div>
+    <div class="card"><h2>Para presentar</h2><div id="a-presentar"></div></div>
+    <div class="card"><h2>Vencidas</h2><p class="ayuda">Ya pasó la fecha estimada de cobro: reclamar o revisar débitos.</p><div id="vencidas"></div></div>
+    <div class="card"><h2>Cuánto tarda cada una (real)</h2><p class="ayuda">Promedio entre la prestación y el cobro, según lo que marcaste como cobrado.</p><div id="plazos-reales"></div></div>
+  </section>
+
+  <!-- Valores y configuración -->
+  <section id="v-valores" hidden>
+    <div class="card">
+      <h2>Mi cuenta</h2>
+      <p id="cuenta-texto" class="ayuda"></p>
+      <div class="fila"><button class="boton chico" id="conectar">Conectar Google Drive</button>
+        <button class="boton chico secundario" id="sincronizar">Sincronizar ahora</button>
+        <button class="boton chico secundario" id="planilla">Guardar planilla del mes en Drive</button></div>
+      <p class="ayuda">Apellido como figura en los partes (para saber si fuiste ayudante):</p>
+      <input id="apellido" placeholder="Apellido">
+    </div>
+    <div class="card">
+      <h2>Referencias</h2>
+      <div class="grid">
+        <label>Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
+        <label>Vigencia UQ<input id="uq-vigencia" type="month"></label>
+        <label>Inflación mensual (%)<input id="inflacion" type="number" step="0.1"></label>
+      </div>
+      <p class="ayuda" id="uq-hist"></p>
+      <div class="fila">
+        <button class="boton chico" id="guardar-ref">Guardar</button>
+        <button class="boton chico secundario" id="recalcular">Recalcular pendientes</button>
+        <button class="boton chico secundario" id="exportar">Descargar mes (Excel)</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Obras sociales</h2>
+      <p class="ayuda">Plazos para calcular cuándo cobrar. «% módulo» = parte del módulo que le toca al cirujano (si la obra social paga por módulo).</p>
+      <div class="tabla" id="tabla-os"></div>
+      <button class="boton chico secundario" id="nueva-os">+ Obra social</button>
+    </div>
+    <div class="card">
+      <h2>Valores por código</h2>
+      <label>Obra social<select id="v-os"></select></label>
+      <div class="tabla" id="tabla-valores"></div>
+      <button class="boton chico secundario" id="nuevo-valor">+ Cargar valor</button>
+    </div>
+    <p class="ayuda" style="text-align:center">Liquidaciones · <a href="privacidad.html">Privacidad</a> · <a href="#" id="salir">Desconectar cuenta de este celular</a></p>
+  </section>
+</main>
+
+<nav class="abajo">
+  <button data-vista="inicio" class="activa"><span>📊</span>Inicio</button>
+  <button data-vista="cargar"><span>📷</span>Cargar</button>
+  <button data-vista="prestaciones"><span>🗂️</span>Prestaciones</button>
+  <button data-vista="cobros"><span>💰</span>Cobros</button>
+  <button data-vista="valores"><span>⚙️</span>Valores</button>
+</nav>
+
+<dialog id="dlg"><div class="card" id="dlg-cuerpo"></div></dialog>
+<div id="toast" hidden></div>
+<script src="config.js"></script>
+<script src="motor.js"></script>
+<script src="lector.js"></script>
+<script src="almacen.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

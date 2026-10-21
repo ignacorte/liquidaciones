@@ -1,0 +1,317 @@
+"use strict";
+// Motor de cálculo (corre en el celular): nomencladores AAC/PAMI, sugerencia de código, valor estimado y fechas de
+// cobro. Portado de app/codigos.py y app/valuacion.py (versión de PC): mismo algoritmo y mismos datos; si se corrige
+// uno, corregir el otro. tests/test_motor_js.py compara los dos.
+
+const Motor = (() => {
+  const plano = (t) => (t || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "");
+
+  // ---------- Sugerencia de código ----------
+  const STOPWORDS = new Set(["de", "del", "la", "el", "los", "las", "y", "o", "con", "por", "para", "en", "un", "una", "incluye",
+    "colocacion", "tratamiento", "como", "unico", "procedimiento", "cirugia", "modulo", "guiada", "guia", "bajo", "control",
+    "realizacion", "especificados"]);
+  const SYNONYMS = { tc: "tomografico", tac: "tomografico", tomografia: "tomografico", eco: "ecografico", ecografia: "ecografico",
+    eventracion: "eventroplastia", videolaparoscopica: "laparoscopica", abseso: "absceso", abceso: "absceso", abscesos: "absceso",
+    // «hernia umbilical» en un parte = hernioplastia (sin esto gana «hernia hiatal», módulo esofágico)
+    hernia: "hernioplastia", hernias: "hernioplastia" };
+  const EXTRA_ROOTS = {
+    tapp: ["laparo"], tep: ["laparo"], etep: ["laparo"], ipom: ["laparo"], robotica: ["laparo"],
+    lichtenstein: ["conven"], rives: ["conven"], stoppa: ["conven"], sublay: ["conven"], onlay: ["conven"], abierta: ["conven"],
+    shouldice: ["conven"], tar: ["separa", "compon"], ramirez: ["separa", "compon"],
+    coleccion: ["absces"], colecciones: ["absces"], hepatica: ["higado"], hepatico: ["higado"],
+    intraabdominal: ["intrap"], intraabdominales: ["intrap"],
+    nissen: ["antirr"], toupet: ["antirr"], funduplicatura: ["antirr"], hiatal: ["antirr"],
+  };
+  const APPROACH_ROOTS = ["laparo", "conven"];
+  const EXCLUSIVE_TERMS = ["transvisceral", "endoscop"];
+  const OTHER_ROUTES = ["abierta", "laparosc", "transvisceral", "endoscop", "quirurgic", "laparotom", "toracotom"];
+  const VIDEO_TERMS = ["laparosc", "videotoracosc", "video", "endosc", "percut", "toracosc"];
+
+  const raiz = (w) => (w.includes("ectom") ? w.slice(0, 6) + "~ect" : w.includes("ostom") ? w.slice(0, 6) + "~ost" : w.slice(0, 6));
+
+  function palabras(texto) {
+    const words = new Set();
+    for (let w of plano(texto).match(/[a-z]+/g) || []) {
+      (EXTRA_ROOTS[w] || []).forEach((r) => words.add(r));
+      w = SYNONYMS[w] || w;
+      if (w.length > 2 && !STOPWORDS.has(w)) words.add(raiz(w));
+    }
+    if (words.has("biopsi") && words.has("percut")) words.add("puncio");
+    if (words.has("coleci~ect") && words.has("laparo")) words.add("colela");
+    if (words.has("antirr")) words.delete("hernio");
+    return words;
+  }
+
+  const catalogos = {};
+  const idfs = {};
+
+  function idf(nombre) {
+    if (idfs[nombre]) return idfs[nombre];
+    const codes = catalogos[nombre].codes, counts = {};
+    for (const c of codes) for (const w of palabras(c.items.join(" ") + " " + c.name)) counts[w] = (counts[w] || 0) + 1;
+    const out = {};
+    for (const [w, n] of Object.entries(counts)) out[w] = Math.log((codes.length + 1) / (n + 0.5));
+    return (idfs[nombre] = out);
+  }
+
+  function sugerir(nombre, procedimiento, limite = 3) {
+    const data = catalogos[nombre];
+    if (!data || !(procedimiento || "").trim()) return [];
+    const pesos = idf(nombre), wanted = palabras(procedimiento);
+    let plain = plano(procedimiento);
+    if (wanted.has("antirr")) plain += " diafragm"; // la cirugía antirreflujo lleva plástica diafragmática
+    const scored = [];
+    for (const code of data.codes) {
+      let best = 0;
+      const nameWords = palabras(code.name);
+      for (const item of code.items.length ? code.items : [code.name]) {
+        const words = new Set([...palabras(item), ...nameWords]);
+        let score = 0;
+        for (const w of wanted) if (words.has(w)) score += pesos[w] || 0;
+        for (const r of APPROACH_ROOTS) {
+          if (words.has(r) && !wanted.has(r) && APPROACH_ROOTS.some((o) => o !== r && wanted.has(o))) score -= 3;
+        }
+        const itemPlain = plano(item + " " + code.name);
+        score -= 6 * EXCLUSIVE_TERMS.filter((t) => itemPlain.includes(t) && !plain.includes(t)).length;
+        if (wanted.has("percut") && !words.has("percut") && OTHER_ROUTES.some((t) => itemPlain.includes(t))) score -= 4;
+        for (const q of ["bilateral", "recidivad", "diafragm", "coledocotom"]) if (plano(item).includes(q) && !plain.includes(q)) score -= 3;
+        best = Math.max(best, score);
+      }
+      if (best > 0) scored.push([best, code]);
+    }
+    scored.sort((a, b) => b[0] - a[0]);
+    return scored.slice(0, limite).map(([, c]) => c);
+  }
+
+  function buscar(nombre, texto, limite = 20) {
+    const q = plano(texto).trim();
+    if (!q || !catalogos[nombre]) return [];
+    const t = q.split(/\s+/);
+    return catalogos[nombre].codes.filter((c) => c.code.startsWith(q) || t.every((x) => plano(c.name + " " + c.items.join(" ")).includes(x))).slice(0, limite);
+  }
+
+  const infoCodigo = (nombre, code) => (catalogos[nombre]?.codes || []).find((c) => c.code === code) || null;
+
+  // ---------- Feriados y horario (recargo AAC por urgencia) ----------
+  function pascua(y) {
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const mes = Math.floor((h + l - 7 * m + 114) / 31), dia = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(Date.UTC(y, mes - 1, dia));
+  }
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const sumarDias = (fecha, n) => { const d = new Date(fecha + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
+  function esFeriado(fecha) {
+    // Nacionales inamovibles + Carnaval y Viernes Santo (los trasladables no se mueven acá: diferencia menor)
+    const y = +fecha.slice(0, 4), md = fecha.slice(5);
+    if (["01-01", "03-24", "04-02", "05-01", "05-25", "06-20", "07-09", "12-08", "12-25", "06-17", "08-17", "10-12", "11-20"].includes(md)) return true;
+    const p = iso(pascua(y));
+    return [sumarDias(p, -48), sumarDias(p, -47), sumarDias(p, -2)].includes(fecha);
+  }
+  function fueraDeHorario(fecha, hora) {
+    const dow = new Date(fecha + "T00:00:00Z").getUTCDay(); // 0 domingo
+    if (esFeriado(fecha) || dow === 0) return true;
+    if (!hora || !/^\d{1,2}:\d{2}/.test(hora)) return false;
+    const h = +hora.split(":")[0];
+    return h >= 21 || h < 7 || (dow === 6 && h >= 13);
+  }
+
+  function honorarioAAC(code, valorUQ, fecha, hora, abordaje, urgencia) {
+    const info = infoCodigo("AAC", code);
+    if (!info) return null;
+    const reglas = catalogos.AAC.rules, ajustes = [];
+    const nombre = info.name.toLowerCase();
+    if (["laparoscopica", "robotica"].includes(abordaje) && !VIDEO_TERMS.some((t) => nombre.includes(t))) ajustes.push(["videoendoscópica", reglas.videoendoscopic_pct]);
+    if (urgencia && fecha && fueraDeHorario(fecha, hora)) ajustes.push(["urgencia fuera de horario", reglas.off_hours_emergency_pct]);
+    const factor = 1 + ajustes.reduce((s, [, p]) => s + p, 0) / 100;
+    return { codigo: info.code, nombre: info.name, uq: info.uq, valorUQ, ajustes, cirujano: Math.round(info.uq * valorUQ * factor) };
+  }
+
+  // ---------- Valuación ----------
+  const CONSULTA = "CONSULTA", PARTICULAR_TABLA = "MÍNIMO ÉTICO CMPC";
+  const pesos = (n) => "$" + Math.round(n).toLocaleString("es-AR");
+
+  // datos = { obras: [{nombre, alias, dias_pago, dia_presentacion, pct_modulo}], valores: [{obra_social, codigo, monto,
+  //   vigencia 'AAAA-MM-01', tipo, codigo_aac, fuente}], uq: [{valor, vigencia}], prestaciones: [...] }
+  function obraSocialCanonica(datos, texto) {
+    const pal = (t) => " " + plano(t).replace(/[^a-z0-9]+/g, " ").trim() + " ";
+    const escrito = pal((texto || "").replace(/^\s*\d+\s*-\s*/, ""));
+    let mejor = null;
+    for (const o of datos.obras) {
+      for (const alias of [o.nombre, ...(o.alias || "").split(",")]) {
+        const k = pal(alias);
+        if (k.trim() && escrito.includes(k) && (!mejor || k.length > mejor[0])) mejor = [k.length, o.nombre];
+      }
+    }
+    return mejor ? mejor[1] : null;
+  }
+
+  function valorUQ(datos, fecha) {
+    const v = datos.uq.filter((u) => u.vigencia <= fecha).sort((a, b) => b.vigencia.localeCompare(a.vigencia))[0];
+    return v ? v.valor : catalogos.AAC.uq_value;
+  }
+
+  function valorOS(datos, os, codigoAAC, codigoOS, fecha) {
+    if (!os) return null;
+    const c = datos.valores.filter((v) => v.obra_social === os && v.vigencia <= fecha &&
+      ((codigoAAC && v.codigo_aac === codigoAAC) || (codigoOS && v.codigo === codigoOS)));
+    c.sort((a, b) => (b.tipo === "honorario") - (a.tipo === "honorario") || b.vigencia.localeCompare(a.vigencia));
+    return c[0] || null;
+  }
+
+  function ultimoCobro(datos, os, codigoAAC, rol, pct, id) {
+    if (!os || !codigoAAC) return null;
+    return datos.prestaciones.filter((p) => !p.borrada && p.obra_social === os && p.codigo_aac === codigoAAC && (p.rol || "cirujano") === rol &&
+      (p.pct || 100) === pct && p.monto_cobrado > 0 && p.id !== id).sort((a, b) => (b.fecha_cobro || "").localeCompare(a.fecha_cobro || ""))[0] || null;
+  }
+
+  function sugerencias(p) {
+    const texto = [p.procedimiento, p.abordaje].filter(Boolean).join(" ");
+    return { aac: sugerir("AAC", texto).map((c) => ({ code: c.code, name: c.name, uq: c.uq })),
+             pami: sugerir("PAMI", texto).map((c) => ({ code: c.code, name: c.name })) };
+  }
+
+  function fechasCobro(datos, os, fecha, presentada) {
+    const o = datos.obras.find((x) => x.nombre === os);
+    const diasPago = o ? o.dias_pago : 60, diaPres = o ? o.dia_presentacion : 10;
+    if (!diaPres) return { fecha_presentacion: null, fecha_cobro_estimada: fecha };
+    let pres = presentada;
+    if (!pres) {
+      let y = +fecha.slice(0, 4), m = +fecha.slice(5, 7) + 1;
+      if (m > 12) { m = 1; y += 1; }
+      pres = `${y}-${String(m).padStart(2, "0")}-${String(Math.min(diaPres, 28)).padStart(2, "0")}`;
+    }
+    return { fecha_presentacion: pres, fecha_cobro_estimada: sumarDias(pres, diasPago) };
+  }
+
+  function valor(datos, p, os, codigoAAC, codigoOS) {
+    if (p.valor_manual) return [Number(p.valor_manual), "Cargado a mano"];
+    const rol = p.rol || "cirujano", pct = p.pct || 100, reglas = catalogos.AAC.rules;
+    const factor = (rol === "ayudante" ? reglas.assistant_pct / 100 : 1) * pct / 100;
+    const extra = (rol === "ayudante" ? ` × ${reglas.assistant_pct} % (ayudante)` : "") + (pct !== 100 ? ` × ${pct} % (operación múltiple)` : "");
+    const tabla = os === "PARTICULAR" ? PARTICULAR_TABLA : os;
+    const fila = valorOS(datos, tabla, codigoAAC, codigoOS, p.fecha);
+    if (fila && fila.tipo === "honorario") {
+      return [Math.round(fila.monto * factor), `${tabla} ${fila.codigo} vigente desde ${fila.vigencia.slice(0, 7)}${extra} · ${fila.fuente || "s/fuente"}`];
+    }
+    const cobro = ultimoCobro(datos, os, codigoAAC, rol, pct, p.id);
+    if (cobro) return [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC} (${cobro.fecha_cobro})`];
+    let modulo = "";
+    if (fila && fila.tipo === "modulo") {
+      const o = datos.obras.find((x) => x.nombre === os);
+      if (o && o.pct_modulo) return [Math.round(fila.monto * o.pct_modulo / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${o.pct_modulo} %${extra}`];
+      modulo = ` · Módulo ${os} ${fila.codigo}: ${pesos(fila.monto)} (total a la institución)`;
+    }
+    const uq = valorUQ(datos, p.fecha);
+    if (p.tipo === "consulta") return [Math.round(reglas.consult_uq * uq), `Referencia AAC: consulta ${reglas.consult_uq} UQ × ${pesos(uq)} (sin valor cargado para la obra social)`];
+    const hon = honorarioAAC(codigoAAC, uq, p.fecha, p.hora, p.abordaje, p.urgencia);
+    if (!hon) return [null, "Sin código: elegí el código del procedimiento"];
+    const aj = hon.ajustes.map(([n, x]) => ` +${x} % ${n}`).join("");
+    return [Math.round(hon.cirujano * factor), `Referencia AAC ${hon.codigo}: ${hon.uq} UQ × ${pesos(uq)}${aj}${extra}${modulo}`];
+  }
+
+  // Completa una prestación: obra social del padrón, código sugerido, valor y fechas. No modifica p.
+  function estimar(datos, p) {
+    const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
+    const out = { obra_social: os, codigo_aac: p.codigo_aac || null, codigo_os: p.codigo_os || null, sugerencias: null };
+    if (p.tipo === "consulta") out.codigo_aac = CONSULTA;
+    else if (!out.codigo_aac) {
+      out.sugerencias = sugerencias(p);
+      if (out.sugerencias.aac.length) out.codigo_aac = out.sugerencias.aac[0].code;
+      if (!out.codigo_os && os === "PAMI" && out.sugerencias.pami.length) out.codigo_os = out.sugerencias.pami[0].code;
+    }
+    [out.valor_estimado, out.valor_origen] = valor(datos, p, os, out.codigo_aac, out.codigo_os);
+    Object.assign(out, fechasCobro(datos, os, p.fecha, p.fecha_presentacion));
+    return out;
+  }
+
+  // Al guardar: estado coherente con las fechas; particular = cobrada en el acto
+  function completar(datos, p) {
+    const q = { ...p };
+    if (q.monto_cobrado && !q.fecha_cobro) q.fecha_cobro = new Date().toISOString().slice(0, 10);
+    if (q.fecha_cobro && ["pendiente", "presentada"].includes(q.estado)) q.estado = "cobrada";
+    if (q.estado === "pendiente") q.fecha_presentacion = null; // la guardada es la estimada: se recalcula
+    const e = estimar(datos, q);
+    delete e.sugerencias;
+    Object.assign(q, e);
+    if (q.fecha_presentacion === null && q.estado === "pendiente" && q.valor_estimado) {
+      Object.assign(q, { estado: "cobrada", fecha_cobro: q.fecha, monto_cobrado: q.valor_estimado });
+    }
+    return q;
+  }
+
+  // ---------- Resúmenes ----------
+  const vencida = (p, hoy) => ["pendiente", "presentada"].includes(p.estado) && p.fecha_cobro_estimada && p.fecha_cobro_estimada < hoy;
+  const meses = (desde, hasta) => Math.max(0, (new Date(hasta) - new Date(desde.slice(0, 10))) / 864e5) / 30.4;
+
+  function resumen(datos, mes, hoy, inflacion) {
+    const filas = datos.prestaciones.filter((p) => !p.borrada && p.fecha.slice(0, 7) === mes);
+    const nuevo = () => ({ n: 0, consultas: 0, cirugias: 0, estimado: 0, cobrado: 0, pendiente: 0, vencido: 0, nominal: 0, real: 0 });
+    const tot = nuevo(), porOS = {}, porPac = {};
+    for (const p of filas) {
+      const est = p.valor_estimado || 0;
+      const cob = ["cobrada", "debitada"].includes(p.estado) ? p.monto_cobrado || 0 : 0;
+      const pend = ["pendiente", "presentada"].includes(p.estado) ? est : 0;
+      const cuando = p.fecha_cobro || p.fecha_cobro_estimada || hoy;
+      const real = (cob || est) / Math.pow(1 + inflacion / 100, meses(p.fecha, cuando > p.fecha ? cuando : p.fecha));
+      const kOS = p.obra_social || p.obra_social_texto || "Sin obra social", kP = p.paciente + "|" + (p.obra_social || "");
+      for (const d of [tot, porOS[kOS] ||= nuevo(), porPac[kP] ||= nuevo()]) {
+        d.n++; d.consultas += p.tipo === "consulta"; d.cirugias += p.tipo === "cirugia";
+        d.estimado += est; d.cobrado += cob; d.pendiente += pend; d.real += real; d.nominal += cob || est;
+        if (vencida(p, hoy)) d.vencido += est;
+      }
+    }
+    const cerrar = (d) => ({ ...d, perdida_inflacion: Math.round(d.nominal - d.real) });
+    return {
+      totales: cerrar(tot),
+      por_obra_social: Object.entries(porOS).map(([k, v]) => ({ obra_social: k, ...cerrar(v) })).sort((a, b) => b.estimado - a.estimado),
+      por_paciente: Object.entries(porPac).map(([k, v]) => ({ paciente: k.split("|")[0], obra_social: k.split("|")[1], ...cerrar(v) })).sort((a, b) => b.estimado - a.estimado),
+    };
+  }
+
+  function cobros(datos, hoy) {
+    const porMes = {}, vencidas = [], aPresentar = {};
+    const pendientes = datos.prestaciones.filter((p) => !p.borrada && ["pendiente", "presentada"].includes(p.estado))
+      .sort((a, b) => (a.fecha_cobro_estimada || "").localeCompare(b.fecha_cobro_estimada || ""));
+    for (const p of pendientes) {
+      const v = p.valor_estimado || 0, os = p.obra_social || "Sin obra social";
+      let clave;
+      if (vencida(p, hoy)) {
+        vencidas.push({ ...p, dias_atraso: Math.round((new Date(hoy) - new Date(p.fecha_cobro_estimada)) / 864e5) });
+        clave = "vencido";
+      } else clave = (p.fecha_cobro_estimada || hoy).slice(0, 7);
+      const m = (porMes[clave] ||= { total: 0, n: 0, os: {} });
+      m.total += v; m.n++; m.os[os] = (m.os[os] || 0) + v;
+      if (p.estado === "pendiente" && p.fecha_presentacion && p.fecha_presentacion >= hoy) {
+        const x = (aPresentar[os] ||= { n: 0, total: 0, fecha: p.fecha_presentacion });
+        x.n++; x.total += v; if (p.fecha_presentacion < x.fecha) x.fecha = p.fecha_presentacion;
+      }
+    }
+    return {
+      meses: Object.entries(porMes).sort(([a], [b]) => (a === "vencido" ? -1 : b === "vencido" ? 1 : a.localeCompare(b)))
+        .map(([mes, v]) => ({ mes, total: v.total, n: v.n, obras_sociales: Object.entries(v.os).sort((a, b) => b[1] - a[1]) })),
+      vencidas,
+      a_presentar: Object.entries(aPresentar).map(([k, v]) => ({ obra_social: k, ...v })).sort((a, b) => a.fecha.localeCompare(b.fecha)),
+    };
+  }
+
+  function plazosReales(datos) {
+    const g = {};
+    for (const p of datos.prestaciones) {
+      if (p.borrada || !p.fecha_cobro) continue;
+      const x = (g[p.obra_social || "—"] ||= { n: 0, dias: 0, cobrado: 0, estimado: 0 });
+      x.n++; x.dias += (new Date(p.fecha_cobro) - new Date(p.fecha)) / 864e5; x.cobrado += p.monto_cobrado || 0; x.estimado += p.valor_estimado || 0;
+    }
+    return Object.entries(g).map(([os, x]) => ({ obra_social: os, n: x.n, dias: Math.round(x.dias / x.n),
+      cobrado_vs_estimado: x.estimado ? Math.round(1000 * x.cobrado / x.estimado) / 10 : null })).sort((a, b) => b.dias - a.dias);
+  }
+
+  async function cargarCatalogos(base = "datos/") {
+    const [aac, pami] = await Promise.all(["aac_2026_08.json", "pami_2024_02.json"].map((f) => fetch(base + f).then((r) => r.json())));
+    catalogos.AAC = aac; catalogos.PAMI = pami;
+  }
+
+  return { plano, sugerir, buscar, infoCodigo, honorarioAAC, obraSocialCanonica, estimar, completar, sugerencias, fechasCobro,
+           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA };
+})();
