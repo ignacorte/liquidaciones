@@ -5,6 +5,8 @@
 // Seguridad: en el celular todo se guarda cifrado (AES-256-GCM) con una clave derivada del PIN (PBKDF2-SHA256,
 // 310.000 iteraciones). La clave vive solo en memoria mientras la app está desbloqueada; el PIN no se guarda.
 // El acceso a Drive (token, 1 hora) también se guarda cifrado.
+// Sesión: mientras se usa, recargar la página no vuelve a pedir el PIN (la clave, no exportable, queda en el almacenamiento
+// del navegador hasta `minutosBloqueo` después del último uso); al bloquear o vencer se borra.
 
 const Almacen = (() => {
   const DB = "liquidaciones", STORE = "doc", CLAVE = "datos";
@@ -40,6 +42,13 @@ const Almacen = (() => {
   const ITERACIONES = 310000, PRUEBA = "liquidaciones-ok";
   let llave = null; // CryptoKey AES-GCM (no exportable) mientras está desbloqueada
   let meta = null;  // {sal, iteraciones, verificador}: datos públicos para verificar el PIN
+  let minutosBloqueo = 15, ultimaSesion = 0;
+  async function guardarSesion() {
+    ultimaSesion = Date.now();
+    await idbEscribir({ sesion: { llave, hasta: ultimaSesion + minutosBloqueo * 60e3 } });
+  }
+  // Uso de la app: extiende la sesión (como mucho una escritura cada 30 s)
+  function tocar() { if (llave && Date.now() - ultimaSesion > 30000) guardarSesion().catch(() => {}); }
 
   async function derivar(pin, sal, iteraciones) {
     const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveKey"]);
@@ -65,6 +74,7 @@ const Almacen = (() => {
     meta = { sal, iteraciones: ITERACIONES, verificador: await cifrar(PRUEBA) };
     await idbEscribir({ pin: meta });
     await escribirLocal(); // lo que hubiera sin cifrar (versión anterior) queda cifrado
+    await guardarSesion();
     if (tokenMem) await guardarToken();
   }
 
@@ -88,24 +98,26 @@ const Almacen = (() => {
     }
     llave = k;
     await idbEscribir({ fallos: undefined });
+    await guardarSesion();
     await cargar();
     const t = await idbLeer("token");
     if (t && !tokenMem) tokenMem = await descifrar(t).catch(() => null);
     else if (tokenMem) await guardarToken();
   }
 
-  function bloquear() {
+  async function bloquear() {
     llave = null;
     doc = vacio();
     tokenMem = null;
     clearTimeout(temporizador);
+    await idbEscribir({ sesion: undefined });
   }
 
   // Olvidó el PIN: se borra lo de este celular (cifrado, irrecuperable); la copia de Drive queda
   async function olvidePin() {
-    bloquear();
+    await bloquear();
     meta = null;
-    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined });
+    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined });
   }
 
   async function cambiarPin(actual, nuevo) {
@@ -136,6 +148,19 @@ const Almacen = (() => {
   async function iniciar() {
     meta = await idbLeer("pin");
     if (!meta) await cargar();
+    else {
+      const sesion = await idbLeer("sesion");
+      if (sesion?.llave && sesion.hasta > Date.now()) {
+        llave = sesion.llave;
+        try {
+          await cargar();
+          const t = await idbLeer("token");
+          if (t && !tokenMem) tokenMem = await descifrar(t).catch(() => null);
+          else if (tokenMem) await guardarToken();
+          await guardarSesion();
+        } catch { llave = null; doc = vacio(); }
+      } else if (sesion) await idbEscribir({ sesion: undefined });
+    }
     try { await navigator.storage?.persist?.(); } catch { /* el navegador decide */ }
   }
 
@@ -251,6 +276,7 @@ const Almacen = (() => {
         } else {
           await subirNuevo(ARCHIVO, JSON.stringify(doc), "application/json");
         }
+        if (planilla) await subirPlanilla(await planilla()).catch(() => {}); // si falla, queda el JSON (lo importante)
         doc.ultima_sync = Date.now();
         await escribirLocal();
         avisar("al día");
@@ -260,6 +286,22 @@ const Almacen = (() => {
       } finally { sincronizando = null; }
     })();
     return sincronizando;
+  }
+
+  // Liquidaciones.xlsx en la carpeta: cirugías y procedimientos, consultas y resumen (se reemplaza en cada sincronización)
+  const XLSX_TIPO = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", PLANILLA = "Liquidaciones.xlsx";
+  let planilla = null; // función de la app que arma el Excel (ArrayBuffer)
+  async function subirPlanilla(bytes) {
+    const existente = await buscar(PLANILLA);
+    if (existente) {
+      await drive(`${SUBIR}/${existente.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": XLSX_TIPO }, body: bytes });
+      return existente;
+    }
+    const meta = { name: PLANILLA, parents: [await carpeta()] };
+    const limite = "liq" + Date.now();
+    const cuerpo = new Blob([`--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${limite}\r\nContent-Type: ${XLSX_TIPO}\r\n\r\n`,
+      bytes, `\r\n--${limite}--`]);
+    return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
   }
 
   // Planilla del mes como Google Sheets en la carpeta Liquidaciones (para el contador)
@@ -273,7 +315,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, borrar, ajuste, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
-    get doc() { return doc; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
+    iniciar, guardar, borrar, ajuste, tocar, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    get doc() { return doc; }, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
   };
 })();

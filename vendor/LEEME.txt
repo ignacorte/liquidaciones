@@ -3,3 +3,4 @@ Librerías de código abierto alojadas con la app (así no se carga código de o
 - Datos de idioma español 4.0.0_best_int (Apache-2.0) — https://github.com/tesseract-ocr/tessdata_best
 - pdf.js 3.11.174 (Apache-2.0) — https://github.com/mozilla/pdf.js
 Descargadas de cdn.jsdelivr.net y cdnjs.cloudflare.com el 21/10/2026. Para actualizarlas, cambiar también la versión de LIBRERIAS en sw.js.
+- SheetJS (xlsx) 0.18.5 (Apache-2.0) — https://sheetjs.com — para generar la planilla Excel

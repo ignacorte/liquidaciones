@@ -128,6 +128,20 @@ const Motor = (() => {
     return { codigo: info.code, nombre: info.name, uq: info.uq, valorUQ, ajustes, cirujano: Math.round(info.uq * valorUQ * factor) };
   }
 
+  // ---------- Equivalencias código de obra social → AAC ----------
+  // Verificadas por descripción (el mismo número no es la misma práctica en distintos nomencladores: APROSS 080527 es
+  // apendicectomía laparoscópica y AAC 08.05.27 es devolvulación de colon). Fuente: Quirón (billing/analysis.py),
+  // Nomenclador PAMI y RESOL-2023-1069; APROSS Res. 177/2026 y 189/2025.
+  const EQUIVALENCIAS = {
+    PAMI: { 820125: "CONSULTA", 820126: "CONSULTA", 301033: "08.02.17", 301032: "08.02.25", 301034: "08.02.19", 301017: "08.07.09",
+            301024: "08.05.24", 301029: "13.01.13", 301030: "13.01.04" },
+    APROSS: { 420128: "CONSULTA", 420504: "CONSULTA", 420505: "CONSULTA", 42010101: "CONSULTA", "080203": "08.02.17", "080205": "08.02.25",
+              "080215": "08.02.27", "080206": "08.02.35", "080210": "08.02.34", "080714": "08.07.09", "080524": "08.05.24", "080527": "08.05.24",
+              130102: "13.01.02", 13010200: "13.01.02", 130104: "13.01.04", 130112: "13.01.12", 130113: "13.01.13" },
+  };
+  const CODIGOS_CONSULTA = new Set(["820125", "820126", "940100", "42010101", "420101", "42010100"]);
+  const equivalenteAAC = (os, codigo) => (codigo ? EQUIVALENCIAS[os]?.[codigo] || (CODIGOS_CONSULTA.has(codigo) ? "CONSULTA" : null) : null);
+
   // ---------- Valuación ----------
   const CONSULTA = "CONSULTA", PARTICULAR_TABLA = "MÍNIMO ÉTICO CMPC";
   const pesos = (n) => "$" + Math.round(n).toLocaleString("es-AR");
@@ -160,9 +174,11 @@ const Motor = (() => {
     return c[0] || null;
   }
 
-  function ultimoCobro(datos, os, codigoAAC, rol, pct, id) {
-    if (!os || !codigoAAC) return null;
-    return datos.prestaciones.filter((p) => !p.borrada && p.obra_social === os && p.codigo_aac === codigoAAC && (p.rol || "cirujano") === rol &&
+  // Lo cobrado la última vez por la misma práctica (mismo código AAC, o mismo código de la obra social)
+  function ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, id) {
+    if (!os || !(codigoAAC || codigoOS)) return null;
+    return datos.prestaciones.filter((p) => !p.borrada && p.obra_social === os && ((codigoAAC && p.codigo_aac === codigoAAC) ||
+      (codigoOS && p.codigo_os === codigoOS)) && (p.rol || "cirujano") === rol &&
       (p.pct || 100) === pct && p.monto_cobrado > 0 && p.id !== id).sort((a, b) => (b.fecha_cobro || "").localeCompare(a.fecha_cobro || ""))[0] || null;
   }
 
@@ -195,8 +211,8 @@ const Motor = (() => {
     if (fila && fila.tipo === "honorario") {
       return [Math.round(fila.monto * factor), `${tabla} ${fila.codigo} vigente desde ${fila.vigencia.slice(0, 7)}${extra} · ${fila.fuente || "s/fuente"}`];
     }
-    const cobro = ultimoCobro(datos, os, codigoAAC, rol, pct, p.id);
-    if (cobro) return [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC} (${cobro.fecha_cobro})`];
+    const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id);
+    if (cobro) return [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC || codigoOS} (${cobro.fecha_cobro})`];
     let modulo = "";
     if (fila && fila.tipo === "modulo") {
       const o = datos.obras.find((x) => x.nombre === os);
@@ -215,7 +231,9 @@ const Motor = (() => {
   function estimar(datos, p) {
     const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
     const out = { obra_social: os, codigo_aac: p.codigo_aac || null, codigo_os: p.codigo_os || null, sugerencias: null };
+    const equivalente = equivalenteAAC(os, out.codigo_os);
     if (p.tipo === "consulta") out.codigo_aac = CONSULTA;
+    else if (!out.codigo_aac && equivalente && equivalente !== CONSULTA) out.codigo_aac = equivalente;
     else if (!out.codigo_aac) {
       out.sugerencias = sugerencias(p);
       if (out.sugerencias.aac.length) out.codigo_aac = out.sugerencias.aac[0].code;
@@ -313,5 +331,5 @@ const Motor = (() => {
   }
 
   return { plano, sugerir, buscar, infoCodigo, honorarioAAC, obraSocialCanonica, estimar, completar, sugerencias, fechasCobro,
-           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA };
+           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC };
 })();

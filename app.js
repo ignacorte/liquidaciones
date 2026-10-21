@@ -12,7 +12,7 @@ const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "o
 const nombreMes = (m) => (m === "vencido" ? "Vencido" : MESES[+m.slice(5, 7) - 1] + " " + m.slice(0, 4));
 const TIPOS = { consulta: "Consulta", cirugia: "Cirugía", practica: "Práctica" };
 const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" };
-const CAMPOS = ["fecha", "hora", "tipo", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
+const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas"];
 
@@ -200,6 +200,11 @@ async function leer(tipo, archivos, textoPegado) {
       pctMultiple: Motor.catalogos.AAC.rules.multiple_same_approach_pct });
     if (!filas.length || !filas.some((f) => f.paciente || f.procedimiento)) throw Object.assign(new Error("No se reconocieron pacientes: revisá el texto leído y completá a mano."), { texto });
     $("#texto-leido").textContent = texto;
+    if (tipo === "parte" && filas.length > 1) {
+      const pctMultiple = Motor.catalogos.AAC.rules.multiple_same_approach_pct;
+      const lleno = (f) => Motor.estimar(d, { ...f, pct: 100, fecha: f.fecha || hoy() }).valor_estimado || 0;
+      filas.sort((a, b) => lleno(b) - lleno(a)).forEach((f, i) => (f.pct = i === 0 ? 100 : pctMultiple));
+    }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
   } catch (e) {
@@ -242,9 +247,10 @@ function mostrarRevision(filas, titulo) {
 // Fecha no leída (se puso la de hoy) o de hace más de un año: casi siempre es otra fecha del documento
 const fechaDudosa = (x) => !x.fecha_leida || Math.abs(Date.now() - Date.parse(x.fecha)) > 366 * 864e5;
 
-function cerrarRevision() { $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
+function cerrarRevision() { conciliacion = null; $("#guardar-lote").textContent = "Guardar"; $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
 
 async function guardarLote() {
+  if (conciliacion) return aplicarLiquidacion().catch((e) => aviso(e.message));
   const elegidas = filasRevision.filter((f) => f.incluir);
   if (!elegidas.length) return aviso("No hay nada tildado.");
   const existentes = datos().prestaciones;
@@ -371,6 +377,7 @@ function verValores() {
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#apellido").value = ajuste("apellido", "");
+  $("#min-bloqueo").value = String(minutosBloqueo());
   $("#uq-hist").textContent = "Historia UQ AAC: " + uq.map((u) => `${u.vigencia.slice(0, 7)} ${pesos(u.valor)}`).join(" · ");
   const doc = Almacen.doc;
   $("#cuenta-texto").textContent = doc.cuenta
@@ -458,6 +465,163 @@ async function recalcularPendientes() {
   return pend.length;
 }
 
+// ---------- Liquidación de honorarios: marcar lo cobrado ----------
+
+const claveNombre = (n) => {
+  const [ap, nom = ""] = Motor.plano(n).replace(/[^a-z, ]/g, "").split(",");
+  return { ap: ap.trim().replace(/\s+/g, " "), nom: nom.trim().split(/\s+/)[0] || "" };
+};
+function mismoPaciente(a, b) {
+  const x = claveNombre(a), y = claveNombre(b);
+  if (!x.ap || x.ap !== y.ap) return false;
+  return !x.nom || !y.nom || x.nom.startsWith(y.nom) || y.nom.startsWith(x.nom); // la liquidación corta los nombres
+}
+const diasEntre = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 864e5;
+
+// Cada línea → la prestación que le corresponde: mismo n.º de atención, o mismo paciente, ±3 días
+function conciliar(liq) {
+  const d = datos(), usadas = new Map(), out = [];
+  for (const l of liq.lineas) {
+    const os = Motor.obraSocialCanonica(d, l.obra_social_texto);
+    const esConsulta = Motor.equivalenteAAC(os, l.codigo) === "CONSULTA" || /\bcons/i.test(l.descripcion);
+    const candidatas = d.prestaciones.filter((p) => !usadas.has(p.id) && p.estado !== "cobrada" && diasEntre(p.fecha, l.fecha) <= 3 &&
+      ((l.atencion && p.atencion === l.atencion) || mismoPaciente(p.paciente, l.paciente)))
+      .sort((a, b) => (b.atencion === l.atencion) - (a.atencion === l.atencion) || (b.codigo_os === l.codigo) - (a.codigo_os === l.codigo) ||
+        ((b.tipo === "consulta") === esConsulta) - ((a.tipo === "consulta") === esConsulta) || diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha));
+    let p = candidatas[0];
+    // Varias líneas del mismo acto (p. ej. tres ítems de una escisión): se suman a la misma prestación
+    if (!p) p = [...usadas.values()].find((u) => u.linea.atencion === l.atencion && u.linea.fecha === l.fecha && u.linea.codigo === l.codigo)?.p;
+    const r = { linea: l, os, esConsulta, p: p || null, incluir: true };
+    if (p && !usadas.has(p.id)) usadas.set(p.id, r);
+    out.push(r);
+  }
+  return out;
+}
+
+let conciliacion = null;
+
+async function leerLiquidacion(archivos) {
+  $("#cargar-botones").hidden = true; $("#leyendo").hidden = false;
+  try {
+    const texto = await Lector.textoDe(archivos, (t) => ($("#leyendo-texto").textContent = t));
+    const liq = Lector.liquidacion(texto);
+    if (!liq.lineas.length) throw new Error("No se reconoció una liquidación («Detalle Liquidación»). Cargá el PDF tal como lo descargás del sistema.");
+    const cargadas = ajuste("liquidaciones", []);
+    if (liq.numero && cargadas.includes(liq.numero) && !confirm(`La liquidación ${liq.numero} ya se cargó. ¿Cargarla de nuevo?`)) throw new Error("Cancelado");
+    conciliacion = { liq, filas: conciliar(liq) };
+    $("#texto-leido").textContent = texto;
+    mostrarConciliacion();
+  } catch (e) { aviso(e.message); $("#cargar-botones").hidden = false; }
+  finally { $("#leyendo").hidden = true; }
+}
+
+function mostrarConciliacion() {
+  const { liq, filas } = conciliacion;
+  const ok = filas.filter((f) => f.p).length;
+  $("#revision").hidden = false;
+  $("#revision-titulo").textContent = `Liquidación ${liq.numero}`;
+  $("#guardar-lote").textContent = "Aplicar liquidación";
+  $("#revision-filas").innerHTML = `<p class="ayuda">${esc(liq.empresa)} · emitida ${fechaCorta(liq.emision)} · total ${pesos(liq.total)}<br>
+      <b>${ok}</b> líneas coinciden con prestaciones cargadas (se marcan cobradas con el monto liquidado); <b>${filas.length - ok}</b> no estaban
+      cargadas (se agregan como cobradas).</p>
+    <label>Fecha de cobro<input type="date" id="liq-fecha" value="${esc(liq.emision || hoy())}"></label>` +
+    filas.map((f, i) => `<div class="item" style="cursor:default"><input type="checkbox" data-liq-incluir="${i}" ${f.incluir ? "checked" : ""}>
+      <div class="cuerpo"><div class="titulo">${esc(f.linea.paciente)}</div>
+      <div class="sub">${fechaCorta(f.linea.fecha)} · ${esc(f.os || f.linea.obra_social_texto)} · ${esc(f.linea.codigo)} ${esc(f.linea.descripcion)}</div>
+      <div class="sub">${f.p ? `✓ ${esc(f.p.paciente)} · ${fechaCorta(f.p.fecha)} · estimado ${pesos(f.p.valor_estimado)}` : "＋ nueva (no estaba cargada)"}</div></div>
+      <div class="monto">${pesos(f.linea.monto)}</div></div>`).join("");
+}
+
+async function aplicarLiquidacion() {
+  const { liq, filas } = conciliacion;
+  const fecha = $("#liq-fecha").value || liq.emision || hoy();
+  const nota = `Liq. ${liq.numero}`;
+  const grupos = new Map(); // prestación → líneas
+  for (const f of filas.filter((x) => x.incluir)) {
+    const clave = f.p ? f.p.id : "nueva-" + f.linea.atencion + f.linea.fecha + f.linea.codigo;
+    if (!grupos.has(clave)) grupos.set(clave, { p: f.p, lineas: [], f });
+    grupos.get(clave).lineas.push(f.linea);
+  }
+  let marcadas = 0, nuevas = 0;
+  for (const { p, lineas, f } of grupos.values()) {
+    const l = lineas[0], total = lineas.reduce((s, x) => s + x.monto, 0);
+    const detalle = lineas.length > 1 ? ` (${lineas.length} ítems)` : "";
+    if (p) {
+      await guardarPrestacion({ ...p, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, codigo_os: p.codigo_os || l.codigo,
+        atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
+      marcadas++;
+    } else {
+      const aac = Motor.equivalenteAAC(f.os, l.codigo);
+      await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
+        tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : l.descripcion, codigo_os: l.codigo,
+        codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, origen: "liquidacion",
+        notas: nota + detalle });
+      nuevas++;
+    }
+  }
+  if (liq.numero) await Almacen.ajuste("liquidaciones", [...new Set([...ajuste("liquidaciones", []), liq.numero])]);
+  conciliacion = null;
+  cerrarRevision();
+  aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas.`);
+  $("#f-todos-meses").checked = true; $("#f-estado").value = "cobrada";
+  ir("prestaciones");
+}
+
+// ---------- Planilla Excel: cirugías y procedimientos, consultas, resumen mensual ----------
+
+async function construirExcel() {
+  await new Promise((ok, mal) => {
+    if (window.XLSX) return ok();
+    const s = document.createElement("script");
+    s.src = "vendor/xlsx.full.min.js"; s.onload = ok; s.onerror = () => mal(new Error("No se pudo cargar el generador de Excel"));
+    document.head.appendChild(s);
+  });
+  const lista = datos().prestaciones.slice().sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+  const fechaX = (t) => (t ? new Date(t + "T12:00:00") : null);
+  const est = (p) => (Motor.vencida(p, hoy()) ? "Vencida" : ESTADOS[p.estado]);
+  const cirugias = lista.filter((p) => p.tipo !== "consulta").map((p) => ({
+    "Fecha": fechaX(p.fecha), "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "", "Obra social": p.obra_social || p.obra_social_texto || "",
+    "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": p.procedimiento || "", "Código AAC": p.codigo_aac || "",
+    "Código obra social": p.codigo_os || "", "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct || 100,
+    "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
+    "Cobro estimado": fechaX(p.fecha_cobro_estimada), "Cobrada el": fechaX(p.fecha_cobro), "Monto cobrado": p.monto_cobrado ?? null,
+    "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
+    "N° atención": p.atencion || "", "Origen del valor": p.valor_origen || "", "Notas": p.notas || "" }));
+  const consultas = lista.filter((p) => p.tipo === "consulta").map((p) => ({
+    "Fecha": fechaX(p.fecha), "Hora": p.hora || "", "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "",
+    "Obra social": p.obra_social || p.obra_social_texto || "", "Código obra social": p.codigo_os || "", "Valor estimado": p.valor_estimado ?? null,
+    "Estado": est(p), "Cobro estimado": fechaX(p.fecha_cobro_estimada), "Cobrada el": fechaX(p.fecha_cobro), "Monto cobrado": p.monto_cobrado ?? null,
+    "N° atención": p.atencion || "", "Notas": p.notas || "" }));
+  const grupos = {};
+  for (const p of lista) {
+    const k = p.fecha.slice(0, 7) + "|" + (p.obra_social || p.obra_social_texto || "Sin obra social");
+    const g = (grupos[k] ||= { "Mes": p.fecha.slice(0, 7), "Obra social": k.split("|")[1], "Consultas": 0, "Cirugías y procedimientos": 0,
+      "Estimado": 0, "Cobrado": 0, "Falta cobrar": 0 });
+    g[p.tipo === "consulta" ? "Consultas" : "Cirugías y procedimientos"]++;
+    g["Estimado"] += p.valor_estimado || 0;
+    g["Cobrado"] += ["cobrada", "debitada"].includes(p.estado) ? p.monto_cobrado || 0 : 0;
+    g["Falta cobrar"] += ["pendiente", "presentada"].includes(p.estado) ? p.valor_estimado || 0 : 0;
+  }
+  const resumen = Object.values(grupos).sort((a, b) => b["Mes"].localeCompare(a["Mes"]) || b["Estimado"] - a["Estimado"]);
+  const libro = XLSX.utils.book_new();
+  const DINERO = ["Valor estimado", "Monto cobrado", "Diferencia", "Estimado", "Cobrado", "Falta cobrar"];
+  const hoja = (filas, nombre, columnas) => {
+    const h = XLSX.utils.json_to_sheet(filas.length ? filas : [Object.fromEntries(columnas.map((c) => [c, ""]))], { cellDates: true, dateNF: "dd/mm/yyyy" });
+    const cab = Object.keys(filas[0] || Object.fromEntries(columnas.map((c) => [c, ""])));
+    h["!cols"] = cab.map((c) => ({ wch: Math.min(45, Math.max(c.length + 2, ...filas.slice(0, 200).map((f) => String(f[c] ?? "").length > 40 ? 40 : 12))) }));
+    cab.forEach((c, j) => {
+      if (!DINERO.includes(c)) return;
+      for (let i = 1; i <= filas.length; i++) { const celda = h[XLSX.utils.encode_cell({ r: i, c: j })]; if (celda && typeof celda.v === "number") celda.z = "$ #,##0"; }
+    });
+    h["!autofilter"] = { ref: h["!ref"] };
+    XLSX.utils.book_append_sheet(libro, h, nombre);
+  };
+  hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
+  hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
+  hoja(resumen, "Resumen mensual", ["Mes", "Obra social", "Estimado", "Cobrado"]);
+  return XLSX.write(libro, { bookType: "xlsx", type: "array", cellDates: true });
+}
+
 function exportarCSV() {
   const cols = ["fecha", "hora", "tipo", "paciente", "dni", "afiliado", "obra_social", "institucion", "procedimiento", "rol", "pct", "codigo_aac",
     "codigo_os", "valor_estimado", "valor_origen", "estado", "fecha_presentacion", "fecha_cobro_estimada", "fecha_cobro", "monto_cobrado", "notas"];
@@ -516,18 +680,30 @@ async function arrancar() {
   });
   $("#apellido").addEventListener("change", () => Almacen.ajuste("apellido", $("#apellido").value.trim()));
   $("#recalcular").addEventListener("click", async () => aviso(`${await recalcularPendientes()} prestaciones recalculadas`));
-  $("#exportar").addEventListener("click", () => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob(["﻿" + exportarCSV()], { type: "text/csv" }));
-    a.download = `prestaciones_${mes()}.csv`; a.click();
+  $("#exportar").addEventListener("click", async () => {
+    try {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([await construirExcel()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      a.download = `Liquidaciones ${hoy()}.xlsx`; a.click();
+    } catch (e) { aviso(e.message); }
   });
   $("#planilla").addEventListener("click", async () => {
     try {
       if (!Almacen.tieneToken()) return Almacen.conectar();
-      const r = await Almacen.guardarPlanilla(`Prestaciones ${mes()}`, exportarCSV());
-      aviso("Planilla guardada en Drive › Liquidaciones");
-      if (r.webViewLink) window.open(r.webViewLink, "_blank");
+      await Almacen.subirPlanilla(await construirExcel());
+      aviso("Excel guardado en Drive › Liquidaciones › Liquidaciones.xlsx");
     } catch (e) { aviso(e.message); }
+  });
+  Almacen.planilla = construirExcel; // se actualiza en el Drive en cada sincronización
+  $$("[data-liq]").forEach((i) => i.addEventListener("change", () => { leerLiquidacion([...i.files]); i.value = ""; }));
+  $("#revision-filas").addEventListener("change", (ev) => {
+    const c = ev.target.closest("[data-liq-incluir]");
+    if (c && conciliacion) conciliacion.filas[+c.dataset.liqIncluir].incluir = c.checked;
+  });
+  $("#min-bloqueo").addEventListener("change", async () => {
+    await Almacen.ajuste("minutos_bloqueo", +$("#min-bloqueo").value);
+    Almacen.minutosBloqueo = +$("#min-bloqueo").value;
+    aviso("Guardado");
   });
   const conectar = () => { try { Almacen.conectar(); } catch (e) { aviso(e.message); } };
   $("#conectar").addEventListener("click", conectar);
@@ -555,7 +731,7 @@ async function arrancar() {
 
   configurarSeguridad();
   estado.volvioDeGoogle = volvioDeGoogle;
-  if (Almacen.tienePin()) return pedirPin("desbloquear");
+  if (Almacen.tienePin()) return Almacen.bloqueada() ? pedirPin("desbloquear") : entrar(); // sesión en uso: no pide el PIN al recargar
   if (!Almacen.doc.cuenta && !ajuste("sin_drive", false) && !volvioDeGoogle) return ir("bienvenida");
   pedirPin("crear");
 }
@@ -563,6 +739,7 @@ async function arrancar() {
 // Ya desbloqueada (o con el PIN recién creado)
 function entrar() {
   $("#pin").value = $("#pin2").value = "";
+  Almacen.minutosBloqueo = minutosBloqueo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
   mostrarSync(Almacen.estado);
   ir("inicio");
@@ -574,7 +751,7 @@ function entrar() {
 
 // ---------- Seguridad: PIN, bloqueo automático ----------
 
-const MINUTOS_BLOQUEO = 5;
+const minutosBloqueo = () => +ajuste("minutos_bloqueo", 15);
 const TEXTOS_PIN = {
   crear: ["Creá tu PIN", "Protege los datos de tus pacientes en este celular: quedan cifrados y solo se abren con el PIN. Mínimo 6 números. No se puede recuperar: anotalo en un lugar seguro.", "Crear PIN"],
   desbloquear: ["Desbloquear", "Ingresá tu PIN.", "Entrar"],
@@ -625,19 +802,19 @@ function configurarSeguridad() {
   });
   $("#bloquear").addEventListener("click", bloquearYa);
   $("#cambiar-pin").addEventListener("click", () => pedirPin("cambiar"));
-  // Bloqueo automático: 5 minutos sin tocar la app, o al volver a ella después de ese tiempo
+  // Bloqueo automático: N minutos (Valores → Mi cuenta) sin tocar la app, o al volver a ella después de ese tiempo
   let ultima = Date.now();
-  ["pointerdown", "keydown", "input"].forEach((e) => document.addEventListener(e, () => (ultima = Date.now()), { passive: true, capture: true }));
+  ["pointerdown", "keydown", "input"].forEach((e) => document.addEventListener(e, () => { ultima = Date.now(); Almacen.tocar(); }, { passive: true, capture: true }));
   const controlar = () => {
-    if (Almacen.tienePin() && !Almacen.bloqueada() && Date.now() - ultima > MINUTOS_BLOQUEO * 60e3) bloquearYa();
+    if (Almacen.tienePin() && !Almacen.bloqueada() && Date.now() - ultima > minutosBloqueo() * 60e3) bloquearYa();
   };
   setInterval(controlar, 15000);
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && controlar());
 }
 
 // Se recarga la página: no queda en memoria ni en pantalla ningún dato de pacientes
-function bloquearYa() {
-  Almacen.bloquear();
+async function bloquearYa() {
+  await Almacen.bloquear();
   location.reload();
 }
 

@@ -4,7 +4,7 @@
     {
       "nombre": "PAMI",
       "categoria": "nacional",
-      "alias": "pami, inssjp, jubilados y pensionados",
+      "alias": "pami, pamiuc, inssjp, jubilados y pensionados",
       "dias_pago": 60,
       "dia_presentacion": 15,
       "notas": "Transmitir por OME/CUP hasta el día 15 del mes siguiente; contrato: pago a 60 días de la factura (la prensa informa demoras reales de 85-105 días)."

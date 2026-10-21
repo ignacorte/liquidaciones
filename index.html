@@ -66,10 +66,17 @@
         <div style="height:10px"></div>
         <label class="boton grande"><span>🩺</span> Parte quirúrgico
           <input type="file" accept="image/*,application/pdf" multiple hidden data-leer="parte"></label>
+        <p class="ayuda" style="margin-top:10px">Para que se lea bien: captura de pantalla, o foto <b>de frente y de cerca</b> (sin ángulo ni reflejos). Lo más exacto: «Imprimir» → guardar como PDF.</p>
         <details style="margin-top:10px"><summary class="ayuda">Pegar texto copiado de la historia clínica</summary>
           <textarea id="texto-pegado" rows="6" placeholder="Pegá acá el parte o el listado"></textarea>
           <div class="fila"><button class="boton chico secundario" data-pegado="parte">Leer como parte</button>
           <button class="boton chico secundario" data-pegado="listado">Leer como listado</button></div></details>
+      </div>
+      <div class="card">
+        <h2>Cargar la liquidación</h2>
+        <p class="ayuda">El PDF «Detalle Liquidación» que te pasa la institución: marca como cobradas las prestaciones liquidadas (con el monto real) y agrega las que no estaban cargadas.</p>
+        <label class="boton grande secundario"><span>💵</span> Liquidación (PDF)
+          <input type="file" accept="application/pdf,image/*" hidden data-liq></label>
       </div>
       <div class="card">
         <h2>Cargar a mano</h2>
@@ -132,11 +139,14 @@
       <p id="cuenta-texto" class="ayuda"></p>
       <div class="fila"><button class="boton chico" id="conectar">Conectar Google Drive</button>
         <button class="boton chico secundario" id="sincronizar">Sincronizar ahora</button>
-        <button class="boton chico secundario" id="planilla">Guardar planilla del mes en Drive</button></div>
+        <button class="boton chico secundario" id="planilla">Guardar Excel en Drive</button></div>
+      <p class="ayuda">En tu Drive (carpeta «Liquidaciones») quedan dos archivos que se actualizan solos: los datos (.json) y <b>Liquidaciones.xlsx</b> con las hojas «Cirugías y procedimientos», «Consultas» y «Resumen mensual».</p>
       <p class="ayuda">Apellido como figura en los partes (para saber si fuiste ayudante):</p>
       <input id="apellido" placeholder="Apellido">
+      <label>Bloquear la app después de<select id="min-bloqueo"><option value="5">5 minutos sin uso</option><option value="15">15 minutos sin uso</option>
+        <option value="30">30 minutos sin uso</option><option value="60">1 hora sin uso</option></select></label>
       <div class="fila"><button class="boton chico secundario" id="cambiar-pin">Cambiar PIN</button></div>
-      <p class="ayuda">Seguridad: los datos de este celular están cifrados con tu PIN y la app se bloquea sola tras 5 minutos sin uso.</p>
+      <p class="ayuda">Seguridad: los datos de este celular están cifrados con tu PIN. Mientras la usás no vuelve a pedirlo (aunque recargues); lo pide después del tiempo sin uso elegido o al tocar 🔒.</p>
     </div>
     <div class="card">
       <h2>Referencias</h2>
@@ -149,7 +159,7 @@
       <div class="fila">
         <button class="boton chico" id="guardar-ref">Guardar</button>
         <button class="boton chico secundario" id="recalcular">Recalcular pendientes</button>
-        <button class="boton chico secundario" id="exportar">Descargar mes (Excel)</button>
+        <button class="boton chico secundario" id="exportar">Descargar Excel</button>
       </div>
     </div>
     <div class="card">
