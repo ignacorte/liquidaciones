@@ -18,17 +18,51 @@ const Lector = (() => {
     document.head.appendChild(s);
   }));
 
-  let worker = null;
-  async function ocr(imagen, avance) {
+  let worker = null, avanceActual = null;
+  async function ocr(imagen, avance, modo = "3") {
     await script(TESSERACT);
+    avanceActual = avance;
     if (!worker) {
       worker = await Tesseract.createWorker("spa", 1, {
         workerPath: local("worker.min.js"), corePath: local(""), langPath: local("lang"), workerBlobURL: false,
-        logger: (m) => m.status === "recognizing text" && avance && avance(`Leyendo texto… ${Math.round(m.progress * 100)} %`),
+        logger: (m) => m.status === "recognizing text" && avanceActual && avanceActual(`${Math.round(m.progress * 100)} %`),
       });
     }
+    await worker.setParameters({ tessedit_pageseg_mode: modo });
     const { data } = await worker.recognize(imagen);
     return data.text;
+  }
+
+  // Blanco y negro con umbral local (media de la zona): saca sombras del papel, fondos de color y el moiré de la pantalla
+  function binarizar(origen) {
+    const W = origen.width, H = origen.height, lienzo = document.createElement("canvas");
+    lienzo.width = W; lienzo.height = H;
+    const ctx = lienzo.getContext("2d");
+    ctx.drawImage(origen, 0, 0);
+    const d = ctx.getImageData(0, 0, W, H), g = new Float64Array((W + 1) * (H + 1));
+    for (let y = 0; y < H; y++) {
+      let fila = 0;
+      for (let x = 0; x < W; x++) { fila += d.data[(y * W + x) * 4]; g[(y + 1) * (W + 1) + x + 1] = g[y * (W + 1) + x + 1] + fila; }
+    }
+    const r = Math.max(8, Math.round(W / 60));
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const x0 = Math.max(0, x - r), x1 = Math.min(W - 1, x + r), y0 = Math.max(0, y - r), y1 = Math.min(H - 1, y + r);
+        const suma = g[(y1 + 1) * (W + 1) + x1 + 1] - g[y0 * (W + 1) + x1 + 1] - g[(y1 + 1) * (W + 1) + x0] + g[y0 * (W + 1) + x0];
+        const k = (y * W + x) * 4, v = d.data[k] < (suma / ((x1 - x0 + 1) * (y1 - y0 + 1))) * 0.88 ? 0 : 255;
+        d.data[k] = d.data[k + 1] = d.data[k + 2] = v;
+      }
+    }
+    ctx.putImageData(d, 0, 0);
+    return lienzo;
+  }
+
+  // Fotos y capturas: dos lecturas que se complementan (en grises como bloque de texto, y en blanco y negro por zonas);
+  // las reglas toman de cada dato la mejor versión
+  async function leerImagen(lienzo, avance) {
+    const a = await ocr(lienzo, (t) => avance && avance(`Leyendo (1 de 2)… ${t}`), "6");
+    const b = await ocr(binarizar(lienzo), (t) => avance && avance(`Leyendo (2 de 2)… ${t}`), "3");
+    return a + "\n" + b;
   }
 
   // Foto del celular (12 MP, a veces HEIC) o captura chica: girada según EXIF, a ~2800 px de lado y en grises. Así el reconocimiento
@@ -45,13 +79,12 @@ const Lector = (() => {
     }
     // Lado mayor ~2800 px: agranda capturas chicas (WhatsApp las deja en ~900 px y el texto queda ilegible para el
     // lector) y achica las fotos de 12 MP (memoria del teléfono)
-    // Capturas altas del celular (texto chico a lo ancho): hasta 4200 px de alto
-    const ladoMaximo = img.height > img.width * 1.6 ? 4200 : 2800;
-    const escala = Math.min(3, ladoMaximo / Math.max(img.width, img.height));
+    // Lado mayor 3200 px (probado con fotos y capturas reales de Geclisa y de informes en papel)
+    const escala = Math.min(3, 3200 / Math.max(img.width, img.height));
     const lienzo = document.createElement("canvas");
     lienzo.width = Math.round(img.width * escala); lienzo.height = Math.round(img.height * escala);
     const ctx = lienzo.getContext("2d");
-    ctx.filter = "grayscale(1) contrast(1.15)";
+    ctx.filter = "grayscale(1)";
     ctx.drawImage(img, 0, 0, lienzo.width, lienzo.height);
     return lienzo;
   }
@@ -70,7 +103,7 @@ const Lector = (() => {
         const lienzo = document.createElement("canvas");
         lienzo.width = vista.width; lienzo.height = vista.height;
         await pag.render({ canvasContext: lienzo.getContext("2d"), viewport: vista }).promise;
-        paginas.push(await ocr(lienzo, avance));
+        paginas.push(await leerImagen(lienzo, avance));
         continue;
       }
       // Agrupar por renglón (misma altura) y ordenar de izquierda a derecha
@@ -99,7 +132,7 @@ const Lector = (() => {
     const partes = [];
     for (const [i, a] of archivos.entries()) {
       avance && avance(`Leyendo ${i + 1} de ${archivos.length}…`);
-      partes.push(a.type === "application/pdf" ? await textoPDF(a, avance) : await ocr(await preparar(a), avance));
+      partes.push(a.type === "application/pdf" ? await textoPDF(a, avance) : await leerImagen(await preparar(a), avance));
     }
     return partes.join("\n");
   }
@@ -122,6 +155,9 @@ const Lector = (() => {
   }
 
   // Etiquetas de los partes (las más largas primero, para que «diagnóstico postoperatorio» gane a «diagnóstico»)
+  // Fecha leída con un dígito mal (2076): fuera del último año no es la de la prestación
+  const fechaCercana = (f) => (f && Math.abs(Date.now() - Date.parse(f)) < 400 * 864e5 ? f : "");
+
   // Sin etiqueta de fecha: la fecha del texto más cercana a hoy (último año), descartando nacimiento, ingreso y alta
   function fechaProbable(texto) {
     const hoy = Date.now();
@@ -146,13 +182,13 @@ const Lector = (() => {
       "datos del paciente", "paciente", "beneficiario", "nombre"],
     dni: ["d.n.i.", "dni", "documento", "nro. documento", "n° documento", "doc", "numero"],
     obra_social: ["os / plan - nro. afiliado", "obra social", "financ.", "financiador", "cobertura medica", "cobertura", "financiador", "prepaga", "entidad", "o. social", "o. s.", "o.s.", "os"],
-    afiliado: ["n° de afiliado", "nro. de afiliado", "nro de afiliado", "n° afiliado", "nro afiliado", "nro. afiliado", "n° de beneficio",
-      "nro. beneficio", "beneficio", "credencial", "carnet", "n° socio", "nro socio", "afiliado"],
+    afiliado: ["nro de beneficiario", "n° beneficiario", "n° de afiliado", "nro. de afiliado", "nro de afiliado", "n° afiliado", "nro afiliado", "nro. afiliado", "n° de beneficio",
+      "nro. beneficio", "beneficio", "credencial", "carnet", "n° socio", "nro socio", "afiliado", "nro"],
     fecha: ["fecha de cirugia", "fecha de la cirugia", "fecha cirugia", "fecha de operacion", "fecha operacion", "fecha de intervencion",
       "fecha intervencion", "fecha qx", "fecha del procedimiento", "fecha de la practica", "fecha"],
     hora: ["hora de inicio", "hora inicio", "hora de comienzo", "comienzo", "inicio"],
     diagnostico: ["diagnostico operatorio", "diagnostico postoperatorio", "diagnostico preoperatorio", "diagnostico post", "diagnostico pre", "diagnostico"],
-    procedimiento: ["operacion practicada", "procedimientos realizados", "procedimiento realizado", "procedimiento quirurgico", "cirugia realizada", "cirugia efectuada",
+    procedimiento: ["operacion practicada", "estudio realizado", "estudio", "procedimientos realizados", "procedimiento realizado", "procedimiento quirurgico", "cirugia realizada", "cirugia efectuada",
       "operacion realizada", "operacion efectuada", "intervencion realizada", "intervencion efectuada", "intervencion quirurgica",
       "acto quirurgico", "practica realizada", "procedimiento", "operacion indicada", "intervencion", "operacion", "cirugia"],
     cirujano: ["cirujano principal", "cirujano"],
@@ -165,7 +201,8 @@ const Lector = (() => {
       // Geclisa: la descripción de la técnica («Procedimientos:») no es el procedimiento a facturar
       "procedimientos", "fec. ingreso", "fec. egreso", "fec. egr. prob", "hs. ing", "hs. eg", "hs. egr. prob", "tipo doc", "tipo internacion",
       "hora de finalizacion", "tiempo operatorio", "riesgo quirurgico", "tipo de anestesia", "instrumentador", "otros profesionales",
-      "estudios intraoperatorios", "fecha nac.", "f. nac.", "n° h clinica", "n° h.clinica", "sexo", "edad"],
+      "estudios intraoperatorios", "tipo de estudio", "motivos de consulta", "motivo de consulta", "solicitante", "conclusion",
+      "esofago", "estomago", "duodeno", "datos del paciente", "fecha nac.", "f. nac.", "n° h clinica", "n° h.clinica", "sexo", "edad"],
   };
   // Normalizadas igual que el texto («Nº» → «no»: la º se descompone en «o»)
   const LISTA = Object.entries(ETIQUETAS).flatMap(([campo, ls]) => ls.map((l, prioridad) => ({ campo, l: plano(l), prioridad })))
@@ -173,7 +210,24 @@ const Lector = (() => {
   const patron = (l) => l.replace(/[.\/]/g, (c) => "\\" + c).replace(/ /g, "\\s+");
   // Separador: «:» o «=»; también «-» o varios espacios / tabulación (tablas sin dos puntos)
   const RE_ETIQUETA = new RegExp("(?:^|\\s{2,}|[|;]\\s*|\\b)(" + LISTA.map((x) => patron(x.l)).join("|") +
-    ")(?:\\s*(?:n[°º]\\.?\\s*)?[:=]|\\s+-\\s|\\s{2,}|\\t|(?<=\\.)\\s)", "g"); // «Nº At. 946568»: tras abreviatura alcanza un espacio
+    ")(?:\\s*(?:n[°º]\\.?\\s*)?[:=]|\\s+[-–—]\\s|\\s{2,}|\\t|(?<=\\.)\\s|\\s(?=\\d))", "g");
+  // Separadores: «:» o «=»; guión; varios espacios o tabulación (tablas); tras abreviatura un espacio («Nº At. 946568»);
+  // un espacio si sigue un número («Nro 1500…», «Fecha 23/09/2026»).
+  // Además, al comienzo del renglón, una etiqueta de varias palabras seguida de un espacio («Nombre y Apellido DIAZ, Elsa»)
+  const RE_INICIO = new RegExp("^\\s*(" + LISTA.filter((x) => x.l.includes(" ")).map((x) => patron(x.l)).join("|") + ")\\s+(?=\\S)");
+
+  // Palabras médicas frecuentes: la lectura que las tiene bien escritas es la buena («VideoEndoscopía Alta» y no «Videcendoecopia Aa»)
+  const VOCABULARIO = /endoscop|colonosc|gastro|laparosc|laparotom|hernio|colecist|apendic|eventro|explorador|inguinal|umbilical|\bcpre\b|papilot|polipect|biopsi|escision|lipoma|\balta\b|\bbaja\b|\bveda\b|\bvcc\b|litiasis|coledoc|varice|ligadura|hernia|malla|drenaje|absceso/g;
+
+  // Con dos lecturas de la misma foto, el mismo dato aparece dos veces: se queda la versión que «se ve» mejor
+  function calidad(campo, v) {
+    const t = v.trim();
+    if (campo === "paciente" || campo === "apellidos") return (/^[A-ZÁÉÍÓÚÑ]{3,}[ ,.]/.test(t) ? 3 : 0) + (/,/.test(t) ? 1 : 0) - (t.match(/[^A-Za-zÁÉÍÓÚÑáéíóúñü ,.'-]/g) || []).length;
+    if (["dni", "afiliado", "atencion"].includes(campo)) return (t.match(/\d/g) || []).length - (t.match(/[^\d\s.\/-]/g) || []).length * 2;
+    if (campo === "fecha") return fechaISO(t) ? 2 : 0;
+    if (["procedimiento", "diagnostico"].includes(campo)) return 2 * (plano(t).match(VOCABULARIO) || []).length - (t.match(/[^\wÁÉÍÓÚÑáéíóúñü ,.:;()+\/%-]/g) || []).length;
+    return -(t.match(/[^\wÁÉÍÓÚÑáéíóúñü ,.:;()+\/%-]/g) || []).length; // menos símbolos raros = mejor
+  }
 
   // Valores por etiqueta: «Paciente: X   DNI: 123» → {paciente: X, dni: 123}. Si la etiqueta queda sola en el renglón,
   // el valor es el renglón siguiente (formularios en dos columnas).
@@ -185,6 +239,12 @@ const Lector = (() => {
       const marcas = [];
       RE_ETIQUETA.lastIndex = 0;
       let m;
+      const inicio = p.match(RE_INICIO);
+      if (inicio && !RE_ETIQUETA.test(p.slice(0, inicio[0].length + 1))) {
+        const def = LISTA.find((x) => x.l === inicio[1].replace(/\s+/g, " "));
+        if (def) marcas.push({ ...def, desde: inicio[0].length, inicio: 0 });
+      }
+      RE_ETIQUETA.lastIndex = 0;
       while ((m = RE_ETIQUETA.exec(p))) {
         const etiqueta = m[1].replace(/\s+/g, " ");
         const def = LISTA.find((x) => x.l === etiqueta);
@@ -192,11 +252,15 @@ const Lector = (() => {
       }
       marcas.forEach((mk, j) => {
         let valor = linea.slice(mk.desde, j + 1 < marcas.length ? marcas[j + 1].inicio : undefined).trim().replace(/^[-–:.\s]+|[|;\s]+$/g, "")
-          .replace(/\s+(n[°º?o]?\.?|nro\.?|nº)$/i, ""); // «N°» que pertenece a la etiqueta siguiente
+          .replace(/\s+(n[°º?o]?\.?|nro\.?|nº)$/i, "") // «N°» que pertenece a la etiqueta siguiente
+          .replace(/\s+[_*|~=<>»«“”"]+(\s.*)?$/, "").replace(/^[—–\s]+/, "").replace(/[\s,;]+$/, "").trim(); // basura del lector
         if (!valor && j + 1 === marcas.length) valor = (lineas.slice(i + 1).find((l) => l.trim()) || "").trim();
         if (!valor) return;
-        if (mk.campo === "ayudantes" && out.ayudantes) out.ayudantes += ", " + valor;
-        else if (!(mk.campo in out) || mk.prioridad < prioridad[mk.campo]) { out[mk.campo] = valor; prioridad[mk.campo] = mk.prioridad; }
+        if (mk.campo === "ayudantes" && out.ayudantes) { if (!plano(out.ayudantes).includes(plano(valor))) out.ayudantes += ", " + valor; }
+        else if (!(mk.campo in out) || mk.prioridad < prioridad[mk.campo] ||
+                 (mk.prioridad === prioridad[mk.campo] && calidad(mk.campo, valor) > calidad(mk.campo, out[mk.campo]))) {
+          out[mk.campo] = valor; prioridad[mk.campo] = mk.prioridad;
+        }
       });
     });
     return out;
@@ -223,17 +287,23 @@ const Lector = (() => {
 
   function parte(texto, obraSocial) {
     const e = porEtiqueta(texto);
-    const dni = soloDigitos(e.dni || (plano(texto).match(/\bd\.?n\.?i\.?(?:\s*(?:numero|n°|nro\.?))?\s*:?\s*([\d.]{7,11})/) || [])[1]).replace(/^0+/, "");
+    // Sin obra social legible: el n.º de beneficio de PAMI tiene 12 dígitos + 2 de parentesco (150088749201/00)
+    if (!e.obra_social && /^1\d{11}[\/-]?\d{2}$/.test((e.afiliado || "").replace(/\s/g, ""))) e.obra_social = "PAMI";
+    const esDni = (t) => /^\d{7,8}$/.test(soloDigitos(t).replace(/^0+/, ""));
+    const dni = soloDigitos(esDni(e.dni || "") ? e.dni : (plano(texto).match(/\b(?:d\.?n\.?i\.?|documento)(?:\s*(?:numero|n°|nro\.?|dni))?\s*:?\s*([\d.]{7,11})/) || [])[1]).replace(/^0+/, "");
     const procs = (e.procedimiento || "").replace(/^[\[\(|{]+/, "").split(/\s*(?:\+|;|\/|\by\b(?= [A-ZÁÉÍÓÚ])|\d\)\s)\s*/).map((s) => s.trim()).filter((s) => s.length > 2); // «VCC» tiene 3 letras
     const osTexto = e.obra_social || "";
     return {
-      fecha: fechaISO(e.fecha || "") || fechaProbable(texto),
+      fecha: fechaCercana(fechaISO(e.fecha || "")) || fechaProbable(texto),
       hora: ((e.hora || "").match(/\d{1,2}[:.]\d{2}/) || [""])[0].replace(".", ":"),
-      paciente: (e.apellidos ? e.apellidos.trim() + (e.nombres ? ", " + e.nombres.trim() : "") : e.paciente || nombreSinEtiqueta(texto)).replace(/\s*\b(dni|edad|h\.?c\.?)\b.*$/i, "").replace(/[.,\s]+$/, "").trim(),
+      paciente: (e.apellidos ? e.apellidos.trim() + (e.nombres ? ", " + e.nombres.trim() : "") : e.paciente || nombreSinEtiqueta(texto))
+        .replace(/^([A-ZÁÉÍÓÚÑ]{2,})\.\s+(?=[A-ZÁÉÍÓÚÑa-z])/, "$1, ").replace(/[|\[\]{}()_*~]/g, " ")
+        .replace(/(^|\s)[A-Za-z](?=\s|,|$)/g, " ").replace(/\s+,/g, ",").replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").replace(/\s*\b(dni|edad|h\.?c\.?)\b.*$/i, "").replace(/[.,\s]+$/, "").trim(),
       dni: dni.length >= 7 && dni.length <= 8 ? dni : "",
-      obra_social_texto: osTexto.replace(/\s+-\s+\d[\d\s\/-]*$/, "") || (obraSocial(texto) || ""),
+      obra_social_texto: osTexto.replace(/\s+-\s+\d[\d\s\/-]*$/, "").replace(/\s+nro\b.*$/i, "") || (obraSocial(texto) || ""),
       // «PAMI / CAPITA UROLOGICO - 14594162170700»: el número de afiliado viene al final de la obra social
-      afiliado: (e.afiliado || (osTexto.match(/-\s*(\d[\d\/-]{5,})\s*$/) || [])[1] || "").split(/\s{2,}/)[0],
+      // Afiliado: tiene que tener números (si no, el lector tomó otra cosa)
+      afiliado: ([e.afiliado, (osTexto.match(/-\s*(\d[\d\/-]{5,})\s*$/) || [])[1]].find((x) => (x || "").replace(/\D/g, "").length >= 3) || "").split(/\s{2,}/)[0].trim(),
       atencion: soloDigitos(e.atencion || ""),
       codigo_os: soloDigitos(e.codigo_os || ""),
       institucion: e.institucion || "",
@@ -273,6 +343,29 @@ const Lector = (() => {
       atencion: numeros.filter((n) => n.length === 7).pop() || "", nota };
   }
 
+  // Dos lecturas de la misma foto: cada paciente una sola vez, completando lo que a una lectura le faltó
+  // Parecido entre dos textos (0 a 1), para reconocer el mismo nombre leído con una letra distinta («MIRTA» / «MITA»)
+  function parecido(a, b) {
+    const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      let previo = d[0]; d[0] = i;
+      for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, previo + (a[i - 1] === b[j - 1] ? 0 : 1)); previo = t; }
+    }
+    return 1 - d[b.length] / Math.max(a.length, b.length, 1);
+  }
+  function sinRepetir(filas) {
+    const unicas = [];
+    for (const f of filas) {
+      const k = plano(f.paciente).replace(/[^a-z]/g, "");
+      const previa = unicas.find((u) => parecido(plano(u.paciente).replace(/[^a-z]/g, ""), k) >= 0.85);
+      if (!previa) unicas.push(f);
+      else for (const [c, v] of Object.entries(f)) if (v && !previa[c]) previa[c] = v;
+    }
+    // Código de PAMI (8201xx) y obra social ilegible en las dos lecturas
+    for (const f of unicas) if (/^8201\d\d$/.test(f.codigo_os || "") && !/pami/i.test(f.obra_social_texto || "") && (f.obra_social_texto || "").length < 4) f.obra_social_texto = "PAMI";
+    return unicas;
+  }
+
   function listado(texto, obraSocial) {
     const filas = [];
     const fecha = fechaISO(texto) || fechaProbable(texto);
@@ -284,7 +377,7 @@ const Lector = (() => {
         filas.push({ fecha, hora: t.hora, paciente: t.paciente, dni: "", afiliado: "", tipo: "consulta", obra_social_texto: t.obra_social_texto,
           codigo_os: t.codigo_os, atencion: t.atencion, notas: t.nota, ausente: false, detalle: "" });
       }
-      if (filas.length) return filas;
+      if (filas.length) return sinRepetir(filas);
     }
     for (const linea of texto.split(/\r?\n/)) {
       const p = plano(linea);
@@ -309,7 +402,7 @@ const Lector = (() => {
         detalle: tipo === "practica" ? (linea.match(/(curaci\S*|punci\S*|retiro de puntos|drenaje\S*|biopsia\S*|infiltr\S*)[^|;]*/i) || [""])[0].trim() : "",
       });
     }
-    return filas;
+    return sinRepetir(filas);
   }
 
   // Liquidación de honorarios («Detalle Liquidación» del sistema de la institución). Una línea por prestación:
