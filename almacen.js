@@ -120,6 +120,32 @@ const Almacen = (() => {
     await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined });
   }
 
+  // ---------- Copia de seguridad (archivo cifrado con una clave propia: sirve en otro celular) ----------
+  const b64 = (u8) => btoa(String.fromCharCode(...u8));
+  const deB64 = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+  async function exportarCopia(clave) {
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const sobre = await cifrar({ ...doc, cuenta: doc.cuenta }, await derivar(clave, sal, ITERACIONES));
+    return JSON.stringify({ app: "liquidaciones", version: 1, fecha: new Date().toISOString(), iteraciones: ITERACIONES, sal: b64(sal),
+      iv: b64(sobre.iv), datos: b64(new Uint8Array(sobre.datos)) });
+  }
+  // Restaurar: se combina con lo que hay (no se pierde nada de ninguno de los dos lados)
+  async function importarCopia(texto, clave) {
+    let c;
+    try { c = JSON.parse(texto); } catch { throw new Error("El archivo no es una copia de Liquidaciones."); }
+    if (c.app !== "liquidaciones") throw new Error("El archivo no es una copia de Liquidaciones.");
+    let datos;
+    try { datos = await descifrar({ iv: deB64(c.iv), datos: deB64(c.datos) }, await derivar(clave, deB64(c.sal), c.iteraciones)); }
+    catch { throw new Error("Clave incorrecta para esta copia."); }
+    const antes = doc.prestaciones.length;
+    doc = combinar(doc, datos);
+    if (!doc.cuenta && datos.cuenta) doc.cuenta = datos.cuenta;
+    await escribirLocal();
+    programarSync();
+    return doc.prestaciones.length - antes;
+  }
+  async function marcarCopia() { doc.ultima_copia = Date.now(); await escribirLocal(); }
+
   async function cambiarPin(actual, nuevo) {
     await desbloquear(actual);
     await crearPin(nuevo);
@@ -315,7 +341,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, borrar, ajuste, tocar, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    iniciar, guardar, borrar, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
   };
 })();

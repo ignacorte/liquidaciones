@@ -45,11 +45,13 @@
       <p class="ayuda">Honorarios, obras sociales y cobros. Tus datos quedan en este celular y en <b>tu</b> Google Drive (carpeta «Liquidaciones»); nadie más los ve.</p>
       <button class="boton" id="conectar-inicio" style="width:100%">Conectar mi Google Drive</button>
       <p class="ayuda">o <a href="#" id="sin-drive">usar sin Drive por ahora</a> (los datos quedan solo en el celular)</p>
+      <p class="ayuda"><a href="ayuda.html">Cómo usarla</a></p>
     </div>
   </section>
 
   <!-- Inicio: resumen del mes -->
   <section id="v-inicio">
+    <div class="alerta" id="sin-copia" hidden></div>
     <div class="kpis" id="kpis"></div>
     <div class="card"><h2>Por obra social</h2><div class="tabla" id="por-os"></div></div>
     <div class="card"><h2>Por paciente</h2><div class="tabla" id="por-paciente"></div></div>
@@ -72,7 +74,7 @@
           <div class="fila"><button class="boton chico secundario" data-pegado="parte">Leer como parte</button>
           <button class="boton chico secundario" data-pegado="listado">Leer como listado</button></div></details>
       </div>
-      <div class="card">
+      <div class="card economia">
         <h2>Cargar la liquidación</h2>
         <p class="ayuda">El PDF «Detalle Liquidación» que te pasa la institución: marca como cobradas las prestaciones liquidadas (con el monto real) y agrega las que no estaban cargadas.</p>
         <label class="boton grande secundario"><span>💵</span> Liquidación (PDF)
@@ -83,6 +85,7 @@
         <div class="fila">
           <button class="boton secundario" data-nueva="consulta">+ Consulta</button>
           <button class="boton secundario" data-nueva="cirugia">+ Cirugía</button>
+          <button class="boton secundario" data-nueva="endoscopia">+ Endoscopía</button>
           <button class="boton secundario" data-nueva="practica">+ Práctica</button>
         </div>
       </div>
@@ -141,14 +144,20 @@
         <button class="boton chico secundario" id="sincronizar">Sincronizar ahora</button>
         <button class="boton chico secundario" id="planilla">Guardar Excel en Drive</button></div>
       <p class="ayuda">En tu Drive (carpeta «Liquidaciones») quedan dos archivos que se actualizan solos: los datos (.json) y <b>Liquidaciones.xlsx</b> con las hojas «Cirugías y procedimientos», «Consultas» y «Resumen mensual».</p>
+      <label>Uso de la app<select id="modo"><option value="completo">Completo: procedimientos, consultas, valores y cobros</option>
+        <option value="registro">Solo registro de procedimientos (sin montos ni cobros)</option></select></label>
       <p class="ayuda">Apellido como figura en los partes (para saber si fuiste ayudante):</p>
       <input id="apellido" placeholder="Apellido">
       <label>Bloquear la app después de<select id="min-bloqueo"><option value="5">5 minutos sin uso</option><option value="15">15 minutos sin uso</option>
         <option value="30">30 minutos sin uso</option><option value="60">1 hora sin uso</option></select></label>
       <div class="fila"><button class="boton chico secundario" id="cambiar-pin">Cambiar PIN</button></div>
+      <h2 style="margin-top:12px">Copia de seguridad</h2>
+      <p class="ayuda">Las actualizaciones de la app no borran nada. Igual, por si se pierde o cambia el celular: con Google Drive conectado la copia es automática; si no, descargá una copia cada tanto (queda cifrada con la clave que elijas).</p>
+      <div class="fila"><button class="boton chico secundario" id="copia-bajar">Descargar copia</button>
+        <label class="boton chico secundario">Restaurar copia<input type="file" accept=".json,application/json" hidden id="copia-subir"></label></div>
       <p class="ayuda">Seguridad: los datos de este celular están cifrados con tu PIN. Mientras la usás no vuelve a pedirlo (aunque recargues); lo pide después del tiempo sin uso elegido o al tocar 🔒.</p>
     </div>
-    <div class="card">
+    <div class="card economia">
       <h2>Referencias</h2>
       <div class="grid">
         <label>Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
@@ -162,19 +171,19 @@
         <button class="boton chico secundario" id="exportar">Descargar Excel</button>
       </div>
     </div>
-    <div class="card">
+    <div class="card economia">
       <h2>Obras sociales</h2>
       <p class="ayuda">Plazos para calcular cuándo cobrar. «% módulo» = parte del módulo que le toca al cirujano (si la obra social paga por módulo).</p>
       <div class="tabla" id="tabla-os"></div>
       <button class="boton chico secundario" id="nueva-os">+ Obra social</button>
     </div>
-    <div class="card">
+    <div class="card economia">
       <h2>Valores por código</h2>
       <label>Obra social<select id="v-os"></select></label>
       <div class="tabla" id="tabla-valores"></div>
       <button class="boton chico secundario" id="nuevo-valor">+ Cargar valor</button>
     </div>
-    <p class="ayuda" style="text-align:center">Liquidaciones · <a href="privacidad.html">Privacidad</a> · <a href="#" id="salir">Desconectar cuenta de este celular</a></p>
+    <p class="ayuda" style="text-align:center">Liquidaciones · <a href="ayuda.html">Cómo usarla</a> · <a href="privacidad.html">Privacidad</a> · <a href="#" id="salir">Desconectar cuenta de este celular</a></p>
   </section>
 </main>
 
@@ -182,7 +191,7 @@
   <button data-vista="inicio" class="activa"><span>📊</span>Inicio</button>
   <button data-vista="cargar"><span>📷</span>Cargar</button>
   <button data-vista="prestaciones"><span>🗂️</span>Prestaciones</button>
-  <button data-vista="cobros"><span>💰</span>Cobros</button>
+  <button data-vista="cobros" class="economia"><span>💰</span>Cobros</button>
   <button data-vista="valores"><span>⚙️</span>Valores</button>
 </nav>
 

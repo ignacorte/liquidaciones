@@ -10,11 +10,33 @@ const fechaCorta = (iso) => (iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/
 const hoy = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const nombreMes = (m) => (m === "vencido" ? "Vencido" : MESES[+m.slice(5, 7) - 1] + " " + m.slice(0, 4));
-const TIPOS = { consulta: "Consulta", cirugia: "Cirugía", practica: "Práctica" };
+const TIPOS = { consulta: "Consulta", cirugia: "Cirugía", endoscopia: "Endoscopía", practica: "Práctica" };
+const ENDOSCOPIAS = { alta: "Alta (VEDA)", baja: "Baja (colonoscopía)", ambas: "Alta y baja" };
+const SI_NO = { "": "—", si: "Sí", no: "No" };
 const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" };
 const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
-  "fecha_cobro", "monto_cobrado", "origen", "notas"];
+  "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia"];
+
+// Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
+function textoEndoscopia(p) {
+  const base = { alta: "Videoendoscopía digestiva alta", baja: "Videocolonoscopía", ambas: "Videoendoscopía digestiva alta + videocolonoscopía" }[p.endoscopia];
+  return base ? base + (p.polipectomia === "si" ? " con polipectomía" : "") : "";
+}
+const esTextoAutomatico = (t) => !t || /^Videoendoscop|^Videocolonosc/.test(t);
+
+// Procedimientos: datos del paciente obligatorios (para facturar y para el registro)
+function faltantes(p) {
+  if (p.tipo === "consulta" || p.origen === "liquidacion") return [];
+  const f = [];
+  if (!(p.paciente || "").trim()) f.push("nombre y apellido");
+  if (!(p.dni || "").trim()) f.push("DNI");
+  if (!p.obra_social) f.push("obra social");
+  if (!(p.afiliado || "").trim() && p.obra_social !== "PARTICULAR") f.push("n.º de afiliado");
+  if (p.tipo === "endoscopia" && !p.endoscopia) f.push("tipo de endoscopía");
+  return f;
+}
+const modoRegistro = () => ajuste("modo", "completo") === "registro";
 
 const estado = { vista: "inicio", seleccion: new Set(), base: null };
 
@@ -76,7 +98,16 @@ const refrescar = () => ir(estado.vista);
 
 // ---------- Inicio ----------
 
+function avisoCopia() {
+  const d = Almacen.doc, dias = d.ultima_copia ? (Date.now() - d.ultima_copia) / 864e5 : Infinity;
+  const mostrar = !d.cuenta && d.prestaciones.length > 0 && dias > 7;
+  $("#sin-copia").hidden = !mostrar;
+  if (mostrar) $("#sin-copia").innerHTML = 'Tus datos están <b>solo en este celular</b>. Conectá Google Drive o descargá una copia en <a href="#" data-ir="valores">Valores → Copia de seguridad</a>.';
+}
+
 function verInicio() {
+  avisoCopia();
+  if (modoRegistro()) return verInicioRegistro();
   const inflacion = +ajuste("inflacion_mensual", 0);
   const r = Motor.resumen(datos(), mes(), hoy(), inflacion), t = r.totales;
   const kpi = (titulo, valor, clase = "") => `<div class="kpi ${clase}"><small>${titulo}</small><b>${valor}</b></div>`;
@@ -92,6 +123,28 @@ function verInicio() {
   $("#por-paciente").innerHTML = r.por_paciente.length ? `<table><tr><th>Paciente</th><th class="n">#</th><th class="n">Estimado</th><th class="n">Cobrado</th></tr>` +
     r.por_paciente.map((p) => `<tr><td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${esc(p.obra_social)}</div></td>
       <td class="n">${p.n}</td><td class="n">${pesos(p.estimado)}</td><td class="n">${pesos(p.cobrado)}</td></tr>`).join("") + "</table>" : "";
+}
+
+// Registro de procedimientos: cuántos por tipo, obra social y paciente (sin montos)
+function verInicioRegistro() {
+  const filas = datos().prestaciones.filter((p) => p.fecha.slice(0, 7) === mes());
+  const contar = (f) => filas.filter(f).length;
+  const kpi = (titulo, valor) => `<div class="kpi"><small>${titulo}</small><b>${valor}</b></div>`;
+  $("#kpis").innerHTML = kpi("Procedimientos", contar((p) => p.tipo !== "consulta")) + kpi("Endoscopías", contar((p) => p.tipo === "endoscopia")) +
+    kpi("Cirugías", contar((p) => p.tipo === "cirugia")) + kpi("Polipectomías", contar((p) => p.polipectomia === "si"));
+  const porOS = {};
+  for (const p of filas) porOS[p.obra_social || "Sin obra social"] = (porOS[p.obra_social || "Sin obra social"] || 0) + 1;
+  $("#por-os").innerHTML = filas.length ? `<table><tr><th>Obra social</th><th class="n">#</th></tr>` +
+    Object.entries(porOS).sort((a, b) => b[1] - a[1]).map(([o, n]) => `<tr data-os="${esc(o)}"><td>${esc(o)}</td><td class="n">${n}</td></tr>`).join("") + "</table>"
+    : `<p class="ayuda">Sin procedimientos en ${nombreMes(mes())}. Cargá un parte desde «Cargar».</p>`;
+  $("#por-paciente").innerHTML = filas.length ? `<table><tr><th>Paciente</th><th>Procedimiento</th></tr>` +
+    filas.sort((a, b) => b.fecha.localeCompare(a.fecha)).map((p) => `<tr><td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${fechaCorta(p.fecha)} · ${esc(p.obra_social || "")}</div></td>
+      <td>${esc(p.procedimiento || TIPOS[p.tipo])}${p.tipo === "endoscopia" && p.ciego ? `<div class="ayuda" style="margin:0">Ciego: ${SI_NO[p.ciego]}</div>` : ""}</td></tr>`).join("") + "</table>" : "";
+}
+
+function aplicarModo() {
+  document.body.classList.toggle("modo-registro", modoRegistro());
+  $("#modo").value = ajuste("modo", "completo");
 }
 
 // ---------- Formulario de prestación ----------
@@ -120,29 +173,35 @@ function camposPrestacion(p, completo) {
     <label>Tipo${sel("tipo", TIPOS, p.tipo)}</label>
     <label class="ancho">Paciente<input name="paciente" value="${esc(p.paciente)}" required></label>
     <label>Obra social<select name="obra_social">${opcionesOS(p.obra_social)}</select></label>
-    <label>Afiliado<input name="afiliado" value="${esc(p.afiliado)}" inputmode="numeric"></label>
+    <label>N.º de afiliado<input name="afiliado" value="${esc(p.afiliado)}"></label>
+    ${quir ? `<label>DNI<input name="dni" value="${esc(p.dni)}" inputmode="numeric"></label>` : ""}
     ${p.obra_social_texto && p.obra_social_texto !== p.obra_social ? `<p class="ayuda ancho" style="margin-top:-6px">Leído: «${esc(p.obra_social_texto.slice(0, 80))}»</p>` : ""}
+    ${p.tipo === "endoscopia" ? `
+    <label>Endoscopía${sel("endoscopia", { "": "— elegir —", ...ENDOSCOPIAS }, p.endoscopia || "")}</label>
+    ${["baja", "ambas"].includes(p.endoscopia) ? `<label>¿Llegó a ciego?${sel("ciego", SI_NO, p.ciego || "")}</label>` : ""}
+    <label>¿Polipectomía?${sel("polipectomia", SI_NO, p.polipectomia || "")}</label>` : ""}
     ${quir ? `
     <label class="ancho">Procedimiento<input name="procedimiento" value="${esc(p.procedimiento)}"></label>
-    <label class="ancho">Código AAC<select name="codigo_aac">${opcionesCodigo(p)}</select></label>
-    <div class="ancho fila" style="margin-top:-4px"><button type="button" class="boton chico secundario" data-buscar-codigo>Buscar otro código</button></div>
+    <label class="ancho economia">Código AAC<select name="codigo_aac">${opcionesCodigo(p)}</select></label>
+    <div class="ancho fila economia" style="margin-top:-4px"><button type="button" class="boton chico secundario" data-buscar-codigo>Buscar otro código</button></div>
     <label>Abordaje${sel("abordaje", { "": "—", laparoscopica: "Laparoscópica", convencional: "Convencional", robotica: "Robótica", percutanea: "Percutánea", endoscopica: "Endoscópica" }, p.abordaje || "")}</label>
     <label>Rol${sel("rol", { cirujano: "Cirujano", ayudante: "Ayudante" }, p.rol || "cirujano")}</label>
-    <label>% a facturar<input type="number" name="pct" value="${p.pct || 100}" min="1" max="100"></label>
+    <label class="economia">% a facturar<input type="number" name="pct" value="${p.pct || 100}" min="1" max="100"></label>
     <label>Código obra social<input name="codigo_os" value="${esc(p.codigo_os)}"></label>
     <label class="check"><input type="checkbox" name="urgencia" ${p.urgencia ? "checked" : ""}> Urgencia</label>` : ""}
     ${completo ? `
     <label>Hora<input type="time" name="hora" value="${esc(p.hora)}"></label>
-    <label>DNI<input name="dni" value="${esc(p.dni)}" inputmode="numeric"></label>
+    ${quir ? "" : `<label>DNI<input name="dni" value="${esc(p.dni)}" inputmode="numeric"></label>`}
     <label>Institución<input name="institucion" value="${esc(p.institucion)}"></label>
-    <label>Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
-    <label>Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
-    <label>Presentada el<input type="date" name="fecha_presentacion" value="${esc(p.estado === "pendiente" ? "" : p.fecha_presentacion)}"></label>
-    <label>Cobrada el<input type="date" name="fecha_cobro" value="${esc(p.fecha_cobro)}"></label>
-    <label>Monto cobrado ($)<input type="number" name="monto_cobrado" value="${p.monto_cobrado ?? ""}"></label>
+    <label class="economia">Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
+    <label class="economia">Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
+    <label class="economia">Presentada el<input type="date" name="fecha_presentacion" value="${esc(p.estado === "pendiente" ? "" : p.fecha_presentacion)}"></label>
+    <label class="economia">Cobrada el<input type="date" name="fecha_cobro" value="${esc(p.fecha_cobro)}"></label>
+    <label class="economia">Monto cobrado ($)<input type="number" name="monto_cobrado" value="${p.monto_cobrado ?? ""}"></label>
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(p.notas)}</textarea></label>` : ""}
   </div>
-  <div class="valor"><b>${pesos(p.valor_estimado)}</b> <span class="ayuda">· cobro estimado ${fechaCorta(p.fecha_cobro_estimada)}</span>
+  ${faltantes(p).length ? `<div class="alerta" style="margin:4px 0">Falta: ${faltantes(p).join(", ")}</div>` : ""}
+  <div class="valor economia"><b>${pesos(p.valor_estimado)}</b> <span class="ayuda">· cobro estimado ${fechaCorta(p.fecha_cobro_estimada)}</span>
     <div class="origen">${esc(p.valor_origen)}</div></div>`;
 }
 
@@ -154,6 +213,10 @@ function leerCampos(el, base) {
     else p[c.name] = c.value === "" ? null : c.value;
   });
   if (p.estado === "pendiente" && p.fecha_presentacion) p.estado = "presentada";
+  if (p.tipo === "endoscopia") {
+    if (!["baja", "ambas"].includes(p.endoscopia)) p.ciego = null;
+    if (esTextoAutomatico(p.procedimiento)) p.procedimiento = textoEndoscopia(p) || p.procedimiento;
+  }
   return p;
 }
 
@@ -169,7 +232,10 @@ function enlazarEstimacion(el, obtener, guardar) {
     guardar({ ...p, ...e, sugerencias: e.sugerencias || p.sugerencias });
   };
   el.addEventListener("change", (ev) => {
-    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente"].includes(ev.target.name)) return;
+    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego"].includes(ev.target.name)) return;
+    if (["endoscopia", "polipectomia"].includes(ev.target.name) && esTextoAutomatico(obtener()?.procedimiento)) {
+      const p = obtener(); p.procedimiento = textoEndoscopia(p); guardar(p); return recalcular("procedimiento");
+    }
     recalcular(ev.target.name);
   });
   el.addEventListener("click", (ev) => {
@@ -253,6 +319,8 @@ async function guardarLote() {
   if (conciliacion) return aplicarLiquidacion().catch((e) => aviso(e.message));
   const elegidas = filasRevision.filter((f) => f.incluir);
   if (!elegidas.length) return aviso("No hay nada tildado.");
+  const incompleta = elegidas.find((f) => faltantes(f).length);
+  if (incompleta) return aviso(`${incompleta.paciente || "Un paciente"}: falta ${faltantes(incompleta).join(", ")}`);
   const existentes = datos().prestaciones;
   const repetidas = [];
   let n = 0;
@@ -288,7 +356,9 @@ function editar(p) {
     if (ev.target.matches("[data-cerrar]")) dlg.close();
     if (ev.target.matches("[data-borrar]") && confirm("¿Borrar esta prestación?")) { await Almacen.borrar("prestaciones", p.id); dlg.close(); refrescar(); }
     if (ev.target.matches("[data-ok]")) {
-      try { await guardarPrestacion(leerCampos(cuerpo, actual)); dlg.close(); aviso("Guardado"); refrescar(); }
+      const datosForm = leerCampos(cuerpo, actual), f = faltantes(datosForm);
+      if (f.length) return aviso("Falta completar: " + f.join(", "));
+      try { await guardarPrestacion(datosForm); dlg.close(); aviso("Guardado"); refrescar(); }
       catch (e) { aviso(e.message); }
     }
   };
@@ -315,14 +385,14 @@ function verPrestaciones() {
   lista.sort((a, b) => (b.fecha + (b.hora || "")).localeCompare(a.fecha + (a.hora || "")));
   estado.seleccion.clear(); actualizarSeleccion();
   const total = lista.reduce((s, p) => s + (p.valor_estimado || 0), 0);
-  $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} prestaciones · ${pesos(total)} estimado · tildá para marcar varias</p>` +
+  $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} prestaciones<span class="economia"> · ${pesos(total)} estimado · tildá para marcar varias</span></p>` +
     lista.map((p) => {
       const chip = Motor.vencida(p, h) ? '<span class="chip vencida">vencida</span>' : `<span class="chip ${p.estado}">${ESTADOS[p.estado]}</span>`;
       const detalle = p.tipo === "consulta" ? "Consulta" : (p.procedimiento || TIPOS[p.tipo]) + (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + p.codigo_aac : "");
-      return `<div class="item" data-id="${p.id}"><input type="checkbox" data-sel="${p.id}">
+      return `<div class="item" data-id="${p.id}"><input type="checkbox" data-sel="${p.id}" class="economia">
         <div class="cuerpo"><div class="titulo">${esc(p.paciente)}</div>
         <div class="sub">${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
-        <div class="monto">${pesos(p.monto_cobrado ?? p.valor_estimado)}<br>${chip}</div></div>`;
+        <div class="monto economia">${pesos(p.monto_cobrado ?? p.valor_estimado)}<br>${chip}</div></div>`;
     }).join("") : '<p class="ayuda">Nada para mostrar con estos filtros.</p>';
 }
 
@@ -583,6 +653,8 @@ async function construirExcel() {
     "Fecha": fechaX(p.fecha), "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "", "Obra social": p.obra_social || p.obra_social_texto || "",
     "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": p.procedimiento || "", "Código AAC": p.codigo_aac || "",
     "Código obra social": p.codigo_os || "", "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct || 100,
+    "Endoscopía": p.tipo === "endoscopia" ? ENDOSCOPIAS[p.endoscopia] || "" : "", "Llegó a ciego": p.ciego ? SI_NO[p.ciego] : "",
+    "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "",
     "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Cobro estimado": fechaX(p.fecha_cobro_estimada), "Cobrada el": fechaX(p.fecha_cobro), "Monto cobrado": p.monto_cobrado ?? null,
     "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
@@ -700,6 +772,26 @@ async function arrancar() {
     const c = ev.target.closest("[data-liq-incluir]");
     if (c && conciliacion) conciliacion.filas[+c.dataset.liqIncluir].incluir = c.checked;
   });
+  $("#modo").addEventListener("change", async () => { await Almacen.ajuste("modo", $("#modo").value); aplicarModo(); aviso("Guardado"); });
+  $("#sin-copia").addEventListener("click", (ev) => { if (ev.target.matches("[data-ir]")) { ev.preventDefault(); ir(ev.target.dataset.ir); } });
+  $("#copia-bajar").addEventListener("click", async () => {
+    const clave = prompt("Elegí una clave para la copia (mínimo 6 caracteres). Anotala: sin ella la copia no se puede abrir.");
+    if (!clave) return;
+    if (clave.length < 6) return aviso("La clave tiene que tener al menos 6 caracteres.");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([await Almacen.exportarCopia(clave)], { type: "application/json" }));
+    a.download = `Liquidaciones copia ${hoy()}.json`; a.click();
+    await Almacen.marcarCopia();
+    aviso("Copia descargada (cifrada). Guardala fuera del celular: mail, Drive o PC.");
+  });
+  $("#copia-subir").addEventListener("change", async (ev) => {
+    const archivo = ev.target.files[0]; ev.target.value = "";
+    if (!archivo) return;
+    const clave = prompt("Clave de la copia:");
+    if (!clave) return;
+    try { aviso(`Copia restaurada: ${await Almacen.importarCopia(await archivo.text(), clave)} prestaciones nuevas (lo que ya tenías se mantiene).`); refrescar(); }
+    catch (e) { aviso(e.message); }
+  });
   $("#min-bloqueo").addEventListener("change", async () => {
     await Almacen.ajuste("minutos_bloqueo", +$("#min-bloqueo").value);
     Almacen.minutosBloqueo = +$("#min-bloqueo").value;
@@ -740,6 +832,7 @@ async function arrancar() {
 function entrar() {
   $("#pin").value = $("#pin2").value = "";
   Almacen.minutosBloqueo = minutosBloqueo();
+  aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
   mostrarSync(Almacen.estado);
   ir("inicio");

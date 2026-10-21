@@ -224,7 +224,7 @@ const Lector = (() => {
   function parte(texto, obraSocial) {
     const e = porEtiqueta(texto);
     const dni = soloDigitos(e.dni || (plano(texto).match(/\bd\.?n\.?i\.?(?:\s*(?:numero|n°|nro\.?))?\s*:?\s*([\d.]{7,11})/) || [])[1]).replace(/^0+/, "");
-    const procs = (e.procedimiento || "").replace(/^[\[\(|{]+/, "").split(/\s*(?:\+|;|\/|\by\b(?= [A-ZÁÉÍÓÚ])|\d\)\s)\s*/).map((s) => s.trim()).filter((s) => s.length > 3);
+    const procs = (e.procedimiento || "").replace(/^[\[\(|{]+/, "").split(/\s*(?:\+|;|\/|\by\b(?= [A-ZÁÉÍÓÚ])|\d\)\s)\s*/).map((s) => s.trim()).filter((s) => s.length > 2); // «VCC» tiene 3 letras
     const osTexto = e.obra_social || "";
     return {
       fecha: fechaISO(e.fecha || "") || fechaProbable(texto),
@@ -335,6 +335,19 @@ const Lector = (() => {
     return { numero, emision, total, empresa, lineas };
   }
 
+  // Endoscopías: alta (VEDA), baja (colonoscopía) o ambas; si se llegó a ciego y si hubo polipectomía (del informe)
+  function endoscopia(proc, texto) {
+    const t = plano(proc), todo = plano(texto);
+    const alta = /\bveda\b|endoscopia (digestiva )?alta|gastroscop|esofagogastro|gastroduodenoscop|fibroendoscopia alta/.test(t);
+    const baja = /\bvcc\b|colonoscop|rectosigmoidoscop|endoscopia (digestiva )?baja|videocolono/.test(t);
+    if (!alta && !baja) return null;
+    const ciego = !baja ? "" : /no se (logra|alcanza|llega)[^.]{0,40}ciego|sin llegar a(l)? ciego|incomplet/.test(todo) ? "no"
+      : /ciego|valvula ileocecal|ileon terminal|intubacion ileal|orificio apendicular/.test(todo) ? "si" : "";
+    const polipectomia = /polipectom|reseccion de(l)? polipo|polipos? (resecad|extraid)|asa de diatermia/.test(todo) ? "si"
+      : /sin polipos|no se (observan|evidencian) polipos/.test(todo) ? "no" : "";
+    return { endoscopia: alta && baja ? "ambas" : alta ? "alta" : "baja", ciego, polipectomia };
+  }
+
   // Igual que la versión de PC (app/lectura.py): resultado → prestaciones
   function aPrestaciones(tipo, texto, { obraSocial, medico, pctMultiple }) {
     if (tipo === "listado") {
@@ -344,11 +357,20 @@ const Lector = (() => {
     const d = parte(texto, obraSocial);
     const ap = plano(medico || "").trim();
     const rol = ap && !plano(d.cirujano).includes(ap) && d.ayudantes.some((a) => plano(a).includes(ap)) ? "ayudante" : "cirujano";
+    // VEDA + VCC en el mismo acto: una sola endoscopía «alta y baja»
+    const endos = d.procedimientos.map((p) => endoscopia(p, texto));
+    if (d.procedimientos.length > 1 && endos.every(Boolean)) {
+      const tipos = new Set(endos.map((e) => e.endoscopia));
+      const unica = { ...endos.find((e) => e.endoscopia !== "alta") || endos[0], endoscopia: tipos.size > 1 || tipos.has("ambas") ? "ambas" : [...tipos][0] };
+      d.procedimientos = [d.procedimientos.join(" + ")];
+      endos.splice(0, endos.length, unica);
+    }
     return d.procedimientos.map((proc, i) => ({
       fecha: d.fecha, hora: d.hora, tipo: "cirugia", paciente: d.paciente, dni: d.dni, afiliado: d.afiliado, atencion: d.atencion,
       codigo_os: i === 0 ? d.codigo_os : "",
       obra_social_texto: d.obra_social_texto, institucion: d.institucion, diagnostico: d.diagnostico, procedimiento: proc,
       abordaje: d.abordaje, urgencia: d.urgencia, rol, pct: i === 0 ? 100 : pctMultiple, origen: "foto_parte", incluir: true,
+      ...(endos[i] ? { tipo: "endoscopia", abordaje: "endoscopica", ...endos[i] } : {}),
     }));
   }
 
