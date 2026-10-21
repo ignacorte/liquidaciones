@@ -11,12 +11,12 @@ const hoy = () => { const d = new Date(); return new Date(d - d.getTimezoneOffse
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const nombreMes = (m) => (m === "vencido" ? "Vencido" : MESES[+m.slice(5, 7) - 1] + " " + m.slice(0, 4));
 const TIPOS = { consulta: "Consulta", cirugia: "Cirugía", endoscopia: "Endoscopía", practica: "Práctica" };
-const ENDOSCOPIAS = { alta: "Alta (VEDA)", baja: "Baja (colonoscopía)", ambas: "Alta y baja" };
+const ENDOSCOPIAS = { alta: "Alta", baja: "Baja", ambas: "Alta y baja" };
 const SI_NO = { "": "—", si: "Sí", no: "No" };
 const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" };
 const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
-  "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia"];
+  "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -179,7 +179,8 @@ function camposPrestacion(p, completo) {
     ${p.tipo === "endoscopia" ? `
     <label>Endoscopía${sel("endoscopia", { "": "— elegir —", ...ENDOSCOPIAS }, p.endoscopia || "")}</label>
     ${["baja", "ambas"].includes(p.endoscopia) ? `<label>¿Llegó a ciego?${sel("ciego", SI_NO, p.ciego || "")}</label>` : ""}
-    <label>¿Polipectomía?${sel("polipectomia", SI_NO, p.polipectomia || "")}</label>` : ""}
+    <label>¿Polipectomía?${sel("polipectomia", SI_NO, p.polipectomia || "")}</label>
+    <label class="ancho">Observaciones<textarea name="observaciones" rows="2" placeholder="Detalles importantes: várices, úlceras, clips, ligadura, biopsias…">${esc(p.observaciones)}</textarea></label>` : ""}
     ${quir ? `
     <label class="ancho">Procedimiento<input name="procedimiento" value="${esc(p.procedimiento)}"></label>
     <label class="ancho economia">Código AAC<select name="codigo_aac">${opcionesCodigo(p)}</select></label>
@@ -232,7 +233,7 @@ function enlazarEstimacion(el, obtener, guardar) {
     guardar({ ...p, ...e, sugerencias: e.sugerencias || p.sugerencias });
   };
   el.addEventListener("change", (ev) => {
-    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego"].includes(ev.target.name)) return;
+    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
     if (["endoscopia", "polipectomia"].includes(ev.target.name) && esTextoAutomatico(obtener()?.procedimiento)) {
       const p = obtener(); p.procedimiento = textoEndoscopia(p); guardar(p); return recalcular("procedimiento");
     }
@@ -659,7 +660,7 @@ async function construirExcel() {
     "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": p.procedimiento || "", "Código AAC": p.codigo_aac || "",
     "Código obra social": p.codigo_os || "", "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct || 100,
     "Endoscopía": p.tipo === "endoscopia" ? ENDOSCOPIAS[p.endoscopia] || "" : "", "Llegó a ciego": p.ciego ? SI_NO[p.ciego] : "",
-    "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "",
+    "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "", "Observaciones (endoscopía)": p.observaciones || "",
     "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Cobro estimado": fechaX(p.fecha_cobro_estimada), "Cobrada el": fechaX(p.fecha_cobro), "Monto cobrado": p.monto_cobrado ?? null,
     "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,

@@ -234,6 +234,7 @@ const Lector = (() => {
     ayudantes: ["primer ayudante", "segundo ayudante", "1er ayudante", "2do ayudante", "1o ayudante", "2o ayudante", "1° ayudante", "2° ayudante",
       "ayudante 1ero", "ayudante 2do", "ayudantes", "ayudante", "otros profesionales"],
     anestesista: ["anestesiologo", "anestesista"],
+    conclusion: ["conclusion", "conclusiones", "hallazgos endoscopicos"],
     institucion: ["institucion", "sanatorio", "clinica", "establecimiento"],
     otros: ["edad", "sexo", "habitacion", "cama", "hc", "h. c.", "historia clinica", "hora de fin", "hora fin", "fin", "finalizacion", "instrumentadora",
       "instrumentista", "instrumentador", "descripcion", "hallazgos", "tecnica", "anatomia patologica", "examen anatopatologico", "telefono", "domicilio",
@@ -246,7 +247,7 @@ const Lector = (() => {
       "cierre de piel", "tiempo operatorio", "riesgo quirurgico", "tipo de anestesia", "clase de anestesia", "anestesia", "cardiologo", "anat. patologo",
       "obstetrica", "transfusionista", "sangre y soluciones", "cultivo", "drenajes", "biopsia por congelacion", "suite", "numero de hc",
       "numero de encuentro", "n° de encuentro", "estudios intraoperatorios", "tipo de estudio", "motivos de consulta", "motivo de consulta", "solicitante",
-      "conclusion", "esofago", "estomago", "duodeno", "datos del paciente", "fecha nac.", "f. nac.", "n° h clinica", "n° h.clinica", "nº h.clinica",
+      "esofago", "estomago", "duodeno", "datos del paciente", "fecha nac.", "f. nac.", "n° h clinica", "n° h.clinica", "nº h.clinica",
       "fec. egreso", "orden", "coseguro", "elementos", "total", "iva", "tipo alta"],
   };
   // Normalizadas igual que el texto («Nº» → «no»: la º se descompone en «o»)
@@ -346,6 +347,9 @@ const Lector = (() => {
             abajo.push(primeraCaja(l));
           }
           valor = abajo.join(mk.campo === "procedimiento" ? " + " : " ");
+        } else if (valor && mk.campo === "conclusion" && j + 1 === marcas.length) {
+          // La conclusión de un informe sigue en los renglones de abajo (hasta la etiqueta siguiente)
+          for (const l of siguientes.slice(0, 3)) { if (esEtiqueta(l)) break; valor += " " + l; }
         } else if (valor && mk.campo === "procedimiento" && j + 1 === marcas.length) {
           // Sigue abajo si termina en «+» o el renglón siguiente es corto y empieza con «(» o minúscula
           for (const l of siguientes.slice(0, 2)) {
@@ -438,6 +442,7 @@ const Lector = (() => {
       codigo_os: soloDigitos(e.codigo_os || "") || codigoEnProc || codigoPractica,
       institucion: e.institucion || "",
       diagnostico: e.diagnostico || "",
+      conclusion: e.conclusion || "",
       procedimientos: procs.length ? procs : [""],
       abordaje: abordaje((e.procedimiento || "") + " " + texto),
       // Solo si lo dice explícitamente («Guardia» aparece en las listas de evoluciones de la HC)
@@ -658,7 +663,7 @@ const Lector = (() => {
       codigo_os: i === 0 ? d.codigo_os : "",
       obra_social_texto: d.obra_social_texto, institucion: d.institucion, diagnostico: d.diagnostico, procedimiento: proc,
       abordaje: d.abordaje, urgencia: d.urgencia, rol, pct: i === 0 ? 100 : pctMultiple, origen: "foto_parte", incluir: true,
-      ...(endos[i] ? { tipo: "endoscopia", abordaje: "endoscopica", ...endos[i] } : {}),
+      ...(endos[i] ? { tipo: "endoscopia", abordaje: "endoscopica", ...endos[i], observaciones: d.conclusion } : {}),
     }));
   }
 
