@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f5c4d">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://www.googleapis.com; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Liquidaciones</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icono.svg">
@@ -14,10 +16,27 @@
 <body>
 <header>
   <div><h1 id="titulo">Inicio</h1><small id="sync" style="opacity:.8;font-size:11px"></small></div>
-  <input type="month" id="mes" aria-label="Mes">
+  <div class="fila" style="margin:0;flex-wrap:nowrap"><input type="month" id="mes" aria-label="Mes">
+  <button id="bloquear" class="boton chico secundario" style="background:transparent;color:inherit;border-color:currentColor" aria-label="Bloquear" hidden>🔒</button></div>
 </header>
 
 <main>
+  <!-- PIN: crear (primera vez) y desbloquear -->
+  <section id="v-pin" hidden>
+    <form class="card" id="form-pin" style="text-align:center" autocomplete="off">
+      <img src="icono-192.png" alt="" width="64" height="64">
+      <h2 id="pin-titulo">Desbloquear</h2>
+      <p class="ayuda" id="pin-ayuda"></p>
+      <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="off" placeholder="PIN"
+        style="text-align:center;font-size:24px;letter-spacing:6px">
+      <input id="pin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="off" placeholder="Repetí el PIN"
+        style="text-align:center;font-size:24px;letter-spacing:6px;margin-top:8px" hidden>
+      <button class="boton" type="submit" style="width:100%;margin-top:12px" id="pin-ok">Entrar</button>
+      <div id="pin-error" class="alerta error" style="margin-top:10px" hidden></div>
+      <p class="ayuda"><a href="#" id="olvide-pin">Olvidé mi PIN</a></p>
+    </form>
+  </section>
+
   <!-- Primera vez: conectar el Drive del profesional -->
   <section id="v-bienvenida" hidden>
     <div class="card" style="text-align:center">
@@ -116,6 +135,8 @@
         <button class="boton chico secundario" id="planilla">Guardar planilla del mes en Drive</button></div>
       <p class="ayuda">Apellido como figura en los partes (para saber si fuiste ayudante):</p>
       <input id="apellido" placeholder="Apellido">
+      <div class="fila"><button class="boton chico secundario" id="cambiar-pin">Cambiar PIN</button></div>
+      <p class="ayuda">Seguridad: los datos de este celular están cifrados con tu PIN y la app se bloquea sola tras 5 minutos sin uso.</p>
     </div>
     <div class="card">
       <h2>Referencias</h2>

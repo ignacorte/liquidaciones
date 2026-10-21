@@ -5,9 +5,10 @@
 // Después, reglas arman las prestaciones; el médico revisa antes de guardar.
 
 const Lector = (() => {
-  const TESSERACT = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
-  const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-  const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  // Librerías alojadas en la propia app (vendor/): no se carga código de otros sitios (ver la política de seguridad en index.html)
+  const local = (ruta) => new URL("vendor/" + ruta, location.href).href;
+  const TESSERACT = local("tesseract.min.js"); // tesseract.js 5.1.1
+  const PDFJS = local("pdf.min.js"), PDFJS_WORKER = local("pdf.worker.min.js"); // pdf.js 3.11.174
   const plano = (t) => (t || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
 
   const cargados = {};
@@ -22,6 +23,7 @@ const Lector = (() => {
     await script(TESSERACT);
     if (!worker) {
       worker = await Tesseract.createWorker("spa", 1, {
+        workerPath: local("worker.min.js"), corePath: local(""), langPath: local("lang"), workerBlobURL: false,
         logger: (m) => m.status === "recognizing text" && avance && avance(`Leyendo texto… ${Math.round(m.progress * 100)} %`),
       });
     }

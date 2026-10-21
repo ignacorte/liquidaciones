@@ -4,12 +4,15 @@ App web instalable (Android y iPhone). No necesita una PC prendida ni un servido
 
 - **Todo corre en el celular**: sugerencia de códigos AAC/PAMI, valores por obra social, fechas de cobro y resúmenes
   (`motor.js`, el mismo algoritmo que la versión de PC; `tests/test_movil.py` verifica que den igual).
+- **Seguridad**: PIN obligatorio; los datos del celular se guardan cifrados (AES-256-GCM, clave derivada del PIN con
+  PBKDF2); bloqueo automático a los 5 minutos; librerías alojadas en la app (`vendor/`) y política de seguridad de
+  contenido que solo permite conectarse con Google Drive.
 - **Lectura de documentos gratis y sin sacar datos del teléfono** (`lector.js`): PDF con texto → lectura directa;
   captura de pantalla, foto o PDF escaneado → reconocimiento de texto con Tesseract (español). Reglas arman las
   prestaciones a partir de etiquetas («Paciente:», «Obra social:», «Procedimiento:»…). También se puede pegar el texto.
 - **Datos de cada profesional**: en el celular (funciona sin señal) y copia en **su** Google Drive, carpeta
   «Liquidaciones» (`almacen.js`). Permiso `drive.file`: la app solo ve los archivos que ella creó.
-- La primera vez descarga el lector (~15 MB); después funciona sin conexión (`sw.js`).
+- La primera vez que se lee un documento descarga el lector (~11 MB, desde la misma app); después funciona sin conexión (`sw.js`).
 
 ## Publicarla (una sola vez)
 

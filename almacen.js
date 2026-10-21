@@ -2,6 +2,9 @@
 // Datos del profesional: en el celular (IndexedDB, funciona sin señal) y copia en SU Google Drive
 // (carpeta «Liquidaciones», archivo liquidaciones-datos.json). Permiso drive.file: la app solo ve los archivos que creó.
 // Sincronización por registro: gana la versión con `actualizado` más reciente; lo borrado queda marcado (borrada).
+// Seguridad: en el celular todo se guarda cifrado (AES-256-GCM) con una clave derivada del PIN (PBKDF2-SHA256,
+// 310.000 iteraciones). La clave vive solo en memoria mientras la app está desbloqueada; el PIN no se guarda.
+// El acceso a Drive (token, 1 hora) también se guarda cifrado.
 
 const Almacen = (() => {
   const DB = "liquidaciones", STORE = "doc", CLAVE = "datos";
@@ -16,29 +19,123 @@ const Almacen = (() => {
     r.onsuccess = () => ok(r.result);
     r.onerror = () => mal(r.error);
   });
-  async function leerLocal() {
+  async function idbLeer(clave) {
     const db = await idb();
     return new Promise((ok) => {
-      const r = db.transaction(STORE).objectStore(STORE).get(CLAVE);
-      r.onsuccess = () => ok(r.result || vacio());
-      r.onerror = () => ok(vacio());
+      const r = db.transaction(STORE).objectStore(STORE).get(clave);
+      r.onsuccess = () => ok(r.result ?? null);
+      r.onerror = () => ok(null);
     });
   }
-  async function escribirLocal() {
+  async function idbEscribir(pares) {
     const db = await idb();
     return new Promise((ok, mal) => {
       const t = db.transaction(STORE, "readwrite");
-      t.objectStore(STORE).put(doc, CLAVE);
+      for (const [k, v] of Object.entries(pares)) v === undefined ? t.objectStore(STORE).delete(k) : t.objectStore(STORE).put(v, k);
       t.oncomplete = ok; t.onerror = () => mal(t.error);
     });
   }
 
-  const nuevoId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  // ---------- Cifrado con PIN ----------
+  const ITERACIONES = 310000, PRUEBA = "liquidaciones-ok";
+  let llave = null; // CryptoKey AES-GCM (no exportable) mientras está desbloqueada
+  let meta = null;  // {sal, iteraciones, verificador}: datos públicos para verificar el PIN
 
-  async function iniciar() {
+  async function derivar(pin, sal, iteraciones) {
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "PBKDF2", salt: sal, iterations: iteraciones, hash: "SHA-256" }, base,
+      { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  async function cifrar(objeto, k = llave) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const datos = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, new TextEncoder().encode(JSON.stringify(objeto)));
+    return { iv, datos };
+  }
+  async function descifrar(sobre, k = llave) {
+    const plano = await crypto.subtle.decrypt({ name: "AES-GCM", iv: sobre.iv }, k, sobre.datos);
+    return JSON.parse(new TextDecoder().decode(plano));
+  }
+
+  const tienePin = () => !!meta;
+  const bloqueada = () => tienePin() && !llave;
+
+  async function crearPin(pin) {
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    llave = await derivar(pin, sal, ITERACIONES);
+    meta = { sal, iteraciones: ITERACIONES, verificador: await cifrar(PRUEBA) };
+    await idbEscribir({ pin: meta });
+    await escribirLocal(); // lo que hubiera sin cifrar (versión anterior) queda cifrado
+    if (tokenMem) await guardarToken();
+  }
+
+  // Intentos fallidos: espera creciente (30 s, 1 min, 2 min…) después del quinto, también entre reinicios de la app
+  async function esperaRestante() {
+    const f = (await idbLeer("fallos")) || { n: 0, hasta: 0 };
+    return Math.max(0, f.hasta - Date.now());
+  }
+  async function desbloquear(pin) {
+    const espera = await esperaRestante();
+    if (espera) throw new Error(`Demasiados intentos. Esperá ${Math.ceil(espera / 1000)} segundos.`);
+    const k = await derivar(pin, meta.sal, meta.iteraciones);
+    try {
+      if ((await descifrar(meta.verificador, k)) !== PRUEBA) throw new Error();
+    } catch {
+      const f = (await idbLeer("fallos")) || { n: 0, hasta: 0 };
+      f.n += 1;
+      f.hasta = f.n >= 5 ? Date.now() + 30000 * 2 ** (f.n - 5) : 0;
+      await idbEscribir({ fallos: f });
+      throw new Error(f.n >= 5 ? "PIN incorrecto. Esperá antes de volver a intentar." : `PIN incorrecto (${f.n} de 5 intentos).`);
+    }
+    llave = k;
+    await idbEscribir({ fallos: undefined });
+    await cargar();
+    const t = await idbLeer("token");
+    if (t && !tokenMem) tokenMem = await descifrar(t).catch(() => null);
+    else if (tokenMem) await guardarToken();
+  }
+
+  function bloquear() {
+    llave = null;
+    doc = vacio();
+    tokenMem = null;
+    clearTimeout(temporizador);
+  }
+
+  // Olvidó el PIN: se borra lo de este celular (cifrado, irrecuperable); la copia de Drive queda
+  async function olvidePin() {
+    bloquear();
+    meta = null;
+    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined });
+  }
+
+  async function cambiarPin(actual, nuevo) {
+    await desbloquear(actual);
+    await crearPin(nuevo);
+  }
+
+  async function leerLocal() {
+    const guardado = await idbLeer(CLAVE);
+    if (!guardado) return vacio();
+    if (guardado.iv && guardado.datos) return descifrar(guardado);
+    return guardado; // versión anterior, sin cifrar: se cifra al crear el PIN
+  }
+  async function escribirLocal() {
+    if (bloqueada()) throw new Error("La app está bloqueada");
+    await idbEscribir({ [CLAVE]: llave ? await cifrar(doc) : doc });
+  }
+
+  async function cargar() {
     doc = await leerLocal();
     for (const c of COLECCIONES) doc[c] ||= [];
     doc.ajustes ||= {};
+  }
+
+  const nuevoId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+  // Al abrir: con PIN queda bloqueada (no se lee nada hasta desbloquear); sin PIN (primera vez) se lee lo que haya
+  async function iniciar() {
+    meta = await idbLeer("pin");
+    if (!meta) await cargar();
     try { await navigator.storage?.persist?.(); } catch { /* el navegador decide */ }
   }
 
@@ -73,13 +170,9 @@ const Almacen = (() => {
   }
 
   // ---------- Google Drive (OAuth en el navegador, sin servidor) ----------
-  const TOKEN = "liq_token";
-  const token = () => {
-    try {
-      const t = JSON.parse(localStorage.getItem(TOKEN) || "null");
-      return t && t.vence > Date.now() + 60000 ? t.valor : null;
-    } catch { return null; }
-  };
+  let tokenMem = null; // {valor, vence}
+  const token = () => (tokenMem && tokenMem.vence > Date.now() + 60000 ? tokenMem.valor : null);
+  const guardarToken = async () => { if (llave) await idbEscribir({ token: tokenMem ? await cifrar(tokenMem) : undefined }); };
   const conectado = () => !!doc.cuenta;
 
   function conectar() {
@@ -98,7 +191,7 @@ const Almacen = (() => {
     const h = new URLSearchParams(location.hash.slice(1));
     history.replaceState(null, "", location.pathname);
     if (h.get("state") !== sessionStorage.getItem("liq_estado")) return false;
-    try { localStorage.setItem(TOKEN, JSON.stringify({ valor: h.get("access_token"), vence: Date.now() + (+h.get("expires_in") || 3600) * 1000 })); } catch { /* sin almacenamiento */ }
+    tokenMem = { valor: h.get("access_token"), vence: Date.now() + (+h.get("expires_in") || 3600) * 1000 }; // se guarda cifrado al desbloquear
     return true;
   }
 
@@ -106,7 +199,7 @@ const Almacen = (() => {
     const t = token();
     if (!t) throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true });
     const r = await fetch(url, { ...opciones, headers: { Authorization: "Bearer " + t, ...(opciones.headers || {}) } });
-    if (r.status === 401) { localStorage.removeItem(TOKEN); throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true }); }
+    if (r.status === 401) { tokenMem = null; guardarToken(); throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true }); }
     if (!r.ok) throw new Error("Google Drive respondió " + r.status);
     return r;
   }
@@ -175,13 +268,12 @@ const Almacen = (() => {
   }
 
   async function desconectar() {
-    localStorage.removeItem(TOKEN);
+    await olvidePin();
     doc = vacio();
-    await escribirLocal();
   }
 
   return {
-    iniciar, guardar, borrar, ajuste, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    iniciar, guardar, borrar, ajuste, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
   };
 })();

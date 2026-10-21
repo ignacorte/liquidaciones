@@ -59,13 +59,15 @@ async function guardarPrestacion(p) {
 
 // ---------- Navegación ----------
 
-const TITULOS = { inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", valores: "Valores", bienvenida: "Liquidaciones" };
+const TITULOS = { inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
 
 function ir(vista) {
   estado.vista = vista;
   $$("main > section").forEach((s) => (s.hidden = s.id !== "v-" + vista));
   $$("nav.abajo button").forEach((b) => b.classList.toggle("activa", b.dataset.vista === vista));
-  $("nav.abajo").hidden = vista === "bienvenida";
+  const afuera = ["bienvenida", "pin"].includes(vista);
+  $("nav.abajo").hidden = afuera;
+  $("#bloquear").hidden = afuera || !Almacen.tienePin();
   $("#titulo").textContent = TITULOS[vista];
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
   ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, valores: verValores }[vista] || (() => {}))();
@@ -530,11 +532,11 @@ async function arrancar() {
   const conectar = () => { try { Almacen.conectar(); } catch (e) { aviso(e.message); } };
   $("#conectar").addEventListener("click", conectar);
   $("#conectar-inicio").addEventListener("click", conectar);
-  $("#sin-drive").addEventListener("click", async (ev) => { ev.preventDefault(); await Almacen.ajuste("sin_drive", true); ir("inicio"); });
+  $("#sin-drive").addEventListener("click", async (ev) => { ev.preventDefault(); await Almacen.ajuste("sin_drive", true); pedirPin("crear"); });
   $("#sincronizar").addEventListener("click", () => (Almacen.tieneToken() ? Almacen.sincronizar().then(refrescar).catch((e) => aviso(e.message)) : conectar()));
   $("#salir").addEventListener("click", async (ev) => {
     ev.preventDefault();
-    if (!confirm("Se borran los datos de ESTE celular (la copia en tu Drive queda). ¿Seguir?")) return;
+    if (!confirm("Se borran los datos y el PIN de ESTE celular (la copia en tu Drive queda). ¿Seguir?")) return;
     await Almacen.desconectar(); location.reload();
   });
   $("#tabla-os").addEventListener("click", (ev) => {
@@ -551,13 +553,92 @@ async function arrancar() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   window.addEventListener("online", () => Almacen.tieneToken() && Almacen.sincronizar().then(refrescar).catch(() => {}));
 
-  mostrarSync(Almacen.estado);
+  configurarSeguridad();
+  estado.volvioDeGoogle = volvioDeGoogle;
+  if (Almacen.tienePin()) return pedirPin("desbloquear");
   if (!Almacen.doc.cuenta && !ajuste("sin_drive", false) && !volvioDeGoogle) return ir("bienvenida");
+  pedirPin("crear");
+}
+
+// Ya desbloqueada (o con el PIN recién creado)
+function entrar() {
+  $("#pin").value = $("#pin2").value = "";
+  $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
+  mostrarSync(Almacen.estado);
   ir("inicio");
   if (Almacen.tieneToken()) {
-    Almacen.sincronizar().then(() => { if (volvioDeGoogle) aviso("Google Drive conectado: " + Almacen.doc.cuenta); refrescar(); })
+    Almacen.sincronizar().then(() => { if (estado.volvioDeGoogle) aviso("Google Drive conectado: " + Almacen.doc.cuenta); estado.volvioDeGoogle = false; refrescar(); })
       .catch((e) => aviso(e.message));
   } else if (Almacen.doc.cuenta) mostrarSync("pendiente: tocá Valores → Sincronizar");
+}
+
+// ---------- Seguridad: PIN, bloqueo automático ----------
+
+const MINUTOS_BLOQUEO = 5;
+const TEXTOS_PIN = {
+  crear: ["Creá tu PIN", "Protege los datos de tus pacientes en este celular: quedan cifrados y solo se abren con el PIN. Mínimo 6 números. No se puede recuperar: anotalo en un lugar seguro.", "Crear PIN"],
+  desbloquear: ["Desbloquear", "Ingresá tu PIN.", "Entrar"],
+  cambiar: ["Cambiar PIN", "Ingresá el PIN actual y el nuevo (mínimo 6 números).", "Cambiar"],
+};
+
+function pedirPin(modo) {
+  estado.modoPin = modo;
+  const [titulo, ayuda, boton] = TEXTOS_PIN[modo];
+  $("#pin-titulo").textContent = titulo; $("#pin-ayuda").textContent = ayuda; $("#pin-ok").textContent = boton;
+  $("#pin2").hidden = modo === "desbloquear";
+  $("#pin").placeholder = modo === "cambiar" ? "PIN actual" : "PIN";
+  $("#pin2").placeholder = modo === "cambiar" ? "PIN nuevo" : "Repetí el PIN";
+  $("#olvide-pin").hidden = modo === "crear";
+  $("#pin-error").hidden = true;
+  ir("pin");
+  setTimeout(() => $("#pin").focus(), 50);
+}
+
+function configurarSeguridad() {
+  $("#form-pin").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const pin = $("#pin").value, pin2 = $("#pin2").value, error = $("#pin-error"), boton = $("#pin-ok");
+    const mostrar = (t) => { error.textContent = t; error.hidden = false; $("#pin").value = ""; $("#pin").focus(); };
+    const valido = (x) => /^\d{6,12}$/.test(x);
+    error.hidden = true; boton.disabled = true;
+    try {
+      if (estado.modoPin === "desbloquear") await Almacen.desbloquear(pin);
+      else if (estado.modoPin === "crear") {
+        if (!valido(pin)) return mostrar("El PIN tiene que tener entre 6 y 12 números.");
+        if (pin !== pin2) { $("#pin2").value = ""; return mostrar("Los dos PIN no coinciden."); }
+        await Almacen.crearPin(pin);
+      } else {
+        if (!valido(pin2)) return mostrar("El PIN nuevo tiene que tener entre 6 y 12 números.");
+        await Almacen.cambiarPin(pin, pin2);
+        aviso("PIN cambiado");
+      }
+      entrar();
+    } catch (e) { mostrar(e.message); }
+    finally { boton.disabled = false; }
+  });
+  $("#olvide-pin").addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    if (estado.modoPin === "cambiar") return entrar();
+    if (!confirm("Sin el PIN, los datos de este celular no se pueden abrir: se van a borrar.\n\nSi tenías Google Drive conectado, después lo conectás de nuevo y se recupera lo que ya estaba copiado allá. ¿Borrar y empezar de nuevo?")) return;
+    await Almacen.olvidePin();
+    location.reload();
+  });
+  $("#bloquear").addEventListener("click", bloquearYa);
+  $("#cambiar-pin").addEventListener("click", () => pedirPin("cambiar"));
+  // Bloqueo automático: 5 minutos sin tocar la app, o al volver a ella después de ese tiempo
+  let ultima = Date.now();
+  ["pointerdown", "keydown", "input"].forEach((e) => document.addEventListener(e, () => (ultima = Date.now()), { passive: true, capture: true }));
+  const controlar = () => {
+    if (Almacen.tienePin() && !Almacen.bloqueada() && Date.now() - ultima > MINUTOS_BLOQUEO * 60e3) bloquearYa();
+  };
+  setInterval(controlar, 15000);
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && controlar());
+}
+
+// Se recarga la página: no queda en memoria ni en pantalla ningún dato de pacientes
+function bloquearYa() {
+  Almacen.bloquear();
+  location.reload();
 }
 
 arrancar().catch((e) => aviso(e.message));
