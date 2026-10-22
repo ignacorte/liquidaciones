@@ -16,7 +16,7 @@ const SI_NO = { "": "—", si: "Sí", no: "No" };
 const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" };
 const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
-  "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones"];
+  "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -75,6 +75,7 @@ async function guardarPrestacion(p) {
   if (!(p.paciente || "").trim()) throw new Error("Falta el nombre del paciente");
   const limpio = { id: p.id };
   for (const k of CAMPOS) limpio[k] = p[k] ?? null;
+  limpio.extras = limpio.tipo === "consulta" ? [] : (p.extras || []).filter((x) => (x.procedimiento || "").trim()).map(({ sugerencias, valor, ...x }) => x);
   limpio.estado ||= "pendiente"; limpio.tipo ||= "consulta"; limpio.rol ||= "cirujano"; limpio.pct ||= 100; limpio.origen ||= "manual";
   return Almacen.guardar("prestaciones", Motor.completar(datos(), limpio));
 }
@@ -139,7 +140,7 @@ function verInicioRegistro() {
     : `<p class="ayuda">Sin procedimientos en ${nombreMes(mes())}. Cargá un parte desde «Cargar».</p>`;
   $("#por-paciente").innerHTML = filas.length ? `<table><tr><th>Paciente</th><th>Procedimiento</th></tr>` +
     filas.sort((a, b) => b.fecha.localeCompare(a.fecha)).map((p) => `<tr><td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${fechaCorta(p.fecha)} · ${esc(p.obra_social || "")}</div></td>
-      <td>${esc(p.procedimiento || TIPOS[p.tipo])}${p.tipo === "endoscopia" && p.ciego ? `<div class="ayuda" style="margin:0">Ciego: ${SI_NO[p.ciego]}</div>` : ""}</td></tr>`).join("") + "</table>" : "";
+      <td>${esc(procedimientosDe(p))}${p.tipo === "endoscopia" && p.ciego ? `<div class="ayuda" style="margin:0">Ciego: ${SI_NO[p.ciego]}</div>` : ""}</td></tr>`).join("") + "</table>" : "";
 }
 
 function aplicarModo() {
@@ -185,6 +186,7 @@ function camposPrestacion(p, completo) {
     <label class="ancho">Procedimiento<input name="procedimiento" value="${esc(p.procedimiento)}"></label>
     <label class="ancho economia">Código AAC<select name="codigo_aac">${opcionesCodigo(p)}</select></label>
     <div class="ancho fila economia" style="margin-top:-4px"><button type="button" class="boton chico secundario" data-buscar-codigo>Buscar otro código</button></div>
+    ${camposExtras(p)}
     <label>Abordaje${sel("abordaje", { "": "—", laparoscopica: "Laparoscópica", convencional: "Convencional", robotica: "Robótica", percutanea: "Percutánea", endoscopica: "Endoscópica" }, p.abordaje || "")}</label>
     <label>Rol${sel("rol", { cirujano: "Cirujano", ayudante: "Ayudante" }, p.rol || "cirujano")}</label>
     <label class="economia">% a facturar<input type="number" name="pct" value="${p.pct || 100}" min="1" max="100"></label>
@@ -206,6 +208,22 @@ function camposPrestacion(p, completo) {
     <div class="origen">${esc(p.valor_origen)}</div></div>`;
 }
 
+const procedimientosDe = (p) => [p.procedimiento || TIPOS[p.tipo], ...(p.extras || []).map((x) => x.procedimiento)].filter(Boolean).join(" + ");
+const codigosDe = (p, campo) => [p[campo], ...(p.extras || []).map((x) => x[campo])].filter(Boolean).join(" + ");
+
+// Otros procedimientos del mismo acto: cada uno con su código (el valor va al % de operación múltiple)
+function camposExtras(p) {
+  const lista = p.extras || [];
+  return `<div class="ancho" style="margin:4px 0 8px">
+    <div class="ayuda" style="margin:0 0 4px">${lista.length ? "Otros procedimientos del mismo acto" : ""}</div>` +
+    lista.map((x, i) => `<div style="border:1px solid var(--borde);border-radius:8px;padding:6px;margin-bottom:6px">
+      <div class="fila" style="margin:0;flex-wrap:nowrap"><input name="extra_proc_${i}" value="${esc(x.procedimiento)}" placeholder="Procedimiento">
+      <button type="button" class="boton chico peligro" data-quitar-extra="${i}" aria-label="Quitar">✕</button></div>
+      <select name="extra_cod_${i}" class="economia" style="margin-top:4px">${opcionesCodigo({ codigo_aac: x.codigo_aac, sugerencias: x.sugerencias })}</select>
+      ${x.codigo_os ? `<div class="ayuda" style="margin:2px 0 0">Código obra social: ${esc(x.codigo_os)}</div>` : ""}</div>`).join("") +
+    `<button type="button" class="boton chico secundario" data-agregar-extra>+ Agregar otro procedimiento (mismo acto)</button></div>`;
+}
+
 function leerCampos(el, base) {
   const p = { ...base };
   $$("input[name], select[name], textarea[name]", el).forEach((c) => {
@@ -213,6 +231,17 @@ function leerCampos(el, base) {
     else if (c.type === "number") p[c.name] = c.value === "" ? null : Number(c.value);
     else p[c.name] = c.value === "" ? null : c.value;
   });
+  // Campos de los otros procedimientos del acto → p.extras (conservando lo que no está en pantalla, como el código de la obra social)
+  const extras = [];
+  for (const k of Object.keys(p)) {
+    const m = k.match(/^extra_(proc|cod)_(\d+)$/);
+    if (!m) continue;
+    const i = +m[2];
+    extras[i] ||= { ...(base.extras?.[i] || {}) };
+    if (m[1] === "proc") extras[i].procedimiento = p[k] || ""; else extras[i].codigo_aac = p[k];
+    delete p[k];
+  }
+  if (extras.length || base.extras) p.extras = extras.filter(Boolean);
   if (p.estado === "pendiente" && p.fecha_presentacion) p.estado = "presentada";
   if (p.tipo === "endoscopia") {
     if (!["baja", "ambas"].includes(p.endoscopia)) p.ciego = null;
@@ -227,6 +256,8 @@ function enlazarEstimacion(el, obtener, guardar) {
     const p = obtener();
     if (!p) return; // el diálogo muestra otra cosa (obra social, valor)
     if (["procedimiento", "tipo", "abordaje"].includes(cambio)) p.codigo_aac = null;
+    const extra = /^extra_proc_(\d+)$/.exec(cambio || "");
+    if (extra && p.extras?.[+extra[1]]) p.extras[+extra[1]].codigo_aac = null; // cambió el texto: volver a sugerir el código
     if (cambio === "obra_social") p.codigo_os = null;
     if (!p.fecha) return;
     const e = Motor.estimar(datos(), { ...p, fecha_presentacion: p.estado === "pendiente" ? null : p.fecha_presentacion });
@@ -240,6 +271,16 @@ function enlazarEstimacion(el, obtener, guardar) {
     recalcular(ev.target.name);
   });
   el.addEventListener("click", (ev) => {
+    const agregar = ev.target.closest("[data-agregar-extra]"), quitar = ev.target.closest("[data-quitar-extra]");
+    if ((agregar || quitar) && obtener()) {
+      const p = obtener();
+      p.extras = [...(p.extras || [])];
+      if (agregar) p.extras.push({ procedimiento: "", codigo_aac: null });
+      else p.extras.splice(+quitar.dataset.quitarExtra, 1);
+      guardar(p);
+      if (quitar) recalcular("extras");
+      return;
+    }
     if (!ev.target.matches("[data-buscar-codigo]") || !obtener()) return;
     const q = prompt("Buscar en el nomenclador AAC (palabras o código):", obtener().procedimiento || "");
     if (!q) return;
@@ -273,9 +314,14 @@ async function leer(tipo, archivos, textoPegado) {
     }
     if (tipo === "parte" && !ajuste("apellido", "")) aviso("Cargá tu apellido en Valores → Mi cuenta para saber si fuiste cirujano o ayudante.");
     if (tipo === "parte" && filas.length > 1) {
-      const pctMultiple = Motor.catalogos.AAC.rules.multiple_same_approach_pct;
+      // Un mismo acto: una sola prestación; el procedimiento de mayor valor es el principal (100 %), los demás van como
+      // «otros procedimientos del mismo acto» (al % de operación múltiple)
       const lleno = (f) => Motor.estimar(d, { ...f, pct: 100, fecha: f.fecha || hoy() }).valor_estimado || 0;
-      filas.sort((a, b) => lleno(b) - lleno(a)).forEach((f, i) => (f.pct = i === 0 ? 100 : pctMultiple));
+      filas.sort((a, b) => lleno(b) - lleno(a));
+      const [principal, ...resto] = filas;
+      principal.pct = 100;
+      principal.extras = resto.map((f) => ({ procedimiento: f.procedimiento, codigo_aac: null, codigo_os: f.codigo_os || null }));
+      filas.splice(0, filas.length, principal);
     }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
@@ -307,11 +353,11 @@ function mostrarRevision(filas, titulo) {
     div.addEventListener("change", (ev) => {
       if (ev.target.matches("[data-incluir]")) { filasRevision[i].incluir = ev.target.checked; div.classList.toggle("apagada", !ev.target.checked); }
       else {
-        filasRevision[i] = { ...filasRevision[i], ...leerCampos(div, {}) };
+        filasRevision[i] = leerCampos(div, filasRevision[i]);
         if (ev.target.name === "fecha") filasRevision[i].fecha_leida = true;
       }
     }, true);
-    enlazarEstimacion(div, () => ({ ...filasRevision[i], ...leerCampos(div, {}) }), (p) => { filasRevision[i] = { ...filasRevision[i], ...p }; pintar(); });
+    enlazarEstimacion(div, () => leerCampos(div, filasRevision[i]), (p) => { filasRevision[i] = { ...filasRevision[i], ...p }; pintar(); });
     cont.appendChild(div);
   });
 }
@@ -370,7 +416,7 @@ function editar(p) {
   };
   if (!cuerpo.dataset.enlazado) {
     cuerpo.dataset.enlazado = "1";
-    enlazarEstimacion(cuerpo, () => (cuerpo._actual ? { ...cuerpo._actual(), ...leerCampos(cuerpo, {}) } : null), (n) => cuerpo._guardar(n));
+    enlazarEstimacion(cuerpo, () => (cuerpo._actual ? leerCampos(cuerpo, cuerpo._actual()) : null), (n) => cuerpo._guardar(n));
   }
   cuerpo._actual = () => actual;
   cuerpo._guardar = (n) => { actual = { ...actual, ...n }; pintar(); };
@@ -394,7 +440,7 @@ function verPrestaciones() {
   $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} prestaciones<span class="economia"> · ${pesos(total)} estimado · tildá para marcar varias</span></p>` +
     lista.map((p) => {
       const chip = Motor.vencida(p, h) ? '<span class="chip vencida">vencida</span>' : `<span class="chip ${p.estado}">${ESTADOS[p.estado]}</span>`;
-      const detalle = p.tipo === "consulta" ? "Consulta" : (p.procedimiento || TIPOS[p.tipo]) + (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + p.codigo_aac : "");
+      const detalle = p.tipo === "consulta" ? "Consulta" : procedimientosDe(p) + (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + codigosDe(p, "codigo_aac") : "");
       return `<div class="item" data-id="${p.id}"><input type="checkbox" data-sel="${p.id}" class="economia">
         <div class="cuerpo"><div class="titulo">${esc(p.paciente)}</div>
         <div class="sub">${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
@@ -565,9 +611,12 @@ function conciliar(liq) {
       .sort((a, b) => (b.atencion === l.atencion) - (a.atencion === l.atencion) || (b.codigo_os === l.codigo) - (a.codigo_os === l.codigo) ||
         ((b.tipo === "consulta") === esConsulta) - ((a.tipo === "consulta") === esConsulta) || diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha));
     let p = candidatas[0];
-    // Varias líneas del mismo acto (p. ej. tres ítems de una escisión): se suman a la misma prestación
-    if (!p) p = [...usadas.values()].find((u) => u.linea.atencion === l.atencion && u.linea.fecha === l.fecha && u.linea.codigo === l.codigo)?.p;
-    const r = { linea: l, os, esConsulta, p: p || null, incluir: true };
+    // Varias líneas del mismo acto (mismo paciente y día; p. ej. tres ítems de una escisión): van a la misma prestación
+    if (!p) p = [...usadas.values()].find((u) => u.linea.fecha === l.fecha && u.esConsulta === esConsulta &&
+      ((l.atencion && u.linea.atencion === l.atencion) || mismoPaciente(u.linea.paciente, l.paciente)))?.p;
+    const nueva = !p && out.find((x) => !x.p && x.linea.fecha === l.fecha && x.esConsulta === esConsulta &&
+      ((l.atencion && x.linea.atencion === l.atencion) || mismoPaciente(x.linea.paciente, l.paciente)));
+    const r = { linea: l, os, esConsulta, p: p || null, incluir: true, grupo: nueva ? nueva.grupo : out.length };
     if (p && !usadas.has(p.id)) usadas.set(p.id, r);
     out.push(r);
   }
@@ -614,7 +663,7 @@ async function aplicarLiquidacion() {
   const nota = `Liq. ${liq.numero}`;
   const grupos = new Map(); // prestación → líneas
   for (const f of filas.filter((x) => x.incluir)) {
-    const clave = f.p ? f.p.id : "nueva-" + f.linea.atencion + f.linea.fecha + f.linea.codigo;
+    const clave = f.p ? f.p.id : "nueva-" + f.grupo;
     if (!grupos.has(clave)) grupos.set(clave, { p: f.p, lineas: [], f });
     grupos.get(clave).lineas.push(f.linea);
   }
@@ -623,13 +672,18 @@ async function aplicarLiquidacion() {
     const l = lineas[0], total = lineas.reduce((s, x) => s + x.monto, 0);
     const detalle = lineas.length > 1 ? ` (${lineas.length} ítems)` : "";
     if (p) {
-      await guardarPrestacion({ ...p, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, codigo_os: p.codigo_os || l.codigo,
+      // Los códigos de las otras líneas que no estaban en la prestación se agregan como procedimientos del mismo acto
+      const conocidos = new Set([p.codigo_os, ...(p.extras || []).map((x) => x.codigo_os)].filter(Boolean));
+      const extras = [...(p.extras || [])];
+      for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: x.descripcion, codigo_os: x.codigo }); conocidos.add(x.codigo); }
+      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, codigo_os: p.codigo_os || l.codigo,
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
     } else {
       const aac = Motor.equivalenteAAC(f.os, l.codigo);
       await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
         tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : l.descripcion, codigo_os: l.codigo,
+        extras: f.esConsulta ? [] : [...new Map(lineas.slice(1).filter((x) => x.codigo !== l.codigo).map((x) => [x.codigo, { procedimiento: x.descripcion, codigo_os: x.codigo }])).values()],
         codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, origen: "liquidacion",
         notas: nota + detalle });
       nuevas++;
@@ -657,8 +711,8 @@ async function construirExcel() {
   const est = (p) => (Motor.vencida(p, hoy()) ? "Vencida" : ESTADOS[p.estado]);
   const cirugias = lista.filter((p) => p.tipo !== "consulta").map((p) => ({
     "Fecha": fechaX(p.fecha), "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "", "Obra social": p.obra_social || p.obra_social_texto || "",
-    "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": p.procedimiento || "", "Código AAC": p.codigo_aac || "",
-    "Código obra social": p.codigo_os || "", "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct || 100,
+    "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": procedimientosDe(p), "Código AAC": codigosDe(p, "codigo_aac"),
+    "Código obra social": codigosDe(p, "codigo_os"), "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct || 100,
     "Endoscopía": p.tipo === "endoscopia" ? ENDOSCOPIAS[p.endoscopia] || "" : "", "Llegó a ciego": p.ciego ? SI_NO[p.ciego] : "",
     "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "", "Observaciones (endoscopía)": p.observaciones || "",
     "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
@@ -711,13 +765,24 @@ function exportarCSV() {
 // ---------- Inicio de la app ----------
 
 function mostrarSync(e) {
-  $("#sync").textContent = Almacen.doc.cuenta ? "Drive: " + e : "Solo en este celular";
+  const cuenta = Almacen.doc.cuenta;
+  $("#sync").textContent = cuenta ? "Drive: " + (Almacen.pendiente && e === "al día" ? "cambios sin subir" : e) : "Solo en este dispositivo";
+  // Cambios que no llegaron a Drive (venció el acceso de Google): botón para subirlos
+  $("#subir-ahora").hidden = !(cuenta && Almacen.pendiente && !Almacen.tieneToken() && !Almacen.bloqueada());
   if (estado.vista === "valores") verValores();
+}
+
+// Renovar el acceso de Google sin pedir nada (vuelve enseguida a la app). Solo si no hay nada a medio cargar.
+function renovarAcceso() {
+  if ($("#dlg").open || !$("#revision").hidden) return false;
+  sessionStorage.setItem("liq_silencioso", String(Date.now()));
+  Almacen.conectar({ silencioso: true });
+  return true;
 }
 
 async function arrancar() {
   $("#mes").value = hoy().slice(0, 7);
-  const volvioDeGoogle = Almacen.recibirToken();
+  const vuelta = Almacen.recibirToken(); // {ok} | {error} | null
   await Promise.all([Almacen.iniciar(), Motor.cargarCatalogos(), cargarBase()]);
   Almacen.alCambiar = mostrarSync;
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
@@ -806,8 +871,19 @@ async function arrancar() {
   const conectar = () => { try { Almacen.conectar(); } catch (e) { aviso(e.message); } };
   $("#conectar").addEventListener("click", conectar);
   $("#conectar-inicio").addEventListener("click", conectar);
-  $("#sin-drive").addEventListener("click", async (ev) => { ev.preventDefault(); await Almacen.ajuste("sin_drive", true); pedirPin("crear"); });
-  $("#sincronizar").addEventListener("click", () => (Almacen.tieneToken() ? Almacen.sincronizar().then(refrescar).catch((e) => aviso(e.message)) : conectar()));
+  $("#sin-drive").addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    await Almacen.usarLocal();
+    Almacen.tienePin() ? pedirPin("desbloquear") : pedirPin("crear");
+  });
+  $("#sincronizar").addEventListener("click", () => (Almacen.tieneToken() ? Almacen.sincronizar().then(refrescar).catch((e) => aviso(e.message)) : renovarAcceso()));
+  $("#subir-ahora").addEventListener("click", () => renovarAcceso() || aviso("Terminá de cargar lo que estás editando y volvé a tocar «Subir a Drive»."));
+  // Al volver a la app con cambios sin subir y el acceso vencido: renovarlo y subir
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || Almacen.bloqueada() || !Almacen.doc.cuenta) return;
+    if (Almacen.tieneToken()) { if (Almacen.pendiente) Almacen.sincronizar().then(refrescar).catch(() => {}); }
+    else if (Almacen.pendiente) renovarAcceso();
+  });
   $("#salir").addEventListener("click", async (ev) => {
     ev.preventDefault();
     if (!confirm("Se borran los datos y el PIN de ESTE celular (la copia en tu Drive queda). ¿Seguir?")) return;
@@ -828,10 +904,50 @@ async function arrancar() {
   window.addEventListener("online", () => Almacen.tieneToken() && Almacen.sincronizar().then(refrescar).catch(() => {}));
 
   configurarSeguridad();
-  estado.volvioDeGoogle = volvioDeGoogle;
+  estado.volvioDeGoogle = !!vuelta?.ok;
+  const cuenta = Almacen.cuenta, local = Almacen.local && !cuenta;
+  // 1) Cuenta de Google primero (el PIN viene después)
+  if (vuelta?.error) {
+    sessionStorage.removeItem("liq_silencioso");
+    if (!cuenta || (vuelta.error !== "interaction_required" && vuelta.error !== "login_required")) return bienvenida("No se pudo ingresar con Google. Probá de nuevo.");
+    return bienvenida(`Tu sesión de Google venció: ingresá de nuevo con ${cuenta}.`);
+  }
+  if (!cuenta && !vuelta?.ok && !local) return bienvenida();
+  // 2) Acceso a Drive vencido (dura 1 hora): renovarlo sin pedir nada, antes del PIN. Una vez por apertura.
+  if (cuenta && !vuelta?.ok && Almacen.accesoVencido() && !sessionStorage.getItem("liq_silencioso")) return renovarAcceso();
+  sessionStorage.removeItem("liq_silencioso");
+  // 3) PIN
   if (Almacen.tienePin()) return Almacen.bloqueada() ? pedirPin("desbloquear") : entrar(); // sesión en uso: no pide el PIN al recargar
-  if (!Almacen.doc.cuenta && !ajuste("sin_drive", false) && !volvioDeGoogle) return ir("bienvenida");
   pedirPin("crear");
+}
+
+// Lo cargado antes de esta versión: varias prestaciones del mismo paciente y día (mismo estado) → un solo acto
+async function unificarActos() {
+  if (ajuste("actos_unificados", false)) return;
+  const grupos = {};
+  for (const p of datos().prestaciones) {
+    if (p.tipo === "consulta") continue;
+    (grupos[Motor.plano(p.paciente).replace(/[^a-z]/g, "") + "|" + p.fecha] ||= []).push(p);
+  }
+  let unidos = 0;
+  for (const g of Object.values(grupos)) {
+    if (g.length < 2 || new Set(g.map((p) => p.estado)).size > 1) continue;
+    g.sort((a, b) => (b.pct || 100) - (a.pct || 100) || (b.valor_estimado || 0) - (a.valor_estimado || 0));
+    const [principal, ...resto] = g;
+    const extras = [...(principal.extras || []), ...resto.flatMap((r) => [{ procedimiento: r.procedimiento, codigo_aac: r.codigo_aac, codigo_os: r.codigo_os }, ...(r.extras || [])])];
+    const cobrado = g.some((x) => x.monto_cobrado != null) ? g.reduce((t, x) => t + (x.monto_cobrado || 0), 0) : principal.monto_cobrado;
+    await guardarPrestacion({ ...principal, pct: 100, extras, monto_cobrado: cobrado });
+    for (const r of resto) await Almacen.borrar("prestaciones", r.id);
+    unidos++;
+  }
+  await Almacen.ajuste("actos_unificados", true);
+  if (unidos) { aviso(`${unidos} cirugías con varios procedimientos quedaron agrupadas en un solo acto.`); refrescar(); }
+}
+
+function bienvenida(mensaje) {
+  $("#bienvenida-aviso").textContent = mensaje || "";
+  $("#bienvenida-aviso").hidden = !mensaje;
+  ir("bienvenida");
 }
 
 // Ya desbloqueada (o con el PIN recién creado)
@@ -843,9 +959,13 @@ function entrar() {
   mostrarSync(Almacen.estado);
   ir("inicio");
   if (Almacen.tieneToken()) {
-    Almacen.sincronizar().then(() => { if (estado.volvioDeGoogle) aviso("Google Drive conectado: " + Almacen.doc.cuenta); estado.volvioDeGoogle = false; refrescar(); })
-      .catch((e) => aviso(e.message));
-  } else if (Almacen.doc.cuenta) mostrarSync("pendiente: tocá Valores → Sincronizar");
+    // Al entrar: traer lo cargado en otros dispositivos y subir lo de este
+    Almacen.sincronizar().then(() => { if (estado.volvioDeGoogle) aviso("Datos al día con Google Drive (" + Almacen.doc.cuenta + ")"); estado.volvioDeGoogle = false; refrescar(); })
+      .catch((e) => aviso(e.message)).finally(() => unificarActos().catch(() => {}));
+  } else {
+    if (Almacen.doc.cuenta) mostrarSync("cambios sin subir");
+    unificarActos().catch(() => {});
+  }
 }
 
 // ---------- Seguridad: PIN, bloqueo automático ----------

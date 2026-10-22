@@ -117,7 +117,7 @@ const Almacen = (() => {
   async function olvidePin() {
     await bloquear();
     meta = null;
-    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined });
+    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined, pendiente: undefined });
   }
 
   // ---------- Copia de seguridad (archivo cifrado con una clave propia: sirve en otro celular) ----------
@@ -172,6 +172,7 @@ const Almacen = (() => {
 
   // Al abrir: con PIN queda bloqueada (no se lee nada hasta desbloquear); sin PIN (primera vez) se lee lo que haya
   async function iniciar() {
+    await leerMeta();
     meta = await idbLeer("pin");
     if (!meta) await cargar();
     else {
@@ -195,7 +196,9 @@ const Almacen = (() => {
     const r = { ...registro, id: registro.id || nuevoId(), actualizado: Date.now() };
     const i = doc[coleccion].findIndex((x) => x.id === r.id);
     if (i >= 0) doc[coleccion][i] = r; else doc[coleccion].push(r);
+    cambios++;
     await escribirLocal();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
     return r;
   }
@@ -205,7 +208,9 @@ const Almacen = (() => {
   };
   async function ajuste(clave, valor) {
     doc.ajustes[clave] = { valor, actualizado: Date.now() };
+    cambios++;
     await escribirLocal();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
   }
 
@@ -226,24 +231,41 @@ const Almacen = (() => {
   const guardarToken = async () => { if (llave) await idbEscribir({ token: tokenMem ? await cifrar(tokenMem) : undefined }); };
   const conectado = () => !!doc.cuenta;
 
-  function conectar() {
+  // Cuenta de Google y vencimiento del acceso: sin cifrar (no son datos de pacientes), para saber al abrir la app si hay que
+  // renovar el acceso antes de pedir el PIN. El acceso de Google dura 1 hora: se renueva sin pedir nada (prompt=none)
+  // mientras el profesional siga con su sesión de Google abierta en el navegador.
+  let cuentaPlano = null, venceToken = 0, pendiente = false, local = false, cambios = 0; // cambios: para no perder lo hecho durante una subida
+  async function leerMeta() {
+    cuentaPlano = (await idbLeer("cuenta")) || null;
+    local = !!(await idbLeer("local"));
+    venceToken = (await idbLeer("token_vence")) || 0;
+    pendiente = !!(await idbLeer("pendiente"));
+  }
+  const marcarPendiente = async (v) => { pendiente = v; await idbEscribir({ pendiente: v || undefined }); };
+
+  function conectar({ silencioso = false } = {}) {
     if (!CONFIG.GOOGLE_CLIENT_ID) throw new Error("Falta configurar GOOGLE_CLIENT_ID en config.js");
     const estado = nuevoId();
     sessionStorage.setItem("liq_estado", estado);
     const p = new URLSearchParams({ client_id: CONFIG.GOOGLE_CLIENT_ID, redirect_uri: location.origin + location.pathname,
       response_type: "token", scope: "https://www.googleapis.com/auth/drive.file", include_granted_scopes: "true", state: estado });
-    if (doc.cuenta) p.set("login_hint", doc.cuenta);
+    const cuenta = doc.cuenta || cuentaPlano;
+    if (cuenta) p.set("login_hint", cuenta);
+    if (silencioso) p.set("prompt", "none");
     location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + p;
   }
 
-  // Vuelta de Google: #access_token=…&expires_in=…&state=…
+  // Vuelta de Google: #access_token=…&expires_in=…&state=…  (o #error=interaction_required si hay que ingresar de nuevo)
   function recibirToken() {
-    if (!location.hash.includes("access_token")) return false;
+    if (!/access_token|error=/.test(location.hash)) return null;
     const h = new URLSearchParams(location.hash.slice(1));
     history.replaceState(null, "", location.pathname);
-    if (h.get("state") !== sessionStorage.getItem("liq_estado")) return false;
+    if (h.get("state") !== sessionStorage.getItem("liq_estado")) return null;
+    if (h.get("error")) return { error: h.get("error") };
     tokenMem = { valor: h.get("access_token"), vence: Date.now() + (+h.get("expires_in") || 3600) * 1000 }; // se guarda cifrado al desbloquear
-    return true;
+    venceToken = tokenMem.vence;
+    idbEscribir({ token_vence: venceToken }).catch(() => {});
+    return { ok: true };
   }
 
   async function drive(url, opciones = {}) {
@@ -282,7 +304,7 @@ const Almacen = (() => {
   function programarSync() {
     clearTimeout(temporizador);
     if (conectado() && token()) temporizador = setTimeout(() => sincronizar().catch(() => {}), 2500);
-    else if (conectado()) avisar("pendiente: volvé a conectar Drive");
+    else if (conectado()) avisar("cambios sin subir");
   }
 
   async function sincronizar() {
@@ -294,6 +316,8 @@ const Almacen = (() => {
           const sobre = await (await drive("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)")).json();
           doc.cuenta = sobre.user.emailAddress;
         }
+        if (cuentaPlano !== doc.cuenta) { cuentaPlano = doc.cuenta; await idbEscribir({ cuenta: doc.cuenta }); }
+        const cambiosAlEmpezar = cambios;
         const archivo = await buscar(ARCHIVO);
         if (archivo) {
           const remoto = await (await drive(`${API}/${archivo.id}?alt=media`)).json();
@@ -305,29 +329,46 @@ const Almacen = (() => {
         if (planilla) await subirPlanilla(await planilla()).catch(() => {}); // si falla, queda el JSON (lo importante)
         doc.ultima_sync = Date.now();
         await escribirLocal();
-        avisar("al día");
+        // Si hubo cambios mientras se subía, falta otra vuelta
+        if (cambios === cambiosAlEmpezar) { await marcarPendiente(false); avisar("al día"); }
+        else { avisar("sincronizando…"); setTimeout(() => sincronizar().catch(() => {}), 500); }
       } catch (e) {
-        avisar(e.reconectar ? "pendiente: volvé a conectar Drive" : "sin conexión: se guarda en el celular");
+        avisar(e.reconectar ? "cambios sin subir" : "sin conexión: se guarda en el celular");
         throw e;
       } finally { sincronizando = null; }
     })();
     return sincronizando;
   }
 
-  // Liquidaciones.xlsx en la carpeta: cirugías y procedimientos, consultas y resumen (se reemplaza en cada sincronización)
-  const XLSX_TIPO = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", PLANILLA = "Liquidaciones.xlsx";
+  // Planilla en Drive: una Hoja de cálculo de Google («Liquidaciones – planilla») con las hojas Cirugías y procedimientos,
+  // Consultas y Resumen mensual. Se reemplaza entera en cada sincronización (lo borrado en la app desaparece de la planilla).
+  const XLSX_TIPO = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", HOJA_TIPO = "application/vnd.google-apps.spreadsheet";
+  const PLANILLA = "Liquidaciones – planilla", PLANILLA_VIEJA = "Liquidaciones.xlsx";
   let planilla = null; // función de la app que arma el Excel (ArrayBuffer)
-  async function subirPlanilla(bytes) {
-    const existente = await buscar(PLANILLA);
-    if (existente) {
-      await drive(`${SUBIR}/${existente.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": XLSX_TIPO }, body: bytes });
-      return existente;
-    }
-    const meta = { name: PLANILLA, parents: [await carpeta()] };
+  async function crearHoja(bytes) {
+    const meta = { name: PLANILLA, mimeType: HOJA_TIPO, parents: [await carpeta()] };
     const limite = "liq" + Date.now();
     const cuerpo = new Blob([`--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${limite}\r\nContent-Type: ${XLSX_TIPO}\r\n\r\n`,
       bytes, `\r\n--${limite}--`]);
     return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
+  }
+  async function subirPlanilla(bytes) {
+    const vieja = await buscar(PLANILLA_VIEJA);
+    if (vieja) await drive(`${API}/${vieja.id}`, { method: "DELETE" }).catch(() => {});
+    const hoja = await buscar(PLANILLA, HOJA_TIPO);
+    if (hoja) {
+      // Reemplazar el contenido (Google lo convierte); si no lo acepta, crear una nueva y borrar la anterior
+      try {
+        await drive(`${SUBIR}/${hoja.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": XLSX_TIPO }, body: bytes });
+        return hoja;
+      } catch (e) {
+        if (e.reconectar) throw e;
+        const nueva = await crearHoja(bytes);
+        await drive(`${API}/${hoja.id}`, { method: "DELETE" }).catch(() => {});
+        return nueva;
+      }
+    }
+    return crearHoja(bytes);
   }
 
   // Planilla del mes como Google Sheets en la carpeta Liquidaciones (para el contador)
@@ -337,11 +378,14 @@ const Almacen = (() => {
 
   async function desconectar() {
     await olvidePin();
+    await idbEscribir({ cuenta: undefined, token_vence: undefined, local: undefined });
     doc = vacio();
   }
 
   return {
     iniciar, guardar, borrar, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
-    get doc() { return doc; }, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
+    get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
+    get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
+    accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
   };
 })();

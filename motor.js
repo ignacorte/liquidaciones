@@ -240,6 +240,21 @@ const Motor = (() => {
       if (!out.codigo_os && os === "PAMI" && out.sugerencias.pami.length) out.codigo_os = out.sugerencias.pami[0].code;
     }
     [out.valor_estimado, out.valor_origen] = valor(datos, p, os, out.codigo_aac, out.codigo_os);
+    // Otros procedimientos del mismo acto (mismo paciente y día): cada uno con su código, al % de operación múltiple (AAC)
+    if (p.extras?.length && p.tipo !== "consulta") {
+      const pct = catalogos.AAC.rules.multiple_same_approach_pct;
+      out.extras = p.extras.map((x) => {
+        const e = estimar(datos, { ...p, extras: null, procedimiento: x.procedimiento, codigo_aac: x.codigo_aac || null, codigo_os: x.codigo_os || null,
+          pct: x.pct || pct, valor_manual: null });
+        return { procedimiento: x.procedimiento || "", codigo_aac: e.codigo_aac, codigo_os: e.codigo_os || x.codigo_os || null, pct: x.pct || pct,
+                 valor: e.valor_estimado, sugerencias: e.sugerencias };
+      });
+      const suma = out.extras.reduce((t, x) => t + (x.valor || 0), 0);
+      if (!p.valor_manual && out.valor_estimado != null) {
+        out.valor_estimado += suma;
+        out.valor_origen += ` · + ${out.extras.length} procedimiento${out.extras.length > 1 ? "s" : ""} del mismo acto (${pesos(suma)})`;
+      }
+    }
     Object.assign(out, fechasCobro(datos, os, p.fecha, p.fecha_presentacion));
     return out;
   }
@@ -252,6 +267,7 @@ const Motor = (() => {
     if (q.estado === "pendiente") q.fecha_presentacion = null; // la guardada es la estimada: se recalcula
     const e = estimar(datos, q);
     delete e.sugerencias;
+    if (e.extras) e.extras = e.extras.map(({ sugerencias, ...x }) => x);
     Object.assign(q, e);
     if (q.fecha_presentacion === null && q.estado === "pendiente" && q.valor_estimado) {
       Object.assign(q, { estado: "cobrada", fecha_cobro: q.fecha, monto_cobrado: q.valor_estimado });
