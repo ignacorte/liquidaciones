@@ -8,6 +8,17 @@ const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const pesos = (n) => (n == null || isNaN(n) ? "—" : "$" + Math.round(n).toLocaleString("es-AR"));
 const fechaCorta = (iso) => (iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(2, 4) : "");
 const hoy = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+// «21/10/2026», «21/10/26», «21-10-2026» o «2026-10-21» → «2026-10-21» (null si no es una fecha posible)
+function fechaDeTexto(t) {
+  let m = (t || "").trim().match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})$/);
+  let y, mes, d;
+  if (m) { d = +m[1]; mes = +m[2]; y = +m[3] < 100 ? 2000 + +m[3] : +m[3]; }
+  else if ((m = (t || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/))) { y = +m[1]; mes = +m[2]; d = +m[3]; }
+  else return null;
+  const f = new Date(Date.UTC(y, mes - 1, d));
+  if (f.getUTCMonth() !== mes - 1 || f.getUTCDate() !== d || y < 2000) return null; // 31/02 no existe
+  return f.toISOString().slice(0, 10);
+}
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const nombreMes = (m) => (m === "vencido" ? "Vencido" : MESES[+m.slice(5, 7) - 1] + " " + m.slice(0, 4));
 const TIPOS = { consulta: "Consulta", cirugia: "Cirugía", endoscopia: "Endoscopía", practica: "Práctica" };
@@ -456,8 +467,10 @@ function actualizarSeleccion() {
 async function marcar(nuevo) {
   let fecha = hoy();
   if (nuevo !== "pendiente") {
-    fecha = prompt(`Fecha (${nuevo === "cobrada" ? "de cobro" : "de presentación"}), AAAA-MM-DD:`, hoy());
-    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return;
+    const escrita = prompt(`Fecha ${nuevo === "cobrada" ? "de cobro" : "de presentación"} (día/mes/año):`, fechaCorta(hoy()).replace(/\/(\d\d)$/, "/20$1"));
+    if (!escrita) return;
+    fecha = fechaDeTexto(escrita);
+    if (!fecha) return aviso(`«${escrita}» no es una fecha válida. Escribila como día/mes/año, por ejemplo 21/10/2026.`);
   }
   const porId = new Map(datos().prestaciones.map((p) => [p.id, p]));
   for (const id of estado.seleccion) {
@@ -707,7 +720,14 @@ async function construirExcel() {
     document.head.appendChild(s);
   });
   const lista = datos().prestaciones.slice().sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
-  const fechaX = (t) => (t ? new Date(t + "T12:00:00") : null);
+  // Fechas como número de serie de planilla (días desde 30/12/1899) con formato dd/mm/aaaa: Google Sheets y Excel las
+  // importan como fecha. (Las «celdas de fecha» ISO no las toma Google: quedaban vacías o como texto.)
+  const fechaX = (t) => {
+    if (!t || !/^\d{4}-\d{2}-\d{2}/.test(t)) return null;
+    const [y, m, d] = t.slice(0, 10).split("-").map(Number);
+    return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5;
+  };
+  const FECHAS = ["Fecha", "Presentada", "Cobro estimado", "Cobrada el"];
   const est = (p) => (Motor.vencida(p, hoy()) ? "Vencida" : ESTADOS[p.estado]);
   const cirugias = lista.filter((p) => p.tipo !== "consulta").map((p) => ({
     "Fecha": fechaX(p.fecha), "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "", "Obra social": p.obra_social || p.obra_social_texto || "",
@@ -738,12 +758,13 @@ async function construirExcel() {
   const libro = XLSX.utils.book_new();
   const DINERO = ["Valor estimado", "Monto cobrado", "Diferencia", "Estimado", "Cobrado", "Falta cobrar"];
   const hoja = (filas, nombre, columnas) => {
-    const h = XLSX.utils.json_to_sheet(filas.length ? filas : [Object.fromEntries(columnas.map((c) => [c, ""]))], { cellDates: true, dateNF: "dd/mm/yyyy" });
+    const h = XLSX.utils.json_to_sheet(filas.length ? filas : [Object.fromEntries(columnas.map((c) => [c, ""]))]);
     const cab = Object.keys(filas[0] || Object.fromEntries(columnas.map((c) => [c, ""])));
     h["!cols"] = cab.map((c) => ({ wch: Math.min(45, Math.max(c.length + 2, ...filas.slice(0, 200).map((f) => String(f[c] ?? "").length > 40 ? 40 : 12))) }));
     cab.forEach((c, j) => {
-      if (!DINERO.includes(c)) return;
-      for (let i = 1; i <= filas.length; i++) { const celda = h[XLSX.utils.encode_cell({ r: i, c: j })]; if (celda && typeof celda.v === "number") celda.z = "$ #,##0"; }
+      const formato = DINERO.includes(c) ? "$ #,##0" : FECHAS.includes(c) ? "dd/mm/yyyy" : null;
+      if (!formato) return;
+      for (let i = 1; i <= filas.length; i++) { const celda = h[XLSX.utils.encode_cell({ r: i, c: j })]; if (celda && typeof celda.v === "number") celda.z = formato; }
     });
     h["!autofilter"] = { ref: h["!ref"] };
     XLSX.utils.book_append_sheet(libro, h, nombre);
@@ -751,7 +772,7 @@ async function construirExcel() {
   hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
   hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
   hoja(resumen, "Resumen mensual", ["Mes", "Obra social", "Estimado", "Cobrado"]);
-  return XLSX.write(libro, { bookType: "xlsx", type: "array", cellDates: true });
+  return XLSX.write(libro, { bookType: "xlsx", type: "array" });
 }
 
 function exportarCSV() {
