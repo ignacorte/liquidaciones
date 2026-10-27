@@ -1,0 +1,124 @@
+{
+ "nota": "Valor de cada tipo de unidad del nomenclador PAMI. Valor de una práctica = unidades × valor de la unidad (honorarios y gastos por separado). Los tipos MODULADA son módulos: pago total a la institución.",
+ "unidades": [
+  {
+   "tipo": "CONSULTA CLINICA VETERANO DE GUERRA",
+   "vigencia": "2025-12",
+   "honorario": 918.6624,
+   "gasto": null,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "CONSULTA MEDICA (II-III)",
+   "vigencia": "2025-12",
+   "honorario": 610.5857,
+   "gasto": null,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "CLINICA (I-II-III)",
+   "vigencia": "2025-12",
+   "honorario": 362.1624,
+   "gasto": 230.1377,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "CLINICA MODULADA (II)",
+   "vigencia": "2025-12",
+   "honorario": null,
+   "gasto": 636.3312,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "QUIRURGICA (II-III)",
+   "vigencia": "2025-12",
+   "honorario": 362.1624,
+   "gasto": 770.4406,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "QUIRURGICA MODULADA (II)",
+   "vigencia": "2025-12",
+   "honorario": null,
+   "gasto": 1216.8057,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "QUIRURGICA MODULADA (III)",
+   "vigencia": "2025-12",
+   "honorario": null,
+   "gasto": 1106.2634,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "IMAGENES (I-II)",
+   "vigencia": "2025-12",
+   "honorario": 326.9889,
+   "gasto": 141.7317,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "HHAPyB (II)",
+   "vigencia": "2025-12",
+   "honorario": 337.537,
+   "gasto": 367.7411,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "SANATORIAL (II)",
+   "vigencia": "2025-12",
+   "honorario": 362.1624,
+   "gasto": 503.5146,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "IMAGENES (III)",
+   "vigencia": "2025-12",
+   "honorario": 217.987,
+   "gasto": 81.9997,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "MEDICINA NUCLEAR (III)",
+   "vigencia": "2025-12",
+   "honorario": 225.0189,
+   "gasto": 560.5215,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "TERAPIA RADIANTE (III)",
+   "vigencia": "2025-12",
+   "honorario": 337.5302,
+   "gasto": 4881.0621,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "CONSULTA MEDICA (I)",
+   "vigencia": "2025-12",
+   "honorario": 227.6166,
+   "gasto": null,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "DIALITICA",
+   "vigencia": "2025-12",
+   "honorario": 447.5997,
+   "gasto": 284.4321,
+   "fuente": "RESOL-2025-2938-INSSJP-DE#INSSJP, Anexo II (diciembre 2025)"
+  },
+  {
+   "tipo": "QUIRURGICA MODULADA (II)",
+   "vigencia": "2026-06",
+   "honorario": null,
+   "gasto": 1239.925,
+   "fuente": "RESOL-2026-1803-INSSJP-DE#INSSJP, Anexo II (junio 2026)"
+  },
+  {
+   "tipo": "QUIRURGICA MODULADA (II)",
+   "vigencia": "2026-07",
+   "honorario": null,
+   "gasto": 1314.1501,
+   "fuente": "RESOL-2026-2306-INSSJP-DE#INSSJP, Anexo II (julio 2026)"
+  }
+ ]
+}

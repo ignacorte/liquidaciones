@@ -145,6 +145,7 @@ const Motor = (() => {
   // ---------- Valuación ----------
   const CONSULTA = "CONSULTA", PARTICULAR_TABLA = "MÍNIMO ÉTICO CMPC";
   const pesos = (n) => "$" + Math.round(n).toLocaleString("es-AR");
+  const pesosDec = (n) => "$" + Number(n).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
   // datos = { obras: [{nombre, alias, dias_pago, dia_presentacion, pct_modulo}], valores: [{obra_social, codigo, monto,
   //   vigencia 'AAAA-MM-01', tipo, codigo_aac, fuente}], uq: [{valor, vigencia}], prestaciones: [...] }
@@ -185,7 +186,7 @@ const Motor = (() => {
   function sugerencias(p) {
     const texto = [p.procedimiento, p.abordaje].filter(Boolean).join(" ");
     return { aac: sugerir("AAC", texto).map((c) => ({ code: c.code, name: c.name, uq: c.uq })),
-             pami: sugerir("PAMI", texto).map((c) => ({ code: c.code, name: c.name })) };
+             pami: sugerir(catalogos.PAMI_TODO ? "PAMI_TODO" : "PAMI", texto, 5).map((c) => ({ code: c.code, name: c.name, tipo: c.tipo, h: c.h, modulo: c.modulo })) };
   }
 
   function fechasCobro(datos, os, fecha, presentada) {
@@ -214,6 +215,17 @@ const Motor = (() => {
     const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id);
     if (cobro) return [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC || codigoOS} (${cobro.fecha_cobro})`];
     let modulo = "";
+    const vp = os === "PAMI" && codigoOS ? valorPami(codigoOS, p.fecha) : null;
+    if (vp && !vp.modulo && !vp.sinValor) {
+      return [Math.round(vp.monto * factor), `PAMI ${vp.codigo}: ${vp.unidades} u. de honorarios ${vp.tipo} × ${pesosDec(vp.valorUnidad)}${extra} · ` +
+        `${vp.fuente}${vp.gastos ? ` · gastos para la institución: ${pesos(vp.gastos)}` : ""}`];
+    }
+    if (vp && vp.modulo && !(fila && fila.tipo === "modulo")) {
+      const o = datos.obras.find((x) => x.nombre === os);
+      if (o && o.pct_modulo) return [Math.round(vp.monto * o.pct_modulo / 100 * factor), `Módulo PAMI ${vp.codigo} ${pesos(vp.monto)} × ${o.pct_modulo} %${extra}`];
+      modulo = ` · Módulo PAMI ${vp.codigo}: ${vp.unidades} u. × ${pesosDec(vp.valorUnidad)} = ${pesos(vp.monto)} (total a la institución)`;
+    }
+    if (vp && vp.sinValor) modulo = ` · PAMI ${vp.codigo}: ${vp.unidades} u. ${vp.tipo} (falta el valor de esa unidad)`;
     if (fila && fila.tipo === "modulo") {
       const o = datos.obras.find((x) => x.nombre === os);
       if (o && o.pct_modulo) return [Math.round(fila.monto * o.pct_modulo / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${o.pct_modulo} %${extra}`];
@@ -342,10 +354,40 @@ const Motor = (() => {
   }
 
   async function cargarCatalogos(base = "datos/") {
-    const [aac, pami] = await Promise.all(["aac_2026_08.json", "pami_2024_02.json"].map((f) => fetch(base + f).then((r) => r.json())));
+    const [aac, pami, nom, unidades] = await Promise.all(["aac_2026_08.json", "pami_2024_02.json", "pami_nomenclador_2026_10.json", "pami_unidades.json"]
+      .map((f) => fetch(base + f).then((r) => r.json())));
     catalogos.AAC = aac; catalogos.PAMI = pami;
+    catalogos.PAMI_NOM = nom;
+    unidadesPami = unidades.unidades;
+    // Para sugerir el código PAMI: los módulos de cirugía (con lo que incluye cada uno) + las prácticas quirúrgicas, clínicas
+    // y de imágenes del nomenclador oficial (no laboratorio, odontología, traslados…)
+    const modulos = new Set(pami.codes.map((c) => c.code));
+    const porCodigo = new Map(nom.codes.map((c) => [c.code, c]));
+    catalogos.PAMI_TODO = { codes: pami.codes.map((c) => ({ ...porCodigo.get(c.code), ...c })).concat(nom.codes.filter((c) =>
+      !modulos.has(c.code) && !/ONCOPLAN/.test(c.modulo) && /QUIRURGICA|CLINICA \(I-II-III\)|IMAGENES|CONSULTA MEDICA \(II-III\)/.test(c.tipo))) };
+  }
+
+  // ---------- Valor PAMI por unidades del nomenclador oficial ----------
+  // Valor = unidades × valor de la unidad vigente. Prácticas comunes: honorarios (médico) y gastos (institución) por
+  // separado. Tipos «MODULADA»: módulo, pago total a la institución (las unidades vienen en la columna de honorarios).
+  let unidadesPami = [];
+  function unidadPami(tipo, fecha) {
+    const del = unidadesPami.filter((u) => u.tipo === tipo).sort((a, b) => b.vigencia.localeCompare(a.vigencia));
+    return del.find((u) => u.vigencia <= (fecha || "").slice(0, 7)) || del[del.length - 1] || null;
+  }
+  function valorPami(codigo, fecha) {
+    const c = (catalogos.PAMI_NOM?.codes || []).find((x) => x.code === String(codigo || ""));
+    if (!c || !c.tipo || !c.h) return null;
+    const u = unidadPami(c.tipo, fecha);
+    if (!u) return { codigo: c.code, nombre: c.name, sinValor: true, unidades: c.h, tipo: c.tipo };
+    if (/MODULADA/.test(c.tipo)) {
+      return { codigo: c.code, nombre: c.name, modulo: true, monto: c.h * u.gasto, unidades: c.h, tipo: c.tipo, valorUnidad: u.gasto, fuente: u.fuente };
+    }
+    if (!u.honorario) return null;
+    return { codigo: c.code, nombre: c.name, monto: c.h * u.honorario, unidades: c.h, tipo: c.tipo, valorUnidad: u.honorario, fuente: u.fuente,
+             gastos: c.g && u.gasto ? c.g * u.gasto : 0 };
   }
 
   return { plano, sugerir, buscar, infoCodigo, honorarioAAC, obraSocialCanonica, estimar, completar, sugerencias, fechasCobro,
-           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC };
+           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami };
 })();

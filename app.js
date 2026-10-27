@@ -201,7 +201,7 @@ function camposPrestacion(p, completo) {
     <label>Abordaje${sel("abordaje", { "": "—", laparoscopica: "Laparoscópica", convencional: "Convencional", robotica: "Robótica", percutanea: "Percutánea", endoscopica: "Endoscópica" }, p.abordaje || "")}</label>
     <label>Rol${sel("rol", { cirujano: "Cirujano", ayudante: "Ayudante" }, p.rol || "cirujano")}</label>
     <label class="economia">% a facturar<input type="number" name="pct" value="${p.pct || 100}" min="1" max="100"></label>
-    <label>Código obra social<input name="codigo_os" value="${esc(p.codigo_os)}"></label>
+    ${campoCodigoOS(p)}
     <label class="check"><input type="checkbox" name="urgencia" ${p.urgencia ? "checked" : ""}> Urgencia</label>` : ""}
     ${completo ? `
     <label>Hora<input type="time" name="hora" value="${esc(p.hora)}"></label>
@@ -221,6 +221,20 @@ function camposPrestacion(p, completo) {
 
 const procedimientosDe = (p) => [p.procedimiento || TIPOS[p.tipo], ...(p.extras || []).map((x) => x.procedimiento)].filter(Boolean).join(" + ");
 const codigosDe = (p, campo) => [p[campo], ...(p.extras || []).map((x) => x[campo])].filter(Boolean).join(" + ");
+
+// Código de la obra social. PAMI: lista con los códigos sugeridos del nomenclador oficial (con sus unidades) y búsqueda;
+// se puede cargar cualquier código aunque no esté en el nomenclador. Otras obras sociales: texto libre.
+function campoCodigoOS(p) {
+  if (p.obra_social !== "PAMI") return `<label>Código obra social<input name="codigo_os" value="${esc(p.codigo_os)}"></label>`;
+  const lista = [...(p.sugerencias?.pami || [])];
+  if (p.codigo_os && !lista.some((c) => c.code === p.codigo_os)) {
+    const info = Motor.catalogos.PAMI_NOM?.codes.find((c) => c.code === p.codigo_os);
+    lista.unshift(info ? { code: info.code, name: info.name, h: info.h, tipo: info.tipo, modulo: info.modulo } : { code: p.codigo_os, name: "(no figura en el nomenclador PAMI)" });
+  }
+  const opcion = (c) => `<option value="${esc(c.code)}" ${c.code === p.codigo_os ? "selected" : ""}>${esc(c.code)} · ${esc((c.name || "").slice(0, 60))}${c.h ? ` (${c.h} u.${/MODULADA/.test(c.tipo || "") ? " módulo" : ""})` : ""}</option>`;
+  return `<label class="ancho">Código PAMI<select name="codigo_os"><option value="">— sin código —</option>${lista.map(opcion).join("")}</select></label>
+    <div class="ancho fila" style="margin-top:-4px"><button type="button" class="boton chico secundario" data-buscar-pami>Buscar código PAMI</button></div>`;
+}
 
 // Otros procedimientos del mismo acto: cada uno con su código (el valor va al % de operación múltiple)
 function camposExtras(p) {
@@ -269,13 +283,14 @@ function enlazarEstimacion(el, obtener, guardar) {
     if (["procedimiento", "tipo", "abordaje"].includes(cambio)) p.codigo_aac = null;
     const extra = /^extra_proc_(\d+)$/.exec(cambio || "");
     if (extra && p.extras?.[+extra[1]]) p.extras[+extra[1]].codigo_aac = null; // cambió el texto: volver a sugerir el código
-    if (cambio === "obra_social") p.codigo_os = null;
+    if (cambio === "obra_social" && !p.codigo_os_manual) p.codigo_os = null; // el código escrito a mano no se pierde
     if (!p.fecha) return;
     const e = Motor.estimar(datos(), { ...p, fecha_presentacion: p.estado === "pendiente" ? null : p.fecha_presentacion });
     guardar({ ...p, ...e, sugerencias: e.sugerencias || p.sugerencias });
   };
   el.addEventListener("change", (ev) => {
     if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
+    if (ev.target.name === "codigo_os") { const p = obtener(); if (p) { p.codigo_os_manual = true; guardar(p); } }
     if (["endoscopia", "polipectomia"].includes(ev.target.name) && esTextoAutomatico(obtener()?.procedimiento)) {
       const p = obtener(); p.procedimiento = textoEndoscopia(p); guardar(p); return recalcular("procedimiento");
     }
@@ -290,6 +305,22 @@ function enlazarEstimacion(el, obtener, guardar) {
       else p.extras.splice(+quitar.dataset.quitarExtra, 1);
       guardar(p);
       if (quitar) recalcular("extras");
+      return;
+    }
+    if (ev.target.matches("[data-buscar-pami]") && obtener()) {
+      const q = prompt("Buscar en el nomenclador PAMI (palabras o código):", obtener().procedimiento || "");
+      if (!q) return;
+      const p = obtener();
+      let res = Motor.buscar("PAMI_NOM", q).map((c) => ({ code: c.code, name: c.name, h: c.h, tipo: c.tipo, modulo: c.modulo }));
+      // Un código que no está en el nomenclador (p. ej. de otra normativa) también se puede cargar
+      if (!res.length && /^\d{4,8}$/.test(q.trim())) res = [{ code: q.trim(), name: "(no figura en el nomenclador PAMI)" }];
+      if (!res.length) return aviso("Sin resultados en el nomenclador PAMI");
+      p.sugerencias = { ...(p.sugerencias || {}), pami: res };
+      p.codigo_os = res[0].code;
+      p.codigo_os_manual = true;
+      guardar(p);
+      recalcular("codigo_os");
+      if (res.length > 1) aviso(`${res.length} resultados: elegí el código en la lista «Código PAMI».`);
       return;
     }
     if (!ev.target.matches("[data-buscar-codigo]") || !obtener()) return;

@@ -2,10 +2,10 @@
 // App: se muestra lo guardado y se actualiza en segundo plano. Librerías de vendor/ (versión fija, ~11 MB): se descargan
 // una sola vez, la primera vez que se lee un documento.
 // Nunca se guardan respuestas de Google (datos del profesional).
-const VERSION = "liquidaciones-v10";
+const VERSION = "liquidaciones-v11";
 const LIBRERIAS = "liquidaciones-libs-2"; // aparte: no se vuelve a bajar en cada actualización de la app
 const APP = ["./", "index.html", "estilos.css", "config.js", "motor.js", "lector.js", "almacen.js", "app.js", "manifest.webmanifest",
-  "icono.svg", "icono-192.png", "privacidad.html", "ayuda.html", "datos/aac_2026_08.json", "datos/pami_2024_02.json", "datos/obras_sociales.json", "datos/valores.json"];
+  "icono.svg", "icono-192.png", "privacidad.html", "ayuda.html", "datos/aac_2026_08.json", "datos/pami_2024_02.json", "datos/obras_sociales.json", "datos/valores.json", "datos/pami_nomenclador_2026_10.json", "datos/pami_unidades.json"];
 
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(APP))); self.skipWaiting(); });
 self.addEventListener("activate", (e) => e.waitUntil(
