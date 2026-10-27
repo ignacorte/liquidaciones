@@ -198,7 +198,7 @@ const Lector = (() => {
       const p = plano(linea);
       if (/hasta|area/.test(p) && (p.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/g) || []).length >= 2) return []; // rango de búsqueda de la HC
       // Sin etiqueta, «08.08.13» con puntos y año de 2 cifras es un código (AAC), no una fecha
-      return [...p.matchAll(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b\d{1,2}-\d{1,2}-\d{4}\b|\b\d{1,2}\.\d{1,2}\.\d{4}\b|\b\d{1,2} de [a-z]+(?: de)? \d{4}\b/g)]
+      return [...p.matchAll(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b\d{1,2}-\d{1,2}-\d{2,4}\b|\b\d{1,2}\.\d{1,2}\.\d{4}\b|\b\d{1,2} de [a-z]+(?: de)? \d{4}\b/g)]
         .filter((m) => !/nac|edad|ingres|egres|alta|vto|venc|emisi|desde|hasta|fec\. ing|fec\. egr/.test(p.slice(Math.max(0, m.index - 25), m.index)))
         .map((m) => fechaISO(m[0]));
     }).concat([...plano(texto).matchAll(/\b([0-3]\d)(?:[1l|]|\s+)([01]?\d)(?:[1l|]|\s+)(20\d\d)\b/g)].map((m) => fechaISO(`${m[1]}/${m[2]}/${m[3]}`)))
