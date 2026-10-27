@@ -489,9 +489,10 @@ function editar(p) {
 // ---------- Prestaciones ----------
 
 function verPrestaciones() {
-  const os = $("#f-os").value, est = $("#f-estado").value, q = Motor.plano($("#f-q").value), h = hoy();
+  const os = $("#f-os").value, est = $("#f-estado").value, tipo = $("#f-tipo").value, q = Motor.plano($("#f-q").value), h = hoy();
   let lista = datos().prestaciones;
   if (!$("#f-todos-meses").checked) lista = lista.filter((p) => p.fecha.slice(0, 7) === mes());
+  if (tipo === "procedimientos") lista = lista.filter((p) => p.tipo !== "consulta"); else if (tipo) lista = lista.filter((p) => p.tipo === tipo);
   if (os === "-") lista = lista.filter((p) => !p.obra_social); else if (os) lista = lista.filter((p) => p.obra_social === os);
   if (est === "vencida") lista = lista.filter((p) => Motor.vencida(p, h));
   else if (est === "a_cobrar") lista = lista.filter((p) => ["pendiente", "presentada"].includes(p.estado));
@@ -500,7 +501,7 @@ function verPrestaciones() {
   lista.sort((a, b) => (b.fecha + (b.hora || "")).localeCompare(a.fecha + (a.hora || "")));
   estado.seleccion.clear(); actualizarSeleccion();
   const total = lista.reduce((s, p) => s + (p.valor_estimado || 0), 0);
-  $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} prestaciones<span class="economia"> · ${pesos(total)} estimado · tildá para marcar varias</span></p>` +
+  $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} ${tipo === "consulta" ? "consultas" : tipo ? "procedimientos" : "prestaciones"}<span class="economia"> · ${pesos(total)} estimado · tildá para marcar varias</span></p>` +
     lista.map((p) => {
       const chip = Motor.vencida(p, h) ? '<span class="chip vencida">vencida</span>' : `<span class="chip ${p.estado}">${ESTADOS[p.estado]}</span>`;
       const detalle = p.tipo === "consulta" ? "Consulta" : procedimientosDe(p) + (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + codigosDe(p, "codigo_aac") : "");
@@ -871,7 +872,7 @@ async function arrancar() {
   $$("[data-nueva]").forEach((b) => b.addEventListener("click", () => editar({ fecha: hoy(), tipo: b.dataset.nueva, paciente: "", rol: "cirujano", pct: 100, estado: "pendiente", origen: "manual" })));
   $("#guardar-lote").addEventListener("click", guardarLote);
   $("#cancelar-lote").addEventListener("click", cerrarRevision);
-  ["#f-os", "#f-estado", "#f-todos-meses"].forEach((s) => $(s).addEventListener("change", verPrestaciones));
+  ["#f-tipo", "#f-os", "#f-estado", "#f-todos-meses"].forEach((s) => $(s).addEventListener("change", verPrestaciones));
   let tq; $("#f-q").addEventListener("input", () => { clearTimeout(tq); tq = setTimeout(verPrestaciones, 250); });
   const abrir = (ev) => {
     const sel = ev.target.closest("[data-sel]");
@@ -1020,7 +1021,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "18"; // igual que VERSION en sw.js
+const VERSION_APP = "19"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
