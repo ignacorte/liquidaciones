@@ -1,13 +1,18 @@
 // Funciona sin señal (quirófano): la app y el lector de texto quedan guardados en el celular.
-// App: se muestra lo guardado y se actualiza en segundo plano. Librerías de vendor/ (versión fija, ~11 MB): se descargan
-// una sola vez, la primera vez que se lee un documento.
+// App: con conexión, siempre la versión publicada (la copia guardada es solo para cuando no hay señal). Librerías de
+// vendor/ (versión fija, ~27 MB): se descargan una sola vez, la primera vez que se lee un documento.
 // Nunca se guardan respuestas de Google (datos del profesional).
-const VERSION = "liquidaciones-v13";
+const VERSION = "liquidaciones-v14"; // igual que VERSION_APP en app.js
 const LIBRERIAS = "liquidaciones-libs-2"; // aparte: no se vuelve a bajar en cada actualización de la app
 const APP = ["./", "index.html", "estilos.css", "config.js", "motor.js", "lector.js", "almacen.js", "app.js", "manifest.webmanifest",
   "icono.svg", "icono-192.png", "privacidad.html", "ayuda.html", "datos/aac_2026_08.json", "datos/pami_2024_02.json", "datos/obras_sociales.json", "datos/valores.json", "datos/pami_nomenclador_2026_10.json", "datos/pami_unidades.json"];
 
-self.addEventListener("install", (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(APP))); self.skipWaiting(); });
+// cache: "reload": directo del servidor (GitHub Pages deja los archivos 10 min en la caché del navegador y se guardaba
+// la versión anterior con el nombre de la nueva)
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(APP.map((u) => new Request(u, { cache: "reload" })))));
+  self.skipWaiting();
+});
 self.addEventListener("activate", (e) => e.waitUntil(
   caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION && k !== LIBRERIAS).map((k) => caches.delete(k)))).then(() => self.clients.claim())));
 
@@ -32,9 +37,18 @@ self.addEventListener("fetch", (e) => {
     })).then(aislada));
     return;
   }
+  // Primero la red (revalidando con el servidor); sin señal o si tarda más de 4 s, la copia guardada
   e.respondWith(caches.open(VERSION).then(async (c) => {
     const guardada = await c.match(e.request, { ignoreSearch: true });
-    const red = fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => guardada);
-    return aislada(await (guardada || red));
+    // (una navegación no admite opciones: se pide de nuevo por su dirección)
+    const pedido = e.request.mode === "navigate" ? new Request(e.request.url, { cache: "no-cache" }) : new Request(e.request, { cache: "no-cache" });
+    const red = fetch(pedido).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; });
+    const espera = guardada ? new Promise((ok) => setTimeout(() => ok(null), 4000)) : null;
+    try {
+      const r = await (espera ? Promise.race([red, espera]) : red);
+      return aislada(r || guardada);
+    } catch {
+      return aislada(guardada || Response.error());
+    }
   }));
 });

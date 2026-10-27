@@ -918,6 +918,8 @@ async function arrancar() {
   });
   $("#modo").addEventListener("change", async () => { await Almacen.ajuste("modo", $("#modo").value); aplicarModo(); aviso("Guardado"); });
   $("#sin-copia").addEventListener("click", (ev) => { if (ev.target.matches("[data-ir]")) { ev.preventDefault(); ir(ev.target.dataset.ir); } });
+  $("#version-app").textContent = "Versión " + VERSION_APP;
+  $("#actualizar-app").addEventListener("click", (ev) => { ev.preventDefault(); aviso("Buscando la versión nueva…"); actualizarAhora(); });
   $("#copia-bajar").addEventListener("click", async () => {
     const clave = prompt("Elegí una clave para la copia (mínimo 6 caracteres). Anotala: sin ella la copia no se puede abrir.");
     if (!clave) return;
@@ -973,7 +975,7 @@ async function arrancar() {
     const b = ev.target.closest("[data-borrar-valor]");
     if (b && confirm("¿Borrar este valor?")) { await Almacen.borrar("valores", b.dataset.borrarValor); verTablaValores(); }
   });
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  registrarActualizaciones();
   window.addEventListener("online", () => Almacen.tieneToken() && Almacen.sincronizar().then(refrescar).catch(() => {}));
 
   configurarSeguridad();
@@ -1015,6 +1017,32 @@ async function unificarActos() {
   }
   await Almacen.ajuste("actos_unificados", true);
   if (unidos) { aviso(`${unidos} cirugías con varios procedimientos quedaron agrupadas en un solo acto.`); refrescar(); }
+}
+
+// ---------- Actualizaciones de la app ----------
+const VERSION_APP = "14"; // igual que VERSION en sw.js
+
+function registrarActualizaciones() {
+  if (!("serviceWorker" in navigator)) return;
+  const habia = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => reg.update()).catch(() => {});
+  // Versión nueva instalada: recargar una vez para usarla (si no hay nada a medio cargar)
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!habia || sessionStorage.getItem("liq_recargada")) return;
+    if ($("#dlg").open || !$("#revision").hidden) return aviso("Hay una versión nueva de la app: se usa al volver a abrirla.");
+    sessionStorage.setItem("liq_recargada", "1");
+    location.reload();
+  });
+}
+
+// Forzar: borrar la copia guardada de la app (no los datos ni el lector) y volver a bajarla
+async function actualizarAhora() {
+  try {
+    for (const k of await caches.keys()) if (!k.includes("libs")) await caches.delete(k);
+    for (const r of await navigator.serviceWorker.getRegistrations()) await r.update();
+  } catch { /* sin service worker */ }
+  sessionStorage.removeItem("liq_recargada");
+  location.reload();
 }
 
 function bienvenida(mensaje) {
