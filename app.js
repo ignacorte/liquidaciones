@@ -8,6 +8,10 @@ const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const pesos = (n) => (n == null || isNaN(n) ? "—" : "$" + Math.round(n).toLocaleString("es-AR"));
 const fechaCorta = (iso) => (iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(2, 4) : "");
 const hoy = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+// Fechas en los formularios: texto dd/mm/aaaa (el campo de fecha del navegador muestra mes/día si está en inglés)
+const fechaLarga = (iso) => (iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
+const campoFecha = (nombre, iso) => `<input name="${nombre}" data-fecha inputmode="numeric" placeholder="dd/mm/aaaa" maxlength="10" value="${esc(fechaLarga(iso))}">`;
+
 // «21/10/2026», «21/10/26», «21-10-2026» o «2026-10-21» → «2026-10-21» (null si no es una fecha posible)
 function fechaDeTexto(t) {
   let m = (t || "").trim().match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})$/);
@@ -82,7 +86,10 @@ function datos() {
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
 
 async function guardarPrestacion(p) {
-  if (!p.fecha || !/^\d{4}-\d{2}-\d{2}$/.test(p.fecha)) throw new Error(`Fecha inválida para ${p.paciente || "la prestación"}`);
+  for (const [campo, nombre] of [["fecha", "Fecha"], ["fecha_presentacion", "Presentada el"], ["fecha_cobro", "Cobrada el"]]) {
+    if ((campo === "fecha" || p[campo]) && !/^\d{4}-\d{2}-\d{2}$/.test(p[campo] || ""))
+      throw new Error(`${nombre}: «${String(p[campo] || "").replace("invalida:", "")}» no es una fecha válida (escribila como día/mes/año, por ejemplo 21/10/2026)`);
+  }
   if (!(p.paciente || "").trim()) throw new Error("Falta el nombre del paciente");
   const limpio = { id: p.id };
   for (const k of CAMPOS) limpio[k] = p[k] ?? null;
@@ -181,7 +188,7 @@ function camposPrestacion(p, completo) {
   const quir = p.tipo !== "consulta";
   return `
   <div class="grid">
-    <label>Fecha<input type="date" name="fecha" value="${esc(p.fecha)}" required></label>
+    <label>Fecha${campoFecha("fecha", p.fecha)}</label>
     <label>Tipo${sel("tipo", TIPOS, p.tipo)}</label>
     <label class="ancho">Paciente<input name="paciente" value="${esc(p.paciente)}" required></label>
     <label>Obra social<select name="obra_social">${opcionesOS(p.obra_social)}</select></label>
@@ -209,8 +216,8 @@ function camposPrestacion(p, completo) {
     <label>Institución<input name="institucion" value="${esc(p.institucion)}"></label>
     <label class="economia">Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
     <label class="economia">Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
-    <label class="economia">Presentada el<input type="date" name="fecha_presentacion" value="${esc(p.estado === "pendiente" ? "" : p.fecha_presentacion)}"></label>
-    <label class="economia">Cobrada el<input type="date" name="fecha_cobro" value="${esc(p.fecha_cobro)}"></label>
+    <label class="economia">Presentada el${campoFecha("fecha_presentacion", p.estado === "pendiente" ? "" : p.fecha_presentacion)}</label>
+    <label class="economia">Cobrada el${campoFecha("fecha_cobro", p.fecha_cobro)}</label>
     <label class="economia">Monto cobrado ($)<input type="number" name="monto_cobrado" value="${p.monto_cobrado ?? ""}"></label>
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(p.notas)}</textarea></label>` : ""}
   </div>
@@ -253,6 +260,7 @@ function leerCampos(el, base) {
   const p = { ...base };
   $$("input[name], select[name], textarea[name]", el).forEach((c) => {
     if (c.type === "checkbox") p[c.name] = c.checked;
+    else if (c.hasAttribute("data-fecha")) p[c.name] = c.value.trim() === "" ? null : fechaDeTexto(c.value) || "invalida:" + c.value.trim();
     else if (c.type === "number") p[c.name] = c.value === "" ? null : Number(c.value);
     else p[c.name] = c.value === "" ? null : c.value;
   });
@@ -284,7 +292,7 @@ function enlazarEstimacion(el, obtener, guardar) {
     const extra = /^extra_proc_(\d+)$/.exec(cambio || "");
     if (extra && p.extras?.[+extra[1]]) p.extras[+extra[1]].codigo_aac = null; // cambió el texto: volver a sugerir el código
     if (cambio === "obra_social" && !p.codigo_os_manual) p.codigo_os = null; // el código escrito a mano no se pierde
-    if (!p.fecha) return;
+    if (!p.fecha || !/^\d{4}-\d{2}-\d{2}$/.test(p.fecha)) return; // fecha a medio escribir
     const e = Motor.estimar(datos(), { ...p, fecha_presentacion: p.estado === "pendiente" ? null : p.fecha_presentacion });
     guardar({ ...p, ...e, sugerencias: e.sugerencias || p.sugerencias });
   };
@@ -355,6 +363,19 @@ async function leer(tipo, archivos, textoPegado) {
       aviso("Parece el informe de un estudio (TAC, ecografía…), no un procedimiento: quedó destildado.");
     }
     if (tipo === "parte" && !ajuste("apellido", "")) aviso("Cargá tu apellido en Valores → Mi cuenta para saber si fuiste cirujano o ayudante.");
+    // Varios códigos en el parte («180116 310009»): el principal es el quirúrgico (módulo, después práctica quirúrgica);
+    // los demás (p. ej. la ecografía) van como otros procedimientos del mismo acto, con su nombre del nomenclador
+    if (tipo === "parte") for (const f of filas) {
+      const cods = [...new Set(f.codigos_os || [])];
+      delete f.codigos_os;
+      if (cods.length < 2) continue;
+      const info = (c) => Motor.catalogos.PAMI_NOM?.codes.find((x) => x.code === c);
+      const peso = (c) => (/MODULADA/.test(info(c)?.tipo || "") ? 3 : /QUIRURGICA/.test(info(c)?.tipo || "") ? 2 : info(c) ? 1 : 0);
+      const [principal, ...resto] = [...cods].sort((a, b) => peso(b) - peso(a));
+      f.codigo_os = principal;
+      f.codigo_os_manual = true;
+      f.extras = [...(f.extras || []), ...resto.map((c) => ({ procedimiento: info(c)?.name || "Código " + c, codigo_os: c }))];
+    }
     if (tipo === "parte" && filas.length > 1) {
       // Un mismo acto: una sola prestación; el procedimiento de mayor valor es el principal (100 %), los demás van como
       // «otros procedimientos del mismo acto» (al % de operación múltiple)
@@ -362,7 +383,7 @@ async function leer(tipo, archivos, textoPegado) {
       filas.sort((a, b) => lleno(b) - lleno(a));
       const [principal, ...resto] = filas;
       principal.pct = 100;
-      principal.extras = resto.map((f) => ({ procedimiento: f.procedimiento, codigo_aac: null, codigo_os: f.codigo_os || null }));
+      principal.extras = [...(principal.extras || []), ...resto.map((f) => ({ procedimiento: f.procedimiento, codigo_aac: null, codigo_os: f.codigo_os || null }))];
       filas.splice(0, filas.length, principal);
     }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
@@ -693,7 +714,7 @@ function mostrarConciliacion() {
   $("#revision-filas").innerHTML = `<p class="ayuda">${esc(liq.empresa)} · emitida ${fechaCorta(liq.emision)} · total ${pesos(liq.total)}<br>
       <b>${ok}</b> líneas coinciden con prestaciones cargadas (se marcan cobradas con el monto liquidado); <b>${filas.length - ok}</b> no estaban
       cargadas (se agregan como cobradas).</p>
-    <label>Fecha de cobro<input type="date" id="liq-fecha" value="${esc(liq.emision || hoy())}"></label>` +
+    <label>Fecha de cobro<input id="liq-fecha" data-fecha inputmode="numeric" placeholder="dd/mm/aaaa" value="${esc(fechaLarga(liq.emision || hoy()))}"></label>` +
     filas.map((f, i) => `<div class="item" style="cursor:default"><input type="checkbox" data-liq-incluir="${i}" ${f.incluir ? "checked" : ""}>
       <div class="cuerpo"><div class="titulo">${esc(f.linea.paciente)}</div>
       <div class="sub">${fechaCorta(f.linea.fecha)} · ${esc(f.os || f.linea.obra_social_texto)} · ${esc(f.linea.codigo)} ${esc(f.linea.descripcion)}</div>
@@ -703,7 +724,7 @@ function mostrarConciliacion() {
 
 async function aplicarLiquidacion() {
   const { liq, filas } = conciliacion;
-  const fecha = $("#liq-fecha").value || liq.emision || hoy();
+  const fecha = fechaDeTexto($("#liq-fecha").value) || liq.emision || hoy();
   const nota = `Liq. ${liq.numero}`;
   const grupos = new Map(); // prestación → líneas
   for (const f of filas.filter((x) => x.incluir)) {

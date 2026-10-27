@@ -439,7 +439,9 @@ const Lector = (() => {
       afiliado: ([e.afiliado, (osTexto.match(/-\s*(\d[\d\/-]{5,})\s*$/) || [])[1]].find((x) => (x || "").replace(/\D/g, "").length >= 3) || "").split(/\s{2,}/)[0].trim(),
       atencion: soloDigitos(e.atencion || ""),
       afiliadoPorForma: (texto.match(/(?:^|\s)(1\d{11}[\/-]?\d{2}|8000\d{15})(?=\s|$)/) || [])[1] || "",
-      codigo_os: soloDigitos(e.codigo_os || "") || codigoEnProc || codigoPractica,
+      // «Código Quirúrgico: 180116 310009»: puede traer varios códigos; no pegarlos en un solo número
+      codigos_os: ((e.codigo_os || "").match(/\d{5,8}/g) || []),
+      codigo_os: ((e.codigo_os || "").match(/\d{5,8}/g) || [])[0] || codigoEnProc || codigoPractica,
       institucion: e.institucion || "",
       diagnostico: e.diagnostico || "",
       conclusion: e.conclusion || "",
@@ -660,7 +662,7 @@ const Lector = (() => {
     }
     return d.procedimientos.map((proc, i) => ({
       fecha: d.fecha, hora: d.hora, tipo: "cirugia", paciente: d.paciente, dni: d.dni, afiliado: d.afiliado, atencion: d.atencion,
-      codigo_os: i === 0 ? d.codigo_os : "",
+      codigo_os: i === 0 ? d.codigo_os : "", codigos_os: i === 0 ? d.codigos_os : [],
       obra_social_texto: d.obra_social_texto, institucion: d.institucion, diagnostico: d.diagnostico, procedimiento: proc,
       abordaje: d.abordaje, urgencia: d.urgencia, rol, pct: i === 0 ? 100 : pctMultiple, origen: "foto_parte", incluir: true,
       ...(endos[i] ? { tipo: "endoscopia", abordaje: "endoscopica", ...endos[i], observaciones: d.conclusion } : {}),
