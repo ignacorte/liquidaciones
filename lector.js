@@ -537,6 +537,32 @@ const Lector = (() => {
     return filas;
   }
 
+  // «Pacientes por Día por Profesional»: «14:45  APROSS URO  # Lenardon Ines  # 42010101  # CONTROL DE CIRUGIA»
+  // (nombre sin coma). Solo renglones con hora y obra social o código: los botones de la pantalla («15:00 Cons. Medic.») no.
+  function turnosPorDia(texto, obraSocial, fecha) {
+    const filas = [];
+    for (const linea of texto.split(/\r?\n/)) {
+      const m = linea.match(/^\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s+(.+)$/);
+      if (!m) continue;
+      const cajas = m[3].split(/\s*#\s*|\s{3,}/).map((c) => c.trim()).filter(Boolean);
+      if (cajas.length < 2) continue;
+      const osTexto = cajas[0];
+      const os = obraSocial(osTexto) || obraSocial(osTexto.replace(/^PAMI\S*/i, "PAMI")) || obraSocial(osTexto.replace(/^INSS\S*/i, "INSSJP"));
+      const resto = cajas.slice(1);
+      const i = resto.findIndex((c) => /^[A-Za-zÁÉÍÓÚÑáéíóúñü' .]{4,}$/.test(c) && c.split(/\s+/).filter((w) => w.length > 1).length >= 2);
+      if (i < 0) continue;
+      const numeros = resto.slice(i + 1).map((c) => NUMERICO(c).replace(/\D/g, "")).filter((n) => n.length >= 5);
+      // 820126 (consulta de especialista PAMI) mal leído: «la20126», «8e012€»
+      const consultaPami = resto.slice(i + 1).some((c) => c.length >= 5 && c.length <= 7 && parecido(c.toLowerCase(), "820126") >= 0.6);
+      const codigo = numeros.find((n) => /^8201\d\d$/.test(n) || n.length === 8) || (consultaPami ? "820126" : numeros.find((n) => n.length === 6)) || "";
+      if (!os && !numeros.length && !consultaPami) continue;
+      const nota = resto.slice(i + 1).filter((c) => /[A-Za-z]{3,}/.test(c) && !/^#?\s*PAMI\b|^OME$/i.test(c)).join(" ").trim();
+      filas.push({ fecha, hora: `${m[1].padStart(2, "0")}:${m[2]}`, paciente: resto[i].replace(/[.\s]+$/, "").toUpperCase(), dni: "", afiliado: "",
+        tipo: "consulta", obra_social_texto: os || osTexto, codigo_os: codigo, atencion: "", notas: nota, ausente: false, detalle: "" });
+    }
+    return filas;
+  }
+
   function listado(texto, obraSocial, medico) {
     if (/prestaci\S*\s+\d{6}/i.test(texto) && /tipo de anestesia/i.test(texto)) {
       const p = programaQuirofano(texto, obraSocial, medico);
@@ -553,6 +579,8 @@ const Lector = (() => {
           codigo_os: t.codigo_os, atencion: t.atencion, notas: t.nota, ausente: false, detalle: "" });
       }
       if (filas.length) return sinRepetir(filas);
+      const porDia = turnosPorDia(texto, obraSocial, fecha);
+      if (porDia.length) return sinRepetir(porDia);
     }
     for (const linea of texto.split(/\r?\n/)) {
       const p = plano(linea);
