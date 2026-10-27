@@ -218,9 +218,20 @@ const Motor = (() => {
     return { fecha_presentacion: pres, fecha_cobro_estimada: sumarDias(pres, diasPago) };
   }
 
+  // «% a facturar» vacío = 100; 0 = no se cobra (p. ej. ayudantía en un módulo)
+  const pctDe = (x) => (x === 0 || x === "0" ? 0 : Number(x) || 100);
+
+  // PAMI paga el módulo completo a la institución, sin separar cirujano y ayudantes: la ayudantía no se cobra aparte
+  function ayudantiaEnModuloPami(os, p, codigoOS) {
+    if (os !== "PAMI" || (p.rol || "cirujano") !== "ayudante" || p.valor_manual) return null;
+    const vp = codigoOS ? valorPami(codigoOS, p.fecha) : null;
+    return vp && vp.modulo ? vp : null;
+  }
+
   function valor(datos, p, os, codigoAAC, codigoOS) {
     if (p.valor_manual) return [Number(p.valor_manual), "Cargado a mano"];
-    const rol = p.rol || "cirujano", pct = p.pct || 100, reglas = catalogos.AAC.rules;
+    const rol = p.rol || "cirujano", pct = pctDe(p.pct), reglas = catalogos.AAC.rules;
+    if (pct === 0) return [0, "0 % a facturar: no se cobra"];
     const factor = (rol === "ayudante" ? reglas.assistant_pct / 100 : 1) * pct / 100;
     const extra = (rol === "ayudante" ? ` × ${reglas.assistant_pct} % (ayudante)` : "") + (pct !== 100 ? ` × ${pct} % (operación múltiple)` : "");
     const tabla = os === "PARTICULAR" ? PARTICULAR_TABLA : os;
@@ -272,6 +283,11 @@ const Motor = (() => {
       if (!out.codigo_os && os === "PAMI" && out.sugerencias.pami.length) out.codigo_os = out.sugerencias.pami[0].code;
     }
     [out.valor_estimado, out.valor_origen] = valor(datos, p, os, out.codigo_aac, out.codigo_os);
+    const sinCobro = !p.valor_manual && (pctDe(p.pct) === 0 || ayudantiaEnModuloPami(os, p, out.codigo_os));
+    if (sinCobro && pctDe(p.pct) !== 0) {
+      const vp = ayudantiaEnModuloPami(os, p, out.codigo_os);
+      [out.valor_estimado, out.valor_origen] = [0, `Ayudantía en módulo PAMI ${vp.codigo}: PAMI paga el módulo completo (${pesos(vp.monto)}) a la institución, sin separar ayudantes; no se cobra aparte`];
+    }
     // Otros procedimientos del mismo acto (mismo paciente y día): cada uno con su código, al % de operación múltiple (AAC)
     if (p.extras?.length && p.tipo !== "consulta") {
       const pct = catalogos.AAC.rules.multiple_same_approach_pct;
@@ -282,7 +298,8 @@ const Motor = (() => {
                  valor: e.valor_estimado, sugerencias: e.sugerencias };
       });
       const suma = out.extras.reduce((t, x) => t + (x.valor || 0), 0);
-      if (!p.valor_manual && out.valor_estimado != null) {
+      if (sinCobro) out.extras.forEach((x) => { x.valor = 0; });
+      else if (!p.valor_manual && out.valor_estimado != null) {
         out.valor_estimado += suma;
         out.valor_origen += ` · + ${out.extras.length} procedimiento${out.extras.length > 1 ? "s" : ""} del mismo acto (${pesos(suma)})`;
       }

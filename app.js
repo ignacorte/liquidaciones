@@ -94,7 +94,7 @@ async function guardarPrestacion(p) {
   const limpio = { id: p.id };
   for (const k of CAMPOS) limpio[k] = p[k] ?? null;
   limpio.extras = limpio.tipo === "consulta" ? [] : (p.extras || []).filter((x) => (x.procedimiento || "").trim()).map(({ sugerencias, valor, ...x }) => x);
-  limpio.estado ||= "pendiente"; limpio.tipo ||= "consulta"; limpio.rol ||= "cirujano"; limpio.pct ||= 100; limpio.origen ||= "manual";
+  limpio.estado ||= "pendiente"; limpio.tipo ||= "consulta"; limpio.rol ||= "cirujano"; if (limpio.pct == null || limpio.pct === "") limpio.pct = 100; limpio.origen ||= "manual";
   return Almacen.guardar("prestaciones", Motor.completar(datos(), limpio));
 }
 
@@ -207,7 +207,7 @@ function camposPrestacion(p, completo) {
     ${camposExtras(p)}
     <label>Abordaje${sel("abordaje", { "": "—", laparoscopica: "Laparoscópica", convencional: "Convencional", robotica: "Robótica", percutanea: "Percutánea", endoscopica: "Endoscópica" }, p.abordaje || "")}</label>
     <label>Rol${sel("rol", { cirujano: "Cirujano", ayudante: "Ayudante" }, p.rol || "cirujano")}</label>
-    <label class="economia">% a facturar<input type="number" name="pct" value="${p.pct || 100}" min="1" max="100"></label>
+    <label class="economia">% a facturar<input type="number" name="pct" value="${p.pct ?? 100}" min="0" max="100"></label>
     ${campoCodigoOS(p)}
     <label class="check"><input type="checkbox" name="urgencia" ${p.urgencia ? "checked" : ""}> Urgencia</label>` : ""}
     ${completo ? `
@@ -784,7 +784,7 @@ async function construirExcel() {
   const cirugias = lista.filter((p) => p.tipo !== "consulta").map((p) => ({
     "Fecha": fechaX(p.fecha), "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "", "Obra social": p.obra_social || p.obra_social_texto || "",
     "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": procedimientosDe(p), "Código AAC": codigosDe(p, "codigo_aac"),
-    "Código obra social": codigosDe(p, "codigo_os"), "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct || 100,
+    "Código obra social": codigosDe(p, "codigo_os"), "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct ?? 100,
     "Endoscopía": p.tipo === "endoscopia" ? ENDOSCOPIAS[p.endoscopia] || "" : "", "Llegó a ciego": p.ciego ? SI_NO[p.ciego] : "",
     "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "", "Observaciones (endoscopía)": p.observaciones || "",
     "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
@@ -1020,7 +1020,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "15"; // igual que VERSION en sw.js
+const VERSION_APP = "16"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
