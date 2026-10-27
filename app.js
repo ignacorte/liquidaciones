@@ -390,7 +390,7 @@ async function leer(tipo, archivos, textoPegado) {
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
   } catch (e) {
     aviso(e.message);
-    if (e.texto !== undefined) {
+    if (e.texto !== undefined && !e.capturaApp) {
       $("#texto-leido").textContent = e.texto;
       mostrarRevision([{ fecha: hoy(), tipo: tipo === "parte" ? "cirugia" : "consulta", paciente: "", rol: "cirujano", pct: 100, incluir: true, origen: "manual" }], "Completar a mano");
     } else $("#cargar-botones").hidden = false;
@@ -1020,7 +1020,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "14"; // igual que VERSION en sw.js
+const VERSION_APP = "15"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

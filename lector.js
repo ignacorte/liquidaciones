@@ -197,7 +197,8 @@ const Lector = (() => {
     const candidatas = texto.split(/\r?\n/).flatMap((linea) => {
       const p = plano(linea);
       if (/hasta|area/.test(p) && (p.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/g) || []).length >= 2) return []; // rango de búsqueda de la HC
-      return [...p.matchAll(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b|\b\d{1,2} de [a-z]+(?: de)? \d{4}\b/g)]
+      // Sin etiqueta, «08.08.13» con puntos y año de 2 cifras es un código (AAC), no una fecha
+      return [...p.matchAll(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b\d{1,2}-\d{1,2}-\d{4}\b|\b\d{1,2}\.\d{1,2}\.\d{4}\b|\b\d{1,2} de [a-z]+(?: de)? \d{4}\b/g)]
         .filter((m) => !/nac|edad|ingres|egres|alta|vto|venc|emisi|desde|hasta|fec\. ing|fec\. egr/.test(p.slice(Math.max(0, m.index - 25), m.index)))
         .map((m) => fechaISO(m[0]));
     }).concat([...plano(texto).matchAll(/\b([0-3]\d)(?:[1l|]|\s+)([01]?\d)(?:[1l|]|\s+)(20\d\d)\b/g)].map((m) => fechaISO(`${m[1]}/${m[2]}/${m[3]}`)))
@@ -288,7 +289,7 @@ const Lector = (() => {
   }
   const INSTITUCION = /clinica|maternidad|sanatorio|instituto|hospital|policlinico|swiss|medical|nombre del paciente/;
   const esEtiqueta = (linea) => { RE_ETIQUETA.lastIndex = 0; const r = RE_ETIQUETA.test(plano(linea)) || RE_INICIO.test(plano(linea)); RE_ETIQUETA.lastIndex = 0; return r; };
-  const NARRACION = /^(paciente|se |bajo|previa|asepsia|antisepsia|en |con |luego|incision|pte|ptes)/;
+  const NARRACION = /^(paciente|se |bajo|previa|asepsia|antisepsia|en |con |luego|incision|pte|ptes|codigo|\d{2}\.\d{2}\.\d{2}\b)/;
 
   // Valores por etiqueta: «Paciente: X   DNI: 123» → {paciente: X, dni: 123}. Si la etiqueta queda sola en el renglón,
   // el valor es el renglón siguiente (formularios en dos columnas); el procedimiento puede seguir en el renglón de abajo.
@@ -644,7 +645,11 @@ const Lector = (() => {
     /estudio:?\s*(t\.?\s?a\.?\s?c\.?|tomograf|resonancia|r\.?m\.?n|ecograf|radiograf|centellogra)/.test(plano(texto));
 
   // Igual que la versión de PC (app/lectura.py): resultado → prestaciones
+  // Captura de pantalla de esta misma app (no es un parte ni un listado)
+  const esCapturaDeLaApp = (texto) => /revisa los datos leidos|buscar otro codigo|agregar otro procedimiento \(mismo acto\)|buscar codigo pami/.test(plano(texto));
+
   function aPrestaciones(tipo, texto, { obraSocial, medico, pctMultiple }) {
+    if (esCapturaDeLaApp(texto)) throw Object.assign(new Error("Esa imagen es una captura de pantalla de esta app, no un parte ni un listado. Cargá la foto del parte quirúrgico o de la historia clínica."), { capturaApp: true });
     if (tipo === "listado") {
       return listado(texto, obraSocial, medico).map((f) => ({ ...f, tipo: f.tipo, procedimiento: f.procedimiento || (f.tipo === "practica" ? f.detalle : ""),
         institucion: "", origen: "foto_listado", incluir: !f.ausente }));
