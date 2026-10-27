@@ -27,6 +27,14 @@ const Motor = (() => {
   const OTHER_ROUTES = ["abierta", "laparosc", "transvisceral", "endoscop", "quirurgic", "laparotom", "toracotom"];
   const VIDEO_TERMS = ["laparosc", "videotoracosc", "video", "endosc", "percut", "toracosc"];
 
+  // Órganos: un procedimiento sobre un órgano nunca se codifica con una práctica de otro (biopsia renal ≠ biopsia de páncreas)
+  const ORGANOS = [["renal", /\b(renal|renales|rinon|nefr[a-z]*)\b/], ["suprarrenal", /\b(suprarrenal[a-z]*|adrenal[a-z]*)\b/],
+    ["higado", /\b(hepat[a-z]*|higado)\b/], ["pancreas", /\bpancrea[a-z]*/], ["tiroides", /\btiroid[a-z]*/], ["bazo", /\b(esplen[a-z]*|bazo)\b/],
+    ["pulmon", /\b(pulmon[a-z]*|pleur[a-z]*)\b/], ["mama", /\bmama[a-z]*/], ["prostata", /\bprostat[a-z]*/],
+    ["vejiga", /\b(vesical[a-z]*|vesico[a-z]*|vejiga)\b/], ["salival", /\b(salival[a-z]*|parotid[a-z]*)\b/]];
+  const organos = (t) => new Set(ORGANOS.filter(([, re]) => re.test(t)).map(([o]) => o));
+
+  const COBERTURA = 0.35;
   const raiz = (w) => (w.includes("ectom") ? w.slice(0, 6) + "~ect" : w.includes("ostom") ? w.slice(0, 6) + "~ost" : w.slice(0, 6));
 
   function palabras(texto) {
@@ -39,6 +47,7 @@ const Motor = (() => {
     if (words.has("biopsi") && words.has("percut")) words.add("puncio");
     if (words.has("coleci~ect") && words.has("laparo")) words.add("colela");
     if (words.has("antirr")) words.delete("hernio");
+    if (words.has("higado")) words.delete("hepati"); // el órgano cuenta una vez (si no, le gana a la acción: punción ≠ segmentectomía)
     return words;
   }
 
@@ -60,6 +69,8 @@ const Motor = (() => {
     const pesos = idf(nombre), wanted = palabras(procedimiento);
     let plain = plano(procedimiento);
     if (wanted.has("antirr")) plain += " diafragm"; // la cirugía antirreflujo lleva plástica diafragmática
+    const organosPedidos = organos(plain);
+    const pesoTotal = [...wanted].reduce((t, w) => t + (pesos[w] || 0), 0);
     const scored = [];
     for (const code of data.codes) {
       let best = 0;
@@ -68,6 +79,8 @@ const Motor = (() => {
         const words = new Set([...palabras(item), ...nameWords]);
         let score = 0;
         for (const w of wanted) if (words.has(w)) score += pesos[w] || 0;
+        // Cobertura mínima: el código tiene que cubrir buena parte de lo pedido (no una sola palabra suelta)
+        if (pesoTotal && score < pesoTotal * COBERTURA) continue;
         for (const r of APPROACH_ROOTS) {
           if (words.has(r) && !wanted.has(r) && APPROACH_ROOTS.some((o) => o !== r && wanted.has(o))) score -= 3;
         }
@@ -75,6 +88,9 @@ const Motor = (() => {
         score -= 6 * EXCLUSIVE_TERMS.filter((t) => itemPlain.includes(t) && !plain.includes(t)).length;
         if (wanted.has("percut") && !words.has("percut") && OTHER_ROUTES.some((t) => itemPlain.includes(t))) score -= 4;
         for (const q of ["bilateral", "recidivad", "diafragm", "coledocotom"]) if (plano(item).includes(q) && !plain.includes(q)) score -= 3;
+        const delCodigo = organos(itemPlain);
+        if (organosPedidos.size && delCodigo.size && ![...delCodigo].some((o) => organosPedidos.has(o))) score -= 20;
+        else if (organosPedidos.size && !delCodigo.size) score -= 4; // el procedimiento nombra un órgano y el código no
         best = Math.max(best, score);
       }
       if (best > 0) scored.push([best, code]);
@@ -234,7 +250,11 @@ const Motor = (() => {
     const uq = valorUQ(datos, p.fecha);
     if (p.tipo === "consulta") return [Math.round(reglas.consult_uq * uq), `Referencia AAC: consulta ${reglas.consult_uq} UQ × ${pesos(uq)} (sin valor cargado para la obra social)`];
     const hon = honorarioAAC(codigoAAC, uq, p.fecha, p.hora, p.abordaje, p.urgencia);
-    if (!hon) return [null, "Sin código: elegí el código del procedimiento"];
+    if (!hon) {
+      // Sin práctica de la AAC equivalente (p. ej. biopsia renal: la AAC no tiene urología de ese tipo)
+      if (modulo) return [null, `Sin honorario conocido${modulo}. Cargá el «% del módulo para el cirujano» (Valores → Obras sociales) o el valor a mano.`];
+      return [null, "Sin código: elegí el código del procedimiento"];
+    }
     const aj = hon.ajustes.map(([n, x]) => ` +${x} % ${n}`).join("");
     return [Math.round(hon.cirujano * factor), `Referencia AAC ${hon.codigo}: ${hon.uq} UQ × ${pesos(uq)}${aj}${extra}${modulo}`];
   }
