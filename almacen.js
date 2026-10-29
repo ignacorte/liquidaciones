@@ -404,6 +404,17 @@ const Almacen = (() => {
       bytes, `\r\n--${limite}--`]);
     return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
   }
+  // Fojas quirúrgicas (y otros papeles) en la carpeta «Liquidaciones/Fojas» del Drive del médico
+  async function subirAdjunto(nombre, archivo) {
+    const tipoCarpeta = "application/vnd.google-apps.folder";
+    let fojas = await buscar("Fojas", tipoCarpeta);
+    if (!fojas) fojas = await (await drive(API, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Fojas", mimeType: tipoCarpeta, parents: [await carpeta()] }) })).json();
+    const meta = { name: nombre, parents: [fojas.id] }, limite = "liq" + Date.now();
+    const cuerpo = new Blob([`--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${limite}\r\nContent-Type: ${archivo.type || "application/octet-stream"}\r\n\r\n`,
+      archivo, `\r\n--${limite}--`]);
+    return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
+  }
   async function subirPlanilla(bytes) {
     const vieja = await buscar(PLANILLA_VIEJA);
     if (vieja) await drive(`${API}/${vieja.id}`, { method: "DELETE" }).catch(() => {});
@@ -435,7 +446,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, subirAdjunto, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
     accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),

@@ -44,7 +44,7 @@ const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada:
 const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
-  "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad"];
+  "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -359,6 +359,11 @@ function camposAnestesia(p) {
     ${marca("suspendida", "Operación suspendida (complejidad 1)")}
     <div class="ancho ayuda" style="margin:6px 0 0"><b>Documentación</b></div>
     ${marca("doc_foja", "Foja quirúrgica")}
+    <div class="ancho">
+      ${p._foja ? '<p class="ayuda" style="margin:0">📄 Es la foja quirúrgica completa: se marca y el archivo se guarda en tu Drive al guardar.</p>' : ""}
+      ${(p.foja_archivos || []).length ? `<p class="ayuda" style="margin:0">Foja en tu Drive: ${p.foja_archivos.map((a, i) => `<a href="${esc(a.link)}" target="_blank" rel="noopener">ver${p.foja_archivos.length > 1 ? " " + (i + 1) : ""}</a>`).join(" · ")}</p>` : ""}
+      ${p._foja ? "" : `<label class="boton chico secundario" style="margin-top:4px">📎 Adjuntar foja (foto o PDF)<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-foja></label>`}
+    </div>
     ${marca("doc_autorizacion", "Orden / autorización")}
     <p class="ancho ayuda" style="margin:0">Nocturno (20 a 7 h, +35 %) y fin de semana (sábado 13 h a lunes 7 h, +50 %) salen de la fecha y la hora.</p>`;
 }
@@ -437,7 +442,18 @@ function enlazarEstimacion(el, obtener, guardar) {
     const e = Motor.estimar(datos(), { ...p, fecha_presentacion: p.estado === "pendiente" ? null : p.fecha_presentacion });
     guardar({ ...p, ...e, sugerencias: e.sugerencias || p.sugerencias });
   };
-  el.addEventListener("change", (ev) => {
+  el.addEventListener("change", async (ev) => {
+    if (ev.target.matches("[data-adjuntar-foja]") && ev.target.files.length && obtener()) {
+      const archivos = [...ev.target.files], p = obtener();
+      ev.target.value = "";
+      aviso("Guardando la foja en tu Drive…");
+      try {
+        const lista = await subirFojas(p, archivos);
+        guardar({ ...p, doc_foja: true, foja_archivos: [...(p.foja_archivos || []), ...lista] });
+        aviso("Foja guardada en tu Drive. Tocá Guardar para confirmar.");
+      } catch (e) { aviso(e.message); }
+      return;
+    }
     if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
     if (ev.target.name === "codigo_os") { const p = obtener(); if (p) { p.codigo_os_manual = true; guardar(p); } }
     if (["endoscopia", "polipectomia"].includes(ev.target.name) && esTextoAutomatico(obtener()?.procedimiento)) {
@@ -544,6 +560,10 @@ async function leer(tipo, archivos, textoPegado) {
       principal.extras = [...(principal.extras || []), ...resto.map((f) => ({ procedimiento: f.procedimiento, codigo_aac: null, codigo_os: f.codigo_os || null }))];
       filas.splice(0, filas.length, principal);
     }
+    // Anestesiología: si lo cargado es la foja quirúrgica completa, cuenta como presentada y el archivo se guarda en el Drive
+    if (tipo === "parte" && esAnestesia() && archivos?.length) for (const f of filas) {
+      if (Lector.esFojaCompleta(texto, f)) Object.assign(f, { doc_foja: true, _foja: archivos });
+    }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
   } catch (e) {
@@ -588,6 +608,25 @@ const fechaDudosa = (x) => !x.fecha_leida || Math.abs(Date.now() - Date.parse(x.
 
 function cerrarRevision() { conciliacion = null; $("#guardar-lote").textContent = "Guardar"; $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
 
+// Foja quirúrgica al Drive («Liquidaciones/Fojas»), ligada a la prestación
+async function subirFojas(p, archivos) {
+  if (!Almacen.tieneToken()) throw new Error("Conectá Google Drive para guardar la foja (Valores → Mi cuenta).");
+  const lista = [];
+  for (const [i, a] of [...archivos].entries()) {
+    const ext = (a.name.match(/\.[a-z0-9]+$/i) || [a.type === "application/pdf" ? ".pdf" : ".jpg"])[0];
+    const nombre = `Foja ${(p.paciente || "paciente").replace(/[\\/:*?"<>|]/g, " ")} ${p.fecha || ""}${archivos.length > 1 ? ` (${i + 1})` : ""}${ext}`;
+    const r = await Almacen.subirAdjunto(nombre, a);
+    lista.push({ id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre });
+  }
+  return lista;
+}
+async function guardarFoja(p, archivos) {
+  try {
+    const lista = await subirFojas(p, archivos);
+    await guardarPrestacion({ ...p, doc_foja: true, foja_archivos: [...(p.foja_archivos || []), ...lista] });
+  } catch (e) { aviso(`${p.paciente}: la foja quedó marcada pero no se pudo guardar el archivo (${e.message})`); }
+}
+
 async function guardarLote() {
   if (conciliacion) return aplicarLiquidacion().catch((e) => aviso(e.message));
   const elegidas = filasRevision.filter((f) => f.incluir);
@@ -602,7 +641,8 @@ async function guardarLote() {
       const ya = existentes.some((p) => p.fecha === f.fecha && p.tipo === f.tipo && (p.paciente || "").toLowerCase() === (f.paciente || "").trim().toLowerCase() &&
         (p.procedimiento || "") === (f.procedimiento || ""));
       if (ya) { repetidas.push(f.paciente); continue; }
-      await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
+      const guardada = await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
+      if (f._foja) await guardarFoja(guardada, f._foja);
       n++;
     }
     const mesGuardado = elegidas[0].fecha.slice(0, 7);
@@ -1184,7 +1224,7 @@ async function construirExcel() {
     "Obra social": p.obra_social || p.obra_social_texto || "", "Lugar": p.institucion || "", "Tipo": etiquetas(p).tipos[p.tipo], "Procedimiento": procedimientosDe(p),
     "Complejidad": Motor.complejidadEfectiva(p) ?? "", "Recargos": Motor.recargosAnestesia(p).map(([n, x]) => `${n} +${x} %`).join(", "),
     "Monto cargado (bruto)": p.valor_bruto ?? null, "Neto estimado": p.valor_estimado ?? null, "Situación": est(p),
-    "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Cargada el": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
+    "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Foja en el Drive": (p.foja_archivos || []).map((a) => a.link).join(" "), "Cargada el": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Liquidada el": fechaX(p.fecha_cobro), "Cobrado (neto)": p.monto_cobrado ?? null,
     "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
     "Comentario": p.notas || "", "Origen del valor": p.valor_origen || "" }));
@@ -1466,7 +1506,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "34"; // igual que VERSION en sw.js
+const VERSION_APP = "35"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

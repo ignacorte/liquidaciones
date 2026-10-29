@@ -719,6 +719,15 @@ const Lector = (() => {
     return m ? m[1].trim() : "";
   }
 
+  // ¿Es la foja quirúrgica completa del procedimiento? Título de foja / protocolo / parte quirúrgico, el equipo, y los
+  // datos del acto (paciente, fecha y procedimiento). Un listado, un informe de estudio o una pantalla de la HC no cuentan.
+  function esFojaCompleta(texto, f) {
+    const t = plano(texto);
+    const titulo = /foja\s+quirurgica|protocolo\s+(quirurgico|operatorio)|parte\s+(quirurgico|operatorio)|hoja\s+quirurgica|descripcion\s+(quirurgica|operatoria)|registro\s+quirurgico/.test(t);
+    const equipo = /cirujano|anestesi|ayudante|instrumentador/.test(t);
+    return titulo && equipo && !esEstudio(texto) && !!((f.paciente || "").trim() && f.fecha && (f.procedimiento || "").trim());
+  }
+
   // Captura de pantalla de esta misma app (no es un parte ni un listado)
   const esCapturaDeLaApp = (texto) => /revisa los datos leidos|buscar otro codigo|agregar otro procedimiento \(mismo acto\)|buscar codigo pami/.test(plano(texto));
 
@@ -752,5 +761,5 @@ const Lector = (() => {
     }));
   }
 
-  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe };
+  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta };
 })();
