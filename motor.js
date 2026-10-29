@@ -329,6 +329,22 @@ const Motor = (() => {
     if (p.edad_grupo && r.edad?.[p.edad_grupo]) out.push([EDADES[p.edad_grupo], r.edad[p.edad_grupo]]);
     return out;
   }
+  // Feriados nacionales de Argentina (Ley 27.399) para la anestesia: inamovibles, Carnaval y Viernes Santo (según la Pascua)
+  // y trasladables corridos (martes o miércoles → lunes anterior; jueves o viernes → lunes siguiente). Los «puentes» por
+  // decreto se tildan a mano.
+  const feriadosCache = {};
+  function feriados(y) {
+    if (feriadosCache[y]) return feriadosCache[y];
+    const dia = 864e5, p = iso(pascua(y));
+    const fijos = ["01-01", "03-24", "04-02", "05-01", "05-25", "06-20", "07-09", "12-08", "12-25"].map((md) => `${y}-${md}`);
+    const trasladables = ["06-17", "08-17", "10-12", "11-20"].map((md) => {
+      const t = Date.UTC(y, +md.slice(0, 2) - 1, +md.slice(3)), w = new Date(t).getUTCDay();
+      return iso(new Date(w === 2 ? t - dia : w === 3 ? t - 2 * dia : w === 4 ? t + 4 * dia : w === 5 ? t + 3 * dia : t));
+    });
+    return (feriadosCache[y] = new Set([...fijos, sumarDias(p, -48), sumarDias(p, -47), sumarDias(p, -2), ...trasladables]));
+  }
+  const feriadoNacional = (fecha) => /^\d{4}-\d{2}-\d{2}$/.test(fecha || "") && feriados(+fecha.slice(0, 4)).has(fecha);
+
   const complejidadEfectiva = (p) => (p.suspendida ? 1 : Number(p.complejidad) ? Math.min(13, Number(p.complejidad) + (p.obesidad ? 2 : 0)) : null);
   function ultimoCobroAnestesia(datos, os, c, id) {
     return datos.prestaciones.filter((x) => !x.borrada && x.id !== id && x.obra_social === os && complejidadEfectiva(x) === c && x.tipo !== "consulta" &&
@@ -378,7 +394,9 @@ const Motor = (() => {
         .sort((a, b) => b.igual - a.igual || a.extra - b.extra || a.i - b.i).slice(0, 5)
         .map(({ c }) => ({ code: c.code, name: c.name, complejidad: c.complejidad, subgrupo: c.subgrupo }));
     };
-    const out = { obra_social: os, codigo_aac: null, codigo_os: p.codigo_os || null, complejidad: Number(p.complejidad) || null, sugerencias: null };
+    const out = { obra_social: os, codigo_aac: null, codigo_os: p.codigo_os || null, complejidad: Number(p.complejidad) || null, sugerencias: null,
+      // Feriado: si no se marcó ni desmarcó a mano, sale del calendario
+      feriado: typeof p.feriado === "boolean" ? p.feriado : feriadoNacional(p.fecha) };
     if (p.tipo !== "consulta") {
       out.sugerencias = { anest: sugerir5(p.procedimiento) };
       if (!out.complejidad && out.sugerencias.anest.length) out.complejidad = out.sugerencias.anest[0].complejidad;
@@ -549,5 +567,5 @@ const Motor = (() => {
   }
 
   return { plano, sugerir, buscar, infoCodigo, honorarioAAC, obraSocialCanonica, estimar, completar, sugerencias, fechasCobro,
-           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami, viaDe, recargosAnestesia, complejidadEfectiva };
+           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami, viaDe, recargosAnestesia, complejidadEfectiva, feriadoNacional };
 })();

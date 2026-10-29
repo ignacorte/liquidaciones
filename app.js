@@ -354,7 +354,7 @@ function camposAnestesia(p) {
       <button type="button" class="boton chico secundario" data-agregar-extra>+ Agregar otra intervención (mismo acto)</button></div>
     <label>Edad del paciente${sel("edad_grupo", EDADES, p.edad_grupo || "")}</label>
     <label>Institución / lugar<input name="institucion" value="${esc(p.institucion)}"></label>
-    ${marca("feriado", "Feriado (+50 %)")}
+    ${marca("feriado", "Feriado (+50 %)" + (Motor.feriadoNacional(p.fecha) ? " · es feriado nacional" : ""))}
     ${marca("obesidad", "Obesidad mórbida (+2 complejidades)")}
     ${marca("suspendida", "Operación suspendida (complejidad 1)")}
     <div class="ancho ayuda" style="margin:6px 0 0"><b>Documentación</b></div>
@@ -429,6 +429,7 @@ function enlazarEstimacion(el, obtener, guardar) {
     const p = obtener();
     if (!p) return; // el diálogo muestra otra cosa (obra social, valor)
     if (["procedimiento", "tipo", "abordaje"].includes(cambio)) { p.codigo_aac = null; if (cambio !== "abordaje") p.complejidad = null; }
+    if (cambio === "fecha") p.feriado = null; // otra fecha: el feriado vuelve a salir del calendario
     const extra = /^extra_proc_(\d+)$/.exec(cambio || "");
     if (extra && p.extras?.[+extra[1]]) { p.extras[+extra[1]].codigo_aac = null; p.extras[+extra[1]].complejidad = null; } // cambió el texto: volver a sugerir
     if (cambio === "obra_social" && !p.codigo_os_manual) p.codigo_os = null; // el código escrito a mano no se pierde
@@ -1465,7 +1466,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "33"; // igual que VERSION en sw.js
+const VERSION_APP = "34"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

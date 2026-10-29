@@ -674,6 +674,51 @@ const Lector = (() => {
     /estudio:?\s*(t\.?\s?a\.?\s?c\.?|tomograf|resonancia|r\.?m\.?n|ecograf|radiograf|centellogra)/.test(plano(texto));
 
   // Igual que la versión de PC (app/lectura.py): resultado → prestaciones
+  // ---------- Datos para la anestesia (si figuran en la foja o la historia clínica; si no, quedan vacíos) ----------
+  // Edad: «Edad: 89», «Edad 2 meses», «15 días», o calculada con la fecha de nacimiento a la fecha de la cirugía
+  function grupoEdad(texto, fecha) {
+    const t = plano(texto);
+    let dias = null;
+    const e = t.match(/\bedad\s*:?\s*(\d{1,3})\s*(anos|ano|a\b|meses|mes|m\b|dias|dia|d\b)?/);
+    if (e) {
+      const n = +e[1], u = e[2] || "anos";
+      dias = /^d/.test(u) ? n : /^m/.test(u) ? n * 30.4 : n * 365.25;
+    } else {
+      const nac = t.match(/(?:fecha\s*(?:de\s*)?nac(?:imiento)?|f\.?\s*nac(?:imiento)?|fec\.?\s*nac|nacimiento)\.?\s*:?\s*(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})/);
+      if (nac) {
+        let [d, m, y] = nac[1].split(/[\/.-]/).map(Number);
+        if (y < 100) y += y > (new Date().getFullYear() % 100) ? 1900 : 2000;
+        const ref = /^\d{4}-\d{2}-\d{2}$/.test(fecha || "") ? Date.parse(fecha) : Date.now();
+        const n = Date.UTC(y, m - 1, d);
+        if (m >= 1 && m <= 12 && n < ref) dias = (ref - n) / 864e5;
+      }
+    }
+    if (dias === null || dias > 125 * 365) return "";
+    return dias <= 30 ? "neonato" : dias < 3 * 365.25 ? "lactante" : dias <= 14.99 * 365.25 ? "nino" : dias >= 70 * 365.25 ? "mayor70" : "";
+  }
+  // Obesidad mórbida: dicha en el texto, o IMC ≥ 40 (escrito o con peso y talla)
+  function obesidadMorbida(texto) {
+    const t = plano(texto);
+    if (/\bsin obesidad|no obes/.test(t)) return false;
+    if (/obesidad\s+morbida|obesidad\s+(grado\s+)?(iii|3)\b|superobes|obeso\s+morbido/.test(t)) return true;
+    const imc = t.match(/\b(?:imc|i\.m\.c\.?|bmi)\s*:?\s*(\d{2}(?:[.,]\d+)?)/);
+    if (imc) return parseFloat(imc[1].replace(",", ".")) >= 40;
+    const peso = t.match(/\bpeso\s*:?\s*(\d{2,3}(?:[.,]\d+)?)\s*(?:kg|kilos)?/), talla = t.match(/\b(?:talla|altura|estatura)\s*:?\s*(\d(?:[.,]\d{1,2})|\d{3})\s*(?:m|cm|mts)?/);
+    if (peso && talla) {
+      let h = parseFloat(talla[1].replace(",", "."));
+      if (h > 3) h /= 100;
+      const bmi = parseFloat(peso[1].replace(",", ".")) / (h * h);
+      return h > 1 && bmi >= 40 && bmi < 100;
+    }
+    return false;
+  }
+  const suspendida = (texto) => /\b(operacion|cirugia|procedimiento|intervencion|acto quirurgico)\s+suspendid|\bse\s+suspende\s+(la\s+)?(cirugia|operacion|intervencion|procedimiento)|\bcx\s+suspendid/.test(plano(texto));
+  // Lugar: la institución del renglón (sanatorio, clínica, instituto…), si la etiqueta no la dio
+  function lugarDe(texto) {
+    const m = texto.match(/\b((?:Sanatorio|Cl[ií]nica|Instituto|Hospital|Policl[ií]nico|Maternidad|Centro M[eé]dico) (?!M[eé]dica\b)[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.]*(?: (?:de |del )?[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.]*){0,3})/); // (las cajas se separan con 3 espacios)
+    return m ? m[1].trim() : "";
+  }
+
   // Captura de pantalla de esta misma app (no es un parte ni un listado)
   const esCapturaDeLaApp = (texto) => /revisa los datos leidos|buscar otro codigo|agregar otro procedimiento \(mismo acto\)|buscar codigo pami/.test(plano(texto));
 
@@ -685,6 +730,8 @@ const Lector = (() => {
     }
     const d = parte(texto, obraSocial);
     if (!d.afiliado && d.afiliadoPorForma) d.afiliado = d.afiliadoPorForma;
+    if (!d.institucion) d.institucion = lugarDe(texto);
+    const anest = { edad_grupo: grupoEdad(texto, d.fecha), obesidad: obesidadMorbida(texto), suspendida: suspendida(texto) };
     const rol = rolDe(medico, d, texto);
     // VEDA + VCC en el mismo acto: una sola endoscopía «alta y baja»
     const endos = d.procedimientos.map((p) => endoscopia(p, texto));
@@ -699,9 +746,11 @@ const Lector = (() => {
       codigo_os: i === 0 ? d.codigo_os : "", codigos_os: i === 0 ? d.codigos_os : [],
       obra_social_texto: d.obra_social_texto, institucion: d.institucion, diagnostico: d.diagnostico, procedimiento: proc,
       abordaje: d.abordaje, urgencia: d.urgencia, rol, pct: i === 0 ? 100 : pctMultiple, origen: "foto_parte", incluir: true,
+      // Para anestesiología (si están en la foja o la historia clínica)
+      edad_grupo: anest.edad_grupo, obesidad: anest.obesidad, suspendida: anest.suspendida,
       ...(endos[i] ? { tipo: "endoscopia", abordaje: "endoscopica", ...endos[i], observaciones: d.conclusion } : {}),
     }));
   }
 
-  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura };
+  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe };
 })();
