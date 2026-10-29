@@ -187,7 +187,12 @@
       <h2>Valores por código</h2>
       <label>Obra social<select id="v-os"></select></label>
       <div class="tabla" id="tabla-valores"></div>
-      <button class="boton chico secundario" id="nuevo-valor">+ Cargar valor</button>
+      <div class="fila" id="lotes-valores"></div>
+      <div class="fila"><button class="boton chico secundario" id="nuevo-valor">+ Cargar valor</button>
+        <label class="boton chico">📎 Importar lista de valores<input type="file" id="importar-valores" hidden
+          accept=".xlsx,.xls,.xlsm,.ods,.csv,.docx,.doc,.pdf,.txt,image/*,application/pdf"></label></div>
+      <p class="ayuda">Importar: Excel, Word (.docx), PDF o foto de la circular de aranceles. La app busca código, descripción y monto,
+        propone obra social y vigencia, y te muestra todo para revisar antes de guardar. Si trae una columna por obra social, las carga todas.</p>
     </div>
     <p class="ayuda" style="text-align:center"><b id="version-app"></b> · <a href="#" id="actualizar-app">Buscar actualización</a></p>
     <p class="ayuda" style="text-align:center">Liquidaciones · <a href="ayuda.html">Cómo usarla</a> · <a href="privacidad.html">Privacidad</a> · <a href="#" id="salir">Desconectar cuenta de este celular</a></p>
@@ -207,6 +212,7 @@
 <script src="config.js"></script>
 <script src="motor.js"></script>
 <script src="lector.js"></script>
+<script src="importar.js"></script>
 <script src="almacen.js"></script>
 <script src="app.js"></script>
 </body>

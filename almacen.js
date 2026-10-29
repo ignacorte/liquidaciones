@@ -202,6 +202,19 @@ const Almacen = (() => {
     programarSync();
     return r;
   }
+  // Muchos registros de una vez (lista de valores importada): una sola escritura cifrada y una sola sincronización
+  async function guardarVarios(coleccion, registros) {
+    const ahora = Date.now();
+    for (const registro of registros) {
+      const r = { ...registro, id: registro.id || nuevoId(), actualizado: ahora };
+      const i = doc[coleccion].findIndex((x) => x.id === r.id);
+      if (i >= 0) doc[coleccion][i] = r; else doc[coleccion].push(r);
+    }
+    cambios++;
+    await escribirLocal();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
+    programarSync();
+  }
   const borrar = (coleccion, id) => {
     const r = doc[coleccion].find((x) => x.id === id);
     return r ? guardar(coleccion, { ...r, borrada: true }) : null;
@@ -383,7 +396,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, borrar, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    iniciar, guardar, guardarVarios, borrar, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
     accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),

@@ -121,12 +121,12 @@ const Lector = (() => {
     return lienzo;
   }
 
-  async function textoPDF(archivo, avance) {
+  async function textoPDF(archivo, avance, maxPaginas = 6) {
     await script(PDFJS);
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
     const pdf = await pdfjsLib.getDocument({ data: await archivo.arrayBuffer() }).promise;
     const paginas = [];
-    for (let i = 1; i <= Math.min(pdf.numPages, 6); i++) {
+    for (let i = 1; i <= Math.min(pdf.numPages, maxPaginas); i++) {
       const pag = await pdf.getPage(i);
       const items = (await pag.getTextContent()).items.filter((x) => x.str.trim());
       if (items.length < 5) {
@@ -160,11 +160,11 @@ const Lector = (() => {
     return paginas.join("\n");
   }
 
-  async function textoDe(archivos, avance) {
+  async function textoDe(archivos, avance, { paginas } = {}) {
     const partes = [];
     for (const [i, a] of archivos.entries()) {
       avance && avance(`Leyendo ${i + 1} de ${archivos.length}…`);
-      partes.push(a.type === "application/pdf" ? await textoPDF(a, avance) : await leerImagen(await preparar(a), avance));
+      partes.push(a.type === "application/pdf" ? await textoPDF(a, avance, paginas) : await leerImagen(await preparar(a), avance));
     }
     return partes.join("\n");
   }

@@ -183,10 +183,12 @@ const Motor = (() => {
     return v ? v.valor : catalogos.AAC.uq_value;
   }
 
+  // «08.02.03» = «080203» (las listas importadas traen los códigos con o sin puntos)
+  const mismoCodigo = (a, b) => String(a ?? "").replace(/[.\-\s]/g, "") === String(b ?? "").replace(/[.\-\s]/g, "");
   function valorOS(datos, os, codigoAAC, codigoOS, fecha) {
     if (!os) return null;
     const c = datos.valores.filter((v) => v.obra_social === os && v.vigencia <= fecha &&
-      ((codigoAAC && v.codigo_aac === codigoAAC) || (codigoOS && v.codigo === codigoOS)));
+      ((codigoAAC && v.codigo_aac === codigoAAC) || (codigoOS && mismoCodigo(v.codigo, codigoOS))));
     c.sort((a, b) => (b.tipo === "honorario") - (a.tipo === "honorario") || b.vigencia.localeCompare(a.vigencia));
     return c[0] || null;
   }
