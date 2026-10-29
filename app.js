@@ -589,14 +589,19 @@ function verValores() {
 
 function verTablaValores() {
   const valores = datos().valores.filter((v) => v.obra_social === $("#v-os").value);
-  const lotes = new Map();
-  for (const v of valores) if (v.lote) lotes.set(v.lote, { archivo: v.archivo, n: (lotes.get(v.lote)?.n || 0) + 1 });
-  $("#lotes-valores").innerHTML = [...lotes].map(([k, l]) =>
-    `<button class="boton chico peligro" data-borrar-lote="${esc(k)}">Borrar lista «${esc(l.archivo)}» (${l.n})</button>`).join(" ");
+  // Deshacer una importación entera (afecta a todas las obras sociales de ese archivo, no solo a la elegida)
+  const todos = datos().valores, lotes = new Map();
+  for (const v of valores) if (v.lote && !lotes.has(v.lote)) {
+    const del = todos.filter((x) => x.lote === v.lote);
+    lotes.set(v.lote, { archivo: v.archivo, n: del.length, os: new Set(del.map((x) => x.obra_social)).size });
+  }
+  $("#lotes-valores").innerHTML = lotes.size ? `<p class="ayuda" style="width:100%;margin:0">Importaciones de donde salen estos valores
+    (deshacer una borra todo lo que trajo ese archivo, en todas las obras sociales):</p>` + [...lotes].map(([k, l]) =>
+    `<button class="boton chico secundario" data-borrar-lote="${esc(k)}">Deshacer «${esc(l.archivo)}» (${l.n} valores${l.os > 1 ? ` en ${l.os} obras sociales` : ""})</button>`).join(" ") : "";
   valores
     .sort((a, b) => (a.codigo_aac || a.codigo).localeCompare(b.codigo_aac || b.codigo) || b.vigencia.localeCompare(a.vigencia));
   $("#tabla-valores").innerHTML = valores.length ? `<table><tr><th>Código</th><th>Descripción</th><th>Desde</th><th class="n">Monto</th><th></th></tr>` +
-    valores.map((v) => `<tr><td>${esc(v.codigo)}<div class="ayuda" style="margin:0">${esc(v.codigo_aac || "")}</div></td>
+    valores.map((v) => `<tr><td>${esc(v.codigo)}<div class="ayuda" style="margin:0">${v.codigo_aac && v.codigo_aac !== v.codigo ? (v.codigo_aac === "CONSULTA" ? "consulta" : "= AAC " + esc(v.codigo_aac)) : ""}</div></td>
       <td>${esc(v.descripcion)}<div class="ayuda" style="margin:0">${v.tipo === "modulo" ? "Módulo (institución) · " : ""}${esc((v.fuente || "").slice(0, 80))}</div></td>
       <td>${v.vigencia.slice(0, 7)}</td><td class="n">${pesos(v.monto)}</td>
       <td>${v.base ? "" : `<button class="boton chico peligro" data-borrar-valor="${v.id}" aria-label="Borrar">✕</button>`}</td></tr>`).join("") + "</table>"
@@ -820,7 +825,7 @@ function importarLargo(lista, osDe) {
 
 async function borrarLote(lote) {
   const del = Almacen.doc.valores.filter((v) => v.lote === lote && !v.borrada);
-  if (!del.length || !confirm(`¿Borrar los ${del.length} valores importados de «${del[0].archivo}»?`)) return;
+  if (!del.length || !confirm(`¿Deshacer la importación de «${del[0].archivo}»? Se borran sus ${del.length} valores en ${new Set(del.map((v) => v.obra_social)).size} obras sociales (las obras sociales agregadas quedan).`)) return;
   await Almacen.guardarVarios("valores", del.map((v) => ({ ...v, borrada: true })));
   await recalcularPendientes();
   verValores();
@@ -1212,7 +1217,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "24"; // igual que VERSION en sw.js
+const VERSION_APP = "25"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
