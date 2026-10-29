@@ -39,10 +39,12 @@ const EDADES = { "": "—", neonato: "Neonato (hasta 30 días) +50 %", lactante:
 const VIAS = { misma: "Misma vía (50 %)", distinta: "Otra vía o bilateral (75 %)" };
 // Documentación que pide la asociación para cargar la anestesia: foja quirúrgica, foja de anestesia y autorización de la
 // obra social. Cada una: su casilla, sus archivos en el Drive y la carpeta donde van.
+// Todo en «Liquidaciones › Anestesiología › Documentos», una carpeta por paciente («Ref 0001 – GOMEZ, ANA MARIA – 2026-10-21»)
+const RUTA_DOCS = ["Anestesiología", "Documentos"];
 const DOCS = {
-  quirurgica: { campo: "doc_foja", lista: "foja_archivos", nombre: "Foja quirúrgica", corto: "foja quirúrgica", archivo: "Foja quirúrgica", ruta: ["Anestesiología", "Fojas"] },
-  anestesia: { campo: "doc_foja_anestesia", lista: "foja_anestesia_archivos", nombre: "Foja de anestesia", corto: "foja de anestesia", archivo: "Foja de anestesia", ruta: ["Anestesiología", "Fojas"] },
-  autorizacion: { campo: "doc_autorizacion", lista: "autorizacion_archivos", nombre: "Autorización de la obra social", corto: "autorización", archivo: "Autorización", ruta: ["Anestesiología", "Autorizaciones"] },
+  quirurgica: { campo: "doc_foja", lista: "foja_archivos", nombre: "Foja quirúrgica", corto: "foja quirúrgica", archivo: "Foja quirúrgica", ruta: RUTA_DOCS },
+  anestesia: { campo: "doc_foja_anestesia", lista: "foja_anestesia_archivos", nombre: "Foja de anestesia", corto: "foja de anestesia", archivo: "Foja de anestesia", ruta: RUTA_DOCS },
+  autorizacion: { campo: "doc_autorizacion", lista: "autorizacion_archivos", nombre: "Autorización de la obra social", corto: "autorización", archivo: "Autorización", ruta: RUTA_DOCS },
 };
 const docFaltante = (p) => (p.tipo === "consulta" ? [] : Object.values(DOCS).filter((x) => !p[x.campo]).map((x) => x.corto));
 const SI_NO = { "": "—", si: "Sí", no: "No" };
@@ -51,7 +53,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -115,6 +117,9 @@ async function guardarPrestacion(p) {
   if (!(p.paciente || "").trim()) throw new Error("Falta el nombre del paciente");
   const limpio = { id: p.id };
   for (const k of CAMPOS) limpio[k] = p[k] ?? null;
+  // Los enlaces del Drive los maneja la sincronización: guardar una ficha abierta antes de que suba el documento no los pisa
+  const guardada = p.id && Almacen.doc.prestaciones.find((x) => x.id === p.id);
+  if (guardada) for (const k of ["carpeta_docs", ...Object.values(DOCS).map((x) => x.lista)]) if (guardada[k]) limpio[k] = guardada[k];
   limpio.extras = limpio.tipo === "consulta" ? [] : (p.extras || []).filter((x) => (x.procedimiento || "").trim()).map(({ sugerencias, valor, ...x }) => x);
   limpio.especialidad ||= ajuste("especialidad", "cirugia"); // cada prestación queda en su especialidad
   if (limpio.especialidad === "anestesia" && !limpio.nro_ref) limpio.nro_ref = proximaRef();
@@ -143,6 +148,8 @@ async function numerarAnestesias() {
 const TITULOS = { inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
 
 function ir(vista) {
+  // Al entrar a Cargar con el acceso de Google por vencer (menos de 20 min), se renueva antes de empezar a cargar fotos
+  if (vista === "cargar" && estado.vista !== "cargar" && Almacen.doc.cuenta && Almacen.tieneToken() && Almacen.venceEn() < 20 * 60e3 && !Almacen.bloqueada() && renovarAcceso()) return;
   estado.vista = vista;
   $$("main > section").forEach((s) => (s.hidden = s.id !== "v-" + vista));
   $$("nav.abajo button").forEach((b) => b.classList.toggle("activa", b.dataset.vista === vista));
@@ -154,7 +161,10 @@ function ir(vista) {
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
   ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, valores: verValores }[vista] || (() => {}))();
 }
-const refrescar = () => { if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().catch(() => {}); ir(estado.vista); };
+const refrescar = () => {
+  if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().then(() => Almacen.doc.cuenta && migrarCarpetas()).catch(() => {});
+  ir(estado.vista);
+};
 
 // ---------- Inicio ----------
 
@@ -393,7 +403,7 @@ function documento(p, clase, x, marca) {
   const nuevos = documentosDe(p)[clase] || [], enDrive = p[x.lista] || [];
   return `${marca(x.campo, x.nombre)}
     <div class="ancho" data-doc="${clase}">
-      ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._fotos || []).some((f) => f.clase === clase && f.reconocida) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length === 1 ? "1 foto" : nuevos.length + " fotos o páginas"} → un PDF): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")}${enDrive.length ? " y reemplaza al anterior" : ""}.</p>` : ""}
+      ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._fotos || []).some((f) => f.clase === clase && f.reconocida) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length === 1 ? "1 foto" : nuevos.length + " fotos o páginas"} → un PDF): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")} › ${esc(nombreCarpeta(p))}${enDrive.length ? " y reemplaza al anterior" : ""}.</p>` : ""}
       ${enDrive.length ? `<p class="ayuda" style="margin:0">En tu Drive: ${enDrive.map((a, i) => `<a href="${esc(a.link)}" target="_blank" rel="noopener">ver${enDrive.length > 1 ? " " + (i + 1) : ""}</a>`).join(" · ")}</p>` : ""}
       <label class="boton chico secundario" style="margin:2px 0 6px">📎 ${nuevos.length || enDrive.length ? "Agregar otra foto" : "Adjuntar (foto o PDF)"}<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-doc="${clase}"></label>
       <button type="button" class="boton chico secundario" style="margin:2px 0 6px" data-camara="[data-adjuntar-doc=${clase}]">📷 Varias seguidas</button>
@@ -683,6 +693,7 @@ function cerrarRevision() { ultimaLectura = null; $("#agregar-foto").hidden = tr
 // Documentos de la anestesia → Drive («Liquidaciones/Anestesiología/Fojas» y «…/Autorizaciones»), ligados a la prestación.
 // Quedan cifrados en el celular y se suben en la sincronización (también si al guardar no había señal o el acceso de Google
 // estaba vencido). Devuelve cuántos archivos quedaron por subir.
+const nombreCarpeta = (p) => nombreDocumento(p, { archivo: "" }, 0, "").replace(/ – $/, "");
 // «Ref 0012 – GOMEZ, ANA MARIA – 2026-10-21 – Circuito 4521 – Foja quirúrgica.pdf» (sin n° de circuito, sin esa parte)
 function nombreDocumento(p, x, n, ext) {
   const limpio = (t) => String(t || "").replace(/[\\/:*?"<>|]/g, " ").trim();
@@ -700,7 +711,18 @@ async function renombrarDocumentos(p) {
       if (a.id && nuevo !== a.nombre) { await Almacen.encolarRenombre(p.id, x.lista, a.id, nuevo); n++; }
     }
   }
+  if (p.carpeta_docs?.id && p.carpeta_docs.nombre !== nombreCarpeta(p)) { await Almacen.encolarRenombre(p.id, "carpeta_docs", p.carpeta_docs.id, nombreCarpeta(p)); n++; }
   if (n && Almacen.tieneToken()) Almacen.sincronizar().then(refrescar).catch(() => {});
+}
+// Los documentos subidos antes (en «Fojas» / «Autorizaciones») pasan a la carpeta de su paciente, sin borrar nada. Una vez.
+let carpetasMigradas = false;
+async function migrarCarpetas() {
+  if (carpetasMigradas) return;
+  carpetasMigradas = true;
+  for (const p of Almacen.doc.prestaciones) {
+    if (p.borrada || p.carpeta_docs?.id || p.especialidad !== "anestesia") continue;
+    for (const x of Object.values(DOCS)) for (const a of p[x.lista] || []) if (a.id) await Almacen.encolarMover(p.id, a.id, RUTA_DOCS, nombreCarpeta(p));
+  }
 }
 async function guardarDocumentos(p, docs) {
   let n = 0;
@@ -710,7 +732,7 @@ async function guardarDocumentos(p, docs) {
     // Siempre un solo PDF por documento (las fotos y páginas juntas); reemplaza al que hubiera en el Drive
     const pdf = await aPDF(archivos);
     const ext = pdf.type === "application/pdf" ? ".pdf" : (pdf.name.match(/\.[a-z0-9]+$/i) || [".jpg"])[0];
-    await Almacen.encolarAdjunto(p.id, nombreDocumento(p, x, 0, ext), pdf, x.ruta, { campo: x.campo, lista: x.lista, reemplaza: true });
+    await Almacen.encolarAdjunto(p.id, nombreDocumento(p, x, 0, ext), pdf, x.ruta, { campo: x.campo, lista: x.lista, reemplaza: true, subcarpeta: nombreCarpeta(p) });
     n++;
   }
   if (n) informarSubida();
@@ -766,7 +788,12 @@ function pdfDeImagenes(imagenes) {
 
 // Después de guardar documentos: sube y dice claramente si llegaron al Drive o por qué no (quedan en el celular)
 async function informarSubida() {
-  if (!Almacen.tieneToken()) return setTimeout(() => aviso("Los documentos quedaron guardados en el celular. Para subirlos al Drive, tocá «Subir a Drive» arriba (se venció el acceso de Google)."), 3600);
+  await new Promise((ok) => setTimeout(ok, 600)); // que se cierre la revisión o la ficha
+  if (!Almacen.tieneToken()) {
+    // Acceso de Google vencido: se renueva solo (va y vuelve enseguida) y al volver se suben
+    if (renovarAcceso()) return;
+    return setTimeout(() => aviso("Los documentos quedaron guardados en el celular. Para subirlos al Drive, tocá «Subir a Drive» arriba (se venció el acceso de Google)."), 3000);
+  }
   try { await Almacen.sincronizar(); } catch {}
   refrescar();
   const quedan = await Almacen.adjuntosPendientes();
@@ -997,9 +1024,12 @@ function verValores() {
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
   // Dónde está cada cosa en el Drive
   $("#donde-drive").innerHTML = esAnestesia()
-    ? "En tu Google Drive: carpeta <b>Liquidaciones › Anestesiología</b>, con la planilla <b>«Anestesiología – planilla»</b> y las carpetas <b>Fojas</b> (fojas quirúrgicas y de anestesia) y <b>Autorizaciones</b>. En <b>Liquidaciones</b> quedan los datos y los respaldos diarios."
+    ? "En tu Google Drive: carpeta <b>Liquidaciones › Anestesiología</b>, con la planilla <b>«Anestesiología – planilla»</b> y la carpeta <b>Documentos</b>, con una carpeta por paciente («Ref 0001 – APELLIDO – fecha») que tiene su foja quirúrgica, foja de anestesia y autorización en PDF. En <b>Liquidaciones</b> quedan los datos y los respaldos diarios."
     : "En tu Google Drive: carpeta <b>Liquidaciones</b>, con la planilla <b>«Liquidaciones – planilla»</b> (cirugías, consultas, resumen mensual y valores), los datos y los respaldos diarios.";
   $("#abrir-carpeta").hidden = true;
+  // Últimos errores de Drive (con el motivo que da Google), para saber qué pasó si algo no sube
+  $("#errores-drive").hidden = !Almacen.registro.length;
+  $("#errores-drive-lista").innerHTML = Almacen.registro.map((e) => `<li>${esc(e.cuando)}: ${esc(e.texto)}</li>`).join("");
   if (Almacen.tieneToken()) Almacen.enlaceCarpeta(esAnestesia() ? ["Anestesiología"] : []).then((l) => { $("#abrir-carpeta").href = l; $("#abrir-carpeta").hidden = false; }).catch(() => {});
   verAranceles();
   $("#apellido").value = ajuste("apellido", "");
@@ -1457,7 +1487,7 @@ async function construirExcel(rama = esAnestesia() ? "anestesia" : "cirugia") {
     "Obra social": p.obra_social || p.obra_social_texto || "", "Lugar": p.institucion || "", "Tipo": etiquetas(p).tipos[p.tipo], "Procedimiento": procedimientosDe(p),
     "Complejidad": Motor.complejidadEfectiva(p) ?? "", "Recargos": Motor.recargosAnestesia(p).map(([n, x]) => `${n} +${x} %`).join(", "),
     "Monto cargado (bruto)": p.valor_bruto ?? null, "Neto estimado": p.valor_estimado ?? null, "Situación": est(p),
-    "N° de circuito": p.nro_circuito || "", "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Foja quirúrgica (Drive)": (p.foja_archivos || []).map((a) => a.link).join(" "),
+    "N° de circuito": p.nro_circuito || "", "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Carpeta (Drive)": p.carpeta_docs?.link || "", "Foja quirúrgica (Drive)": (p.foja_archivos || []).map((a) => a.link).join(" "),
     "Foja de anestesia (Drive)": (p.foja_anestesia_archivos || []).map((a) => a.link).join(" "), "Autorización (Drive)": (p.autorizacion_archivos || []).map((a) => a.link).join(" "), "Cargada el": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Liquidada el": fechaX(p.fecha_cobro), "Cobrado (neto)": p.monto_cobrado ?? null,
     "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
@@ -1758,7 +1788,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "42"; // igual que VERSION en sw.js
+const VERSION_APP = "43"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

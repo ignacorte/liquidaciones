@@ -282,18 +282,36 @@ const Almacen = (() => {
     return { ok: true };
   }
 
+  // Errores de Drive de esta sesión (para ver qué pasó: Valores → Mi cuenta). Solo en memoria.
+  const registro = [];
+  const anotar = (texto) => { registro.unshift({ cuando: new Date().toLocaleString("es-AR"), texto }); registro.length = Math.min(registro.length, 30); };
+  // Saturación o falla momentánea de Google (429, 5xx) o sin red: se reintenta 3 veces con espera creciente
   async function drive(url, opciones = {}) {
-    const t = token();
-    if (!t) throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true });
-    const r = await fetch(url, { ...opciones, headers: { Authorization: "Bearer " + t, ...(opciones.headers || {}) } });
-    if (r.status === 401) { tokenMem = null; guardarToken(); throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true }); }
-    if (!r.ok) throw new Error("Google Drive respondió " + r.status);
-    return r;
+    for (let intento = 0; ; intento++) {
+      const t = token();
+      if (!t) throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true });
+      let r;
+      try { r = await fetch(url, { ...opciones, headers: { Authorization: "Bearer " + t, ...(opciones.headers || {}) } }); }
+      catch (e) {
+        if (intento < 3) { await new Promise((ok) => setTimeout(ok, 1000 * 2 ** intento)); continue; }
+        anotar("Sin conexión con Google Drive"); throw new Error("Sin conexión con Google Drive");
+      }
+      if (r.status === 401) { tokenMem = null; guardarToken(); anotar("Venció el acceso de Google"); throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true }); }
+      if ((r.status === 429 || r.status >= 500) && intento < 3) { await new Promise((ok) => setTimeout(ok, 1000 * 2 ** intento)); continue; }
+      if (!r.ok) {
+        const detalle = await r.json().then((j) => j.error?.message || "").catch(() => "");
+        anotar(`Google Drive respondió ${r.status}${detalle ? ": " + detalle : ""} (${(opciones.method || "GET")} ${url.replace(/\?.*/, "").split("/").slice(-2).join("/")})`);
+        throw Object.assign(new Error("Google Drive respondió " + r.status + (detalle ? ": " + detalle : "")), { status: r.status });
+      }
+      return r;
+    }
   }
+  // Comillas en las búsquedas de Drive (un apellido como D'ANGELO rompía la consulta)
+  const comillas = (t) => String(t).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   const API = "https://www.googleapis.com/drive/v3/files", SUBIR = "https://www.googleapis.com/upload/drive/v3/files";
 
   async function buscar(nombre, tipo) {
-    const q = `name='${nombre}' and trashed=false` + (tipo ? ` and mimeType='${tipo}'` : "");
+    const q = `name='${comillas(nombre)}' and trashed=false` + (tipo ? ` and mimeType='${tipo}'` : "");
     const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id,modifiedTime)&spaces=drive`)).json();
     return r.files[0] || null;
   }
@@ -417,16 +435,33 @@ const Almacen = (() => {
     let padre = await carpeta();
     for (const nombre of ruta) {
       const k = padre + "/" + nombre;
-      if (!carpetas[k]) {
-        const tipo = "application/vnd.google-apps.folder";
-        const q = `name='${nombre}' and '${padre}' in parents and mimeType='${tipo}' and trashed=false`;
-        const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`)).json();
-        carpetas[k] = r.files?.[0]?.id || (await (await drive(API, { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: nombre, mimeType: tipo, parents: [padre] }) })).json()).id;
-      }
+      carpetas[k] ||= await carpetaEn(padre, nombre);
       padre = carpetas[k];
     }
     return padre;
+  }
+  async function carpetaEn(padre, nombre) {
+    const tipo = "application/vnd.google-apps.folder";
+    const q = `name='${comillas(nombre)}' and '${padre}' in parents and mimeType='${tipo}' and trashed=false`;
+    const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`)).json();
+    return r.files?.[0]?.id || (await (await drive(API, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: nombre, mimeType: tipo, parents: [padre] }) })).json()).id;
+  }
+  // Carpeta del paciente (una por prestación, «Ref 0001 – GOMEZ, ANA MARIA – 2026-10-21»): la guardada en la prestación si
+  // sigue en el Drive; si no, se busca o se crea y queda anotada
+  async function carpetaDePaciente(a) {
+    const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId), p = doc.prestaciones[i];
+    if (p?.carpeta_docs?.id) {
+      const c = await drive(`${API}/${p.carpeta_docs.id}?fields=id,trashed`).then((r) => r.json()).catch(() => null);
+      if (c && !c.trashed) return p.carpeta_docs.id;
+    }
+    const id = await carpetaEn(await carpetaRuta(a.ruta), a.subcarpeta);
+    if (i >= 0) {
+      doc.prestaciones[i] = { ...doc.prestaciones[i], actualizado: Date.now(),
+        carpeta_docs: { id, link: `https://drive.google.com/drive/folders/${id}`, nombre: a.subcarpeta } };
+      cambios++;
+    }
+    return id;
   }
   const enlaceCarpeta = async (ruta) => `https://drive.google.com/drive/folders/${await carpetaRuta(ruta)}`;
 
@@ -441,10 +476,19 @@ const Almacen = (() => {
   const aBase64 = (archivo) => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = mal; r.readAsDataURL(archivo); });
   // campo / lista: la casilla que se tilda y la lista de enlaces de la prestación (por defecto, la foja quirúrgica)
   // reemplaza: un solo archivo por documento (el nuevo reemplaza al que estaba por subir y, al subirse, al que estaba en el Drive)
-  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos", reemplaza = false } = {}) {
+  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos", reemplaza = false, subcarpeta = null } = {}) {
     await leerAdjuntos();
-    if (reemplaza) adjuntos = adjuntos.filter((a) => a.renombrar || a.prestacionId !== prestacionId || a.lista !== lista);
-    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista, reemplaza });
+    if (reemplaza) adjuntos = adjuntos.filter((a) => a.renombrar || a.mover || a.prestacionId !== prestacionId || a.lista !== lista);
+    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista, reemplaza, subcarpeta });
+    await guardarAdjuntos();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
+    programarSync();
+  }
+  // Pasar un documento ya subido a la carpeta del paciente (los de antes estaban en «Fojas» / «Autorizaciones»)
+  async function encolarMover(prestacionId, id, ruta, subcarpeta) {
+    await leerAdjuntos();
+    if (adjuntos.some((a) => a.mover === id)) return;
+    adjuntos.push({ prestacionId, mover: id, ruta, subcarpeta });
     await guardarAdjuntos();
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
@@ -469,23 +513,33 @@ const Almacen = (() => {
   }
   const quitar = async (a) => { adjuntos = adjuntos.filter((x) => x !== a); await guardarAdjuntos(); };
   async function subirUno(a) {
+    if (a.mover) {
+      const destino = await carpetaDePaciente(a);
+      const f = await drive(`${API}/${a.mover}?fields=parents`).then((r) => r.json()).catch((e) => { if (e.status === 404) return null; throw e; });
+      if (f && !(f.parents || []).includes(destino))
+        await drive(`${API}/${a.mover}?addParents=${destino}&removeParents=${(f.parents || []).join(",")}`, { method: "PATCH",
+          headers: { "Content-Type": "application/json" }, body: "{}" });
+      await quitar(a); await escribirLocal();
+      return;
+    }
     if (a.renombrar) {
       // Renombrar un documento ya subido (cambió el paciente o el n° de circuito)
       // (si el archivo ya no está en el Drive, se descarta: no traba la cola)
       const r = await drive(`${API}/${a.renombrar}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: a.nombre }) })
-        .catch((e) => { if (/ 404$/.test(e.message)) return null; throw e; });
+        .catch((e) => { if (e.status === 404) return null; throw e; });
       if (!r) return quitar(a);
       const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
       if (i >= 0) {
         const p = doc.prestaciones[i];
-        doc.prestaciones[i] = { ...p, actualizado: Date.now(), [a.lista]: (p[a.lista] || []).map((x) => (x.id === a.renombrar ? { ...x, nombre: a.nombre } : x)) };
+        doc.prestaciones[i] = { ...p, actualizado: Date.now(), [a.lista]: a.lista === "carpeta_docs" ? { ...p.carpeta_docs, nombre: a.nombre }
+          : (p[a.lista] || []).map((x) => (x.id === a.renombrar ? { ...x, nombre: a.nombre } : x)) };
         cambios++;
       }
       await quitar(a); await escribirLocal();
       return;
     }
     const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
-    const carpetaDoc = await carpetaRuta(a.ruta);
+    const carpetaDoc = a.subcarpeta ? await carpetaDePaciente(a) : await carpetaRuta(a.ruta);
     const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), carpetaDoc);
     const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
     if (i >= 0) {
@@ -493,11 +547,14 @@ const Almacen = (() => {
       const nuevo = { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre };
       // El anterior no se borra: pasa a la carpeta «Reemplazados» (al lado), por si hiciera falta
       if (a.reemplaza && (p[lista] || []).length) {
-        const viejos = await carpetaRuta([...a.ruta.slice(0, -1), "Reemplazados"]);
-        for (const v of p[lista]) await drive(`${API}/${v.id}?addParents=${viejos}&removeParents=${carpetaDoc}`, { method: "PATCH",
-          headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+        const viejos = a.subcarpeta ? await carpetaEn(carpetaDoc, "Reemplazados") : await carpetaRuta([...a.ruta.slice(0, -1), "Reemplazados"]);
+        for (const v of p[lista]) {
+          const f = await drive(`${API}/${v.id}?fields=parents`).then((r) => r.json()).catch(() => null);
+          if (f) await drive(`${API}/${v.id}?addParents=${viejos}&removeParents=${(f.parents || []).join(",")}`, { method: "PATCH",
+            headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+        }
       }
-      doc.prestaciones[i] = { ...p, [campo]: true, actualizado: Date.now(), [lista]: a.reemplaza ? [nuevo] : [...(p[lista] || []), nuevo] };
+      doc.prestaciones[i] = { ...doc.prestaciones[i], [campo]: true, actualizado: Date.now(), [lista]: a.reemplaza ? [nuevo] : [...(p[lista] || []), nuevo] };
       cambios++;
     }
     await quitar(a);
@@ -541,7 +598,8 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, enlaceCarpeta, get errorAdjuntos() { return errorAdjuntos; },
+    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, encolarMover, enlaceCarpeta, get registro() { return registro; },
+    venceEn: () => (tokenMem?.vence || venceToken) - Date.now(), get errorAdjuntos() { return errorAdjuntos; },
     adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
