@@ -311,6 +311,44 @@ const Almacen = (() => {
     return r.json();
   }
 
+  // Respaldo diario en el Drive: antes de la primera sincronización del día se copia el archivo de datos tal como está
+  // («liquidaciones-respaldo-AAAA-MM-DD.json», últimos 30 días). Nada de lo que haga la app puede hacer perder la base.
+  const RESPALDO = "liquidaciones-respaldo-";
+  let respaldoDe = "";
+  async function respaldoDiario(archivo) {
+    const dia = new Date().toISOString().slice(0, 10);
+    if (respaldoDe === dia) return;
+    const nombre = `${RESPALDO}${dia}.json`;
+    if (!(await buscar(nombre))) {
+      await drive(`${API}/${archivo.id}/copy`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nombre, parents: [await carpeta()] }) });
+      const limite = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+      for (const f of await respaldos()) if (f.dia < limite) await drive(`${API}/${f.id}`, { method: "DELETE" }).catch(() => {});
+    }
+    respaldoDe = dia;
+  }
+  async function respaldos() {
+    const q = `name contains '${RESPALDO}' and trashed=false`;
+    const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive&pageSize=200`)).json();
+    return (r.files || []).map((f) => ({ id: f.id, dia: (f.name.match(/(\d{4}-\d{2}-\d{2})/) || [])[1] || "" })).filter((f) => f.dia).sort((a, b) => b.dia.localeCompare(a.dia));
+  }
+  // Recuperar de un respaldo: vuelve lo que falta o está borrado (no pisa lo que existe hoy)
+  async function recuperarRespaldo(id) {
+    const viejo = await (await drive(`${API}/${id}?alt=media`)).json();
+    const ahora = Date.now();
+    let n = 0;
+    for (const col of ["prestaciones", "obras", "valores", "uq"]) {
+      for (const r of viejo[col] || []) {
+        if (r.borrada) continue;
+        const i = doc[col].findIndex((x) => x.id === r.id);
+        if (i >= 0 && !doc[col][i].borrada) continue;
+        if (i >= 0) doc[col][i] = { ...r, actualizado: ahora }; else doc[col].push({ ...r, actualizado: ahora });
+        n++;
+      }
+    }
+    if (n) { cambios++; await escribirLocal(); if (doc.cuenta && !pendiente) await marcarPendiente(true); programarSync(); }
+    return n;
+  }
+
   let sincronizando = null, temporizador = null, alCambiar = () => {}, estadoSync = "sin conectar";
   const avisar = (e) => { estadoSync = e; alCambiar(e); };
 
@@ -333,6 +371,7 @@ const Almacen = (() => {
         const cambiosAlEmpezar = cambios;
         const archivo = await buscar(ARCHIVO);
         if (archivo) {
+          await respaldoDiario(archivo).catch(() => {});
           const remoto = await (await drive(`${API}/${archivo.id}?alt=media`)).json();
           doc = combinar(doc, remoto);
           await drive(`${SUBIR}/${archivo.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(doc) });
@@ -396,7 +435,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, guardarVarios, borrar, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
     accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),

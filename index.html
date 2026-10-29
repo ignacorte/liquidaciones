@@ -15,10 +15,11 @@
 </head>
 <body>
 <header>
-  <div><h1 id="titulo">Inicio</h1><small id="sync" style="opacity:.8;font-size:11px"></small></div>
+  <div style="min-width:0"><h1 id="titulo">Inicio</h1><small id="sync" style="opacity:.8;font-size:11px"></small>
+    <button id="cambiar-rama" class="rama solo-admin" hidden></button></div>
   <button id="subir-ahora" class="boton chico" style="background:#f5b942;color:#3a2a00;border-color:#f5b942" hidden>Subir a Drive</button>
   <div class="fila" style="margin:0;flex-wrap:nowrap"><input type="month" id="mes" aria-label="Mes">
-  <button id="bloquear" class="boton chico secundario" style="background:transparent;color:inherit;border-color:currentColor" aria-label="Bloquear" hidden>🔒</button></div>
+  <button id="bloquear" class="boton chico secundario" style="background:transparent;color:inherit;border-color:currentColor" aria-label="Cerrar sesión" title="Cerrar sesión" hidden>🔒</button></div>
 </header>
 
 <main>
@@ -56,7 +57,7 @@
   <section id="v-inicio">
     <div class="alerta" id="sin-copia" hidden></div>
     <div class="kpis" id="kpis"></div>
-    <div class="card solo-anestesia"><h2>Circuito DARC</h2><div class="tabla" id="darc"></div></div>
+    <div class="card solo-anestesia"><h2>Circuito</h2><div class="tabla" id="circuito"></div></div>
     <div class="card"><h2>Por obra social</h2><div class="tabla" id="por-os"></div></div>
     <div class="card"><h2>Por paciente</h2><div class="tabla" id="por-paciente"></div></div>
   </section>
@@ -144,9 +145,11 @@
 
   <!-- Valores y configuración -->
   <section id="v-valores" hidden>
-    <div class="card">
-      <h2>Mi cuenta</h2>
+    <details class="card plegable" data-plegable="cuenta">
+      <summary><h2>Mi cuenta</h2></summary>
       <p id="cuenta-texto" class="ayuda"></p>
+      <div class="fila"><button class="boton chico secundario" id="cerrar-sesion">🔒 Cerrar sesión</button></div>
+      <p class="ayuda" style="margin-top:-4px">Cerrar sesión pide el PIN para volver a entrar (los datos quedan en el celular y en tu Drive).</p>
       <div class="fila"><button class="boton chico" id="conectar">Conectar Google Drive</button>
         <button class="boton chico secundario" id="sincronizar">Sincronizar ahora</button>
         <button class="boton chico secundario" id="planilla">Guardar Excel en Drive</button></div>
@@ -160,19 +163,25 @@
       <label>Bloquear la app después de<select id="min-bloqueo"><option value="5">5 minutos sin uso</option><option value="15">15 minutos sin uso</option>
         <option value="30">30 minutos sin uso</option><option value="60">1 hora sin uso</option></select></label>
       <div class="fila"><button class="boton chico secundario" id="cambiar-pin">Cambiar PIN</button></div>
-      <h2 style="margin-top:12px">Copia de seguridad</h2>
+    </details>
+    <details class="card plegable" data-plegable="copia">
+      <summary><h2>Copia de seguridad</h2></summary>
+      <p class="ayuda">Con Google Drive conectado, la app guarda sola una copia por día de toda tu base en la carpeta «Liquidaciones» del Drive
+        (últimos 30 días). Si algo se perdiera, la recuperás desde acá: vuelve lo que falta, sin pisar lo que tenés hoy.</p>
+      <div class="fila"><button class="boton chico secundario" id="ver-respaldos">Respaldos del Drive</button></div>
+      <div id="respaldos"></div>
       <p class="ayuda">Las actualizaciones de la app no borran nada. Igual, por si se pierde o cambia el celular: con Google Drive conectado la copia es automática; si no, descargá una copia cada tanto (queda cifrada con la clave que elijas).</p>
       <div class="fila"><button class="boton chico secundario" id="copia-bajar">Descargar copia</button>
         <label class="boton chico secundario">Restaurar copia<input type="file" accept=".json,application/json" hidden id="copia-subir"></label></div>
       <p class="ayuda">Seguridad: los datos de este celular están cifrados con tu PIN. Mientras la usás no vuelve a pedirlo (aunque recargues); lo pide después del tiempo sin uso elegido o al tocar 🔒.</p>
-    </div>
-    <div class="card economia">
-      <h2>Referencias</h2>
+    </details>
+    <details class="card economia plegable" data-plegable="referencias">
+      <summary><h2>Referencias</h2></summary>
       <div class="grid">
         <label>Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
         <label>Vigencia UQ<input id="uq-vigencia" type="month"></label>
         <label>Inflación mensual (%)<input id="inflacion" type="number" step="0.1"></label>
-        <label class="solo-anestesia">Retención de la asociación (DARC, %)<input id="pct-darc" type="number" step="0.1" min="0" max="99"></label>
+        <label class="solo-anestesia">Retención de la asociación (%)<input id="pct-asociacion" type="number" step="0.1" min="0" max="99"></label>
       </div>
       <p class="ayuda" id="uq-hist"></p>
       <div class="fila">
@@ -180,16 +189,16 @@
         <button class="boton chico secundario" id="recalcular">Recalcular pendientes</button>
         <button class="boton chico secundario" id="exportar">Descargar Excel</button>
       </div>
-    </div>
-    <div class="card economia">
-      <h2>Obras sociales</h2>
+    </details>
+    <details class="card economia plegable" data-plegable="obras">
+      <summary><h2>Obras sociales</h2></summary>
       <p class="ayuda">Plazos para calcular cuándo cobrar. «% módulo» = parte del módulo que le toca al cirujano (si la obra social paga por módulo).
         También podés cargar tu % del módulo en cada cirugía.</p>
       <div class="tabla" id="tabla-os"></div>
       <button class="boton chico secundario" id="nueva-os">+ Obra social</button>
-    </div>
-    <div class="card economia solo-anestesia">
-      <h2>Aranceles por complejidad</h2>
+    </details>
+    <details class="card economia solo-anestesia plegable" data-plegable="aranceles">
+      <summary><h2>Aranceles por complejidad</h2></summary>
       <p class="ayuda">Lo que paga cada obra social por complejidad (convenio de la asociación). De 8 a 13 se calcula sobre la 7 (× 1,5 / 2 / 3 / 4 / 5 / 6), salvo que cargues el valor.</p>
       <div class="grid">
         <label>Obra social<select id="ane-os"></select></label>
@@ -198,9 +207,9 @@
       <div class="grid" id="ane-valores"></div>
       <div class="fila"><button class="boton chico" id="ane-guardar">Guardar aranceles</button></div>
       <div class="tabla" id="ane-tabla"></div>
-    </div>
-    <div class="card economia">
-      <h2>Valores por código</h2>
+    </details>
+    <details class="card economia plegable" data-plegable="valores">
+      <summary><h2>Valores por código</h2></summary>
       <label>Obra social<select id="v-os"></select></label>
       <div class="tabla" id="tabla-valores"></div>
       <div class="fila" id="lotes-valores"></div>
@@ -209,7 +218,7 @@
           accept=".xlsx,.xls,.xlsm,.ods,.csv,.docx,.doc,.pdf,.txt,image/*,application/pdf"></label></div>
       <p class="ayuda">Importar: Excel, Word (.docx), PDF o foto de la circular de aranceles. La app busca código, descripción y monto,
         propone obra social y vigencia, reconoce si los códigos son de la AAC, de PAMI o propios y te muestra todo para revisar antes de guardar. Podés elegir varios archivos a la vez (por ejemplo, uno por cirugía).</p>
-    </div>
+    </details>
     <p class="ayuda" style="text-align:center"><b id="version-app"></b> · <a href="#" id="actualizar-app">Buscar actualización</a></p>
     <p class="ayuda" style="text-align:center">Liquidaciones · <a href="ayuda.html">Cómo usarla</a> · <a href="privacidad.html">Privacidad</a> · <a href="#" id="salir">Desconectar cuenta de este celular</a></p>
   </section>

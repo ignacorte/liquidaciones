@@ -305,7 +305,7 @@ const Motor = (() => {
   // Completa una prestación: obra social del padrón, código sugerido, valor y fechas. No modifica p.
   // ---------- Anestesiología ----------
   // Honorario = arancel de la complejidad (Nomenclador Único de Anestesiólogos de Córdoba) según el convenio de la asociación
-  // (DARC) con cada obra social, más recargos (nocturno, fin de semana o feriado, edades extremas) y las intervenciones
+  // con cada obra social, más recargos (nocturno, fin de semana o feriado, edades extremas) y las intervenciones
   // múltiples; la asociación retiene su % administrativo. Los aranceles se cargan como valores con código «ANE-<complejidad>».
   const EDADES = { neonato: "neonato", lactante: "1 mes a 3 años", nino: "3 a 14 años", mayor70: "70 años o más" };
   const codigoComplejidad = (c) => "ANE-" + c;
@@ -337,14 +337,14 @@ const Motor = (() => {
   // [neto para vos, bruto a cargar en la asociación, explicación]
   function valorAnestesia(datos, p, os) {
     if (p.valor_manual) return [Number(p.valor_manual), null, "Cargado a mano"];
-    const r = catalogos.ANEST?.reglas || {}, darc = datos.pct_darc || 0;
-    const neto = (b) => Math.round(b * (1 - darc / 100)), notaDarc = darc ? ` · − ${darc} % de retención de la asociación` : "";
+    const r = catalogos.ANEST?.reglas || {}, retencion = datos.pct_asociacion || 0;
+    const neto = (b) => Math.round(b * (1 - retencion / 100)), notaRetencion = retencion ? ` · − ${retencion} % de retención de la asociación` : "";
     const sinArancel = (c) => `Sin arancel de ${os || "esa obra social"} para complejidad ${c}: cargalo en Valores → Aranceles por complejidad`;
     if (p.tipo === "consulta") {
       const a = arancelAnestesia(datos, os, 1, p.fecha);
       if (!a) return [null, null, sinArancel(1)];
       const b = a.monto * r.preanestesica_pct_de_1 / 100;
-      return [neto(b), Math.round(b), `Consulta preanestésica: ${r.preanestesica_pct_de_1} % de la complejidad 1 (${pesos(a.monto)})${notaDarc}`];
+      return [neto(b), Math.round(b), `Consulta preanestésica: ${r.preanestesica_pct_de_1} % de la complejidad 1 (${pesos(a.monto)})${notaRetencion}`];
     }
     const c = complejidadEfectiva(p);
     if (!c) return [null, null, "Elegí la complejidad del procedimiento"];
@@ -367,7 +367,7 @@ const Motor = (() => {
       bruto += ax.monto * pct / 100 * (1 + pctRec / 100);
       texto += ` + complejidad ${cx} al ${pct} %`;
     }
-    return [neto(bruto), Math.round(bruto), texto + notaDarc];
+    return [neto(bruto), Math.round(bruto), texto + notaRetencion];
   }
   function estimarAnestesia(datos, p) {
     const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
@@ -393,7 +393,8 @@ const Motor = (() => {
   }
 
   function estimar(datos, p) {
-    if (datos.especialidad === "anestesia") return estimarAnestesia(datos, p);
+    // Cada prestación con las reglas de su especialidad (no las del camino abierto)
+    if ((p.especialidad || datos.especialidad) === "anestesia") return estimarAnestesia(datos, p);
     const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
     const out = { obra_social: os, codigo_aac: p.codigo_aac || null, codigo_os: p.codigo_os || null, sugerencias: null };
     const equivalente = equivalenteAAC(os, out.codigo_os);

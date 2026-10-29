@@ -33,7 +33,7 @@ const esAnestesia = () => ajuste("especialidad", "cirugia") === "anestesia";
 const ETIQUETAS = {
   cirugia: { tipos: { ...TIPOS }, estados: { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" } },
   anestesia: { tipos: { cirugia: "Anestesiología", endoscopia: "Anestesiología fuera de quirófano", practica: "Dolor / práctica", consulta: "Consulta preanestésica" },
-               estados: { pendiente: "Sin cargar en DARC", presentada: "Cargada en DARC", cobrada: "Liquidada", debitada: "Debitada" } },
+               estados: { pendiente: "Sin cargar", presentada: "Cargada", cobrada: "Liquidada", debitada: "Debitada" } },
 };
 const EDADES = { "": "—", neonato: "Neonato (hasta 30 días) +50 %", lactante: "1 mes a 3 años +40 %", nino: "3 a 14 años +30 %", mayor70: "70 años o más +30 %" };
 const VIAS = { misma: "Misma vía (50 %)", distinta: "Otra vía o bilateral (75 %)" };
@@ -94,7 +94,7 @@ function datos() {
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
   const esp = ajuste("especialidad", "cirugia");
-  return { obras, especialidad: esp, pct_darc: Number(ajuste("pct_darc", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
+  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -124,6 +124,7 @@ function ir(vista) {
   const afuera = ["bienvenida", "pin"].includes(vista);
   $("nav.abajo").hidden = afuera;
   $("#bloquear").hidden = afuera || !Almacen.tienePin();
+  $("#cambiar-rama").hidden = afuera;
   $("#titulo").textContent = TITULOS[vista];
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
   ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, valores: verValores }[vista] || (() => {}))();
@@ -141,7 +142,7 @@ function avisoCopia() {
 
 function verInicio() {
   avisoCopia();
-  verCircuitoDarc();
+  verCircuito();
   if (modoRegistro()) return verInicioRegistro();
   const inflacion = +ajuste("inflacion_mensual", 0);
   const r = Motor.resumen(datos(), mes(), hoy(), inflacion), t = r.totales;
@@ -160,16 +161,16 @@ function verInicio() {
       <td class="n">${p.n}</td><td class="n">${pesos(p.estimado)}</td><td class="n">${pesos(p.cobrado)}</td></tr>`).join("") + "</table>" : "";
 }
 
-// Anestesiología: en qué paso está cada anestesia (documentación → carga en DARC → liquidación), de todos los meses
-function verCircuitoDarc() {
+// Anestesiología: en qué paso está cada anestesia (documentación → carga en la asociación → liquidación), de todos los meses
+function verCircuito() {
   if (!esAnestesia()) return;
   const lista = datos().prestaciones.filter((p) => p.tipo !== "consulta" || p.estado !== "cobrada");
   const pasos = [
     ["Falta documentación (foja o autorización)", "falta_doc", lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length)],
-    ["Listas para cargar en DARC", "para_darc", lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length)],
-    ["Cargadas en DARC, sin liquidar", "presentada", lista.filter((p) => p.estado === "presentada")],
+    ["Listas para cargar", "para_cargar", lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length)],
+    ["Cargadas, sin liquidar", "presentada", lista.filter((p) => p.estado === "presentada")],
   ];
-  $("#darc").innerHTML = `<table><tr><th>Paso</th><th class="n">#</th><th class="n">Neto estimado</th></tr>` +
+  $("#circuito").innerHTML = `<table><tr><th>Paso</th><th class="n">#</th><th class="n">Neto estimado</th></tr>` +
     pasos.map(([t, k, l]) => `<tr data-paso="${k}"><td>${t}</td><td class="n">${l.length}</td><td class="n">${pesos(l.reduce((s, p) => s + (p.valor_estimado || 0), 0))}</td></tr>`).join("") +
     "</table><p class=\"ayuda\">Tocá un paso para ver los pacientes.</p>";
 }
@@ -198,15 +199,26 @@ function aplicarModo() {
   document.body.classList.toggle("modo-anestesia", anest);
   Object.assign(TIPOS, et.tipos); Object.assign(ESTADOS, et.estados);
   $("#especialidad").value = anest ? "anestesia" : "cirugia";
+  $("#cambiar-rama").textContent = "⇄ " + (anest ? "Anestesiología" : "Cirugía");
   $("#especialidad-texto").textContent = "Especialidad: " + ESPECIALIDADES[anest ? "anestesia" : "cirugia"];
-  $("[data-marcar=presentada]").textContent = anest ? "Cargadas en DARC" : "Presentadas";
+  $("[data-marcar=presentada]").textContent = anest ? "Cargadas" : "Presentadas";
   $("[data-marcar=cobrada]").textContent = anest ? "Liquidadas" : "Cobradas";
-  $("#titulo-presentar").textContent = anest ? "Para cargar en DARC" : "Para presentar";
+  $("#titulo-presentar").textContent = anest ? "Para cargar" : "Para presentar";
   const elegido = $("#f-estado").value;
   $("#f-estado").innerHTML = '<option value="">Todos</option><option value="a_cobrar">A cobrar</option><option value="vencida">Vencidas</option>' +
-    (anest ? '<option value="falta_doc">Falta documentación</option><option value="para_darc">Listas para cargar en DARC</option>' : "") +
+    (anest ? '<option value="falta_doc">Falta documentación</option><option value="para_cargar">Listas para cargar</option>' : "") +
     Object.entries(ESTADOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
   $("#f-estado").value = [...$("#f-estado").options].some((o) => o.value === elegido) ? elegido : "";
+}
+
+// Administrador: pasar de cirugía a anestesiología o al revés (cada rama con sus prestaciones; no se toca la otra)
+async function cambiarRama(rama) {
+  if (!(await esAdmin())) return;
+  await Almacen.ajuste("especialidad", rama);
+  aplicarModo();
+  await recalcularPendientes();
+  aviso("Rama: " + ESPECIALIDADES[rama]);
+  refrescar();
 }
 
 // Administrador: su cuenta de Google figura (como huella SHA-256) en CONFIG.ADMINS_SHA256
@@ -227,14 +239,17 @@ async function preguntarEspecialidad() {
   const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
   cuerpo._actual = null;
   cuerpo.innerHTML = admin ? `<h2>¿Qué camino seguís?</h2>
-    <p class="ayuda">Sos administrador: podés entrar como cirujano o como anestesiólogo. Cada camino tiene sus propias prestaciones.</p>
-    <div class="fila"><button class="boton" data-especialidad="cirugia">Cirugía</button><button class="boton" data-especialidad="anestesia">Anestesiología</button></div>`
+    <p class="ayuda">Sos administrador: podés entrar como cirujano o como anestesiólogo. Cada camino tiene sus propias prestaciones.
+      Para cambiar después, tocá el botón «⇄» de arriba.</p>
+    <div class="fila"><button class="boton" data-especialidad="cirugia">Cirugía</button><button class="boton" data-especialidad="anestesia">Anestesiología</button></div>
+    <div class="fila"><button class="boton chico secundario" data-cerrar-sesion>🔒 Cerrar sesión</button></div>`
     : `<h2>¿Cuál es tu especialidad?</h2>
     <p class="ayuda">La app se adapta a cómo se liquida cada una. En anestesiología: complejidad del nomenclador de anestesiólogos,
-      documentación (foja y autorización) y carga en la asociación (DARC). <b>Se elige una sola vez.</b></p>
+      documentación (foja y autorización) y carga en la asociación. <b>Se elige una sola vez.</b></p>
     <div class="fila"><button class="boton" data-especialidad="cirugia">Cirugía</button><button class="boton" data-especialidad="anestesia">Anestesiología</button></div>`;
   cuerpo.onclick = async (ev) => {
     if (ev.target.closest("[data-volver]")) { estado.caminoElegido = false; dlg.close(); return preguntarEspecialidad(); }
+    if (ev.target.closest("[data-cerrar-sesion]")) { dlg.close(); return bloquearYa(); }
     const b = ev.target.closest("[data-especialidad], [data-confirmar-especialidad]");
     if (!b) return;
     // Colegas: se confirma (no se puede cambiar después)
@@ -305,14 +320,14 @@ function camposPrestacion(p, completo) {
     ${quir && esAnestesia() ? "" : `<label>Institución<input name="institucion" value="${esc(p.institucion)}"></label>`}
     <label class="economia">Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
     <label class="economia">Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
-    <label class="economia">${esAnestesia() ? "Cargada en DARC el" : "Presentada el"}${campoFecha("fecha_presentacion", p.estado === "pendiente" ? "" : p.fecha_presentacion)}</label>
+    <label class="economia">${esAnestesia() ? "Cargada el" : "Presentada el"}${campoFecha("fecha_presentacion", p.estado === "pendiente" ? "" : p.fecha_presentacion)}</label>
     <label class="economia">${esAnestesia() ? "Liquidada el" : "Cobrada el"}${campoFecha("fecha_cobro", p.fecha_cobro)}</label>
     <label class="economia">${esAnestesia() ? "Monto liquidado, neto ($)" : "Monto cobrado ($)"}<input type="number" name="monto_cobrado" value="${p.monto_cobrado ?? ""}"></label>
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(p.notas)}</textarea></label>` : ""}
   </div>
   ${faltantes(p).length ? `<div class="alerta" style="margin:4px 0">Falta: ${faltantes(p).join(", ")}</div>` : ""}
-  ${esAnestesia() && docFaltante(p).length ? `<div class="alerta" style="margin:4px 0">Documentación pendiente: ${docFaltante(p).join(" y ")} (sin eso no se puede cargar en DARC)</div>` : ""}
-  <div class="valor economia"><b>${pesos(p.valor_estimado)}</b> <span class="ayuda">${esAnestesia() && p.valor_bruto ? `neto · a cargar en DARC ${pesos(p.valor_bruto)} ` : ""}· cobro estimado ${fechaCorta(p.fecha_cobro_estimada)}</span>
+  ${esAnestesia() && docFaltante(p).length ? `<div class="alerta" style="margin:4px 0">Documentación pendiente: ${docFaltante(p).join(" y ")} (sin eso no se puede cargar en la asociación)</div>` : ""}
+  <div class="valor economia"><b>${pesos(p.valor_estimado)}</b> <span class="ayuda">${esAnestesia() && p.valor_bruto ? `neto · bruto a cargar ${pesos(p.valor_bruto)} ` : ""}· cobro estimado ${fechaCorta(p.fecha_cobro_estimada)}</span>
     <div class="origen">${esc(p.valor_origen)}</div></div>`;
 }
 
@@ -341,7 +356,7 @@ function camposAnestesia(p) {
     ${marca("feriado", "Feriado (+50 %)")}
     ${marca("obesidad", "Obesidad mórbida (+2 complejidades)")}
     ${marca("suspendida", "Operación suspendida (complejidad 1)")}
-    <div class="ancho ayuda" style="margin:6px 0 0"><b>Documentación para cargar en DARC</b></div>
+    <div class="ancho ayuda" style="margin:6px 0 0"><b>Documentación</b></div>
     ${marca("doc_foja", "Foja quirúrgica")}
     ${marca("doc_autorizacion", "Orden / autorización")}
     <p class="ancho ayuda" style="margin:0">Nocturno (20 a 7 h, +35 %) y fin de semana (sábado 13 h a lunes 7 h, +50 %) salen de la fecha y la hora.</p>`;
@@ -640,7 +655,7 @@ function verPrestaciones() {
   if (est === "vencida") lista = lista.filter((p) => Motor.vencida(p, h));
   else if (est === "a_cobrar") lista = lista.filter((p) => ["pendiente", "presentada"].includes(p.estado));
   else if (est === "falta_doc") lista = lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length);
-  else if (est === "para_darc") lista = lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length);
+  else if (est === "para_cargar") lista = lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length);
   else if (est) lista = lista.filter((p) => p.estado === est);
   if (q) lista = lista.filter((p) => Motor.plano([p.paciente, p.dni, p.procedimiento].join(" ")).includes(q));
   lista.sort((a, b) => (b.fecha + (b.hora || "")).localeCompare(a.fecha + (a.hora || "")));
@@ -711,7 +726,7 @@ function verValores() {
   $("#uq-valor").value = uq[0]?.valor ?? "";
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
-  $("#pct-darc").value = ajuste("pct_darc", "");
+  $("#pct-asociacion").value = ajuste("pct_asociacion", "");
   verAranceles();
   $("#apellido").value = ajuste("apellido", "");
   $("#min-bloqueo").value = String(minutosBloqueo());
@@ -747,7 +762,7 @@ function verAranceles() {
     .sort((a, b) => b.vigencia.localeCompare(a.vigencia))[0])]).filter(([, v]) => v.some(Boolean));
   $("#ane-tabla").innerHTML = filas.length ? `<table><tr><th>Obra social</th>${[1, 2, 3, 4, 5, 6, 7].map((c) => `<th class="n">${c}</th>`).join("")}</tr>` +
     filas.map(([n, v]) => `<tr><td>${esc(n)}</td>${v.map((x) => `<td class="n">${x ? pesos(x.monto) : "—"}</td>`).join("")}</tr>`).join("") + "</table>"
-    : '<p class="ayuda">Todavía no cargaste aranceles. Pedí a la asociación (DARC) la tabla de valores por complejidad de cada obra social.</p>';
+    : '<p class="ayuda">Todavía no cargaste aranceles. Pedí a la asociación la tabla de valores por complejidad de cada obra social.</p>';
 }
 async function guardarAranceles() {
   const os = $("#ane-os").value, vigencia = ($("#ane-vigencia").value || mes()) + "-01";
@@ -1001,6 +1016,16 @@ function importarLargo(lista, osDe) {
   });
 }
 
+// Respaldos diarios automáticos del Drive (ver almacen.js)
+async function verRespaldos() {
+  if (!Almacen.tieneToken()) return aviso("Conectá Google Drive para ver los respaldos (Mi cuenta → Conectar Google Drive).");
+  $("#respaldos").innerHTML = '<p class="cargando">Buscando respaldos…</p>';
+  const lista = await Almacen.respaldos();
+  $("#respaldos").innerHTML = lista.length ? `<p class="ayuda">Tocá uno para recuperar lo que falte desde ese día:</p>` +
+    lista.map((r) => `<button class="boton chico secundario" style="margin:0 6px 6px 0" data-respaldo="${esc(r.id)}" data-dia="${fechaCorta(r.dia)}">${fechaCorta(r.dia)}</button>`).join("")
+    : '<p class="ayuda">Todavía no hay respaldos: se crea el primero en la próxima sincronización.</p>';
+}
+
 async function borrarLote(lote) {
   const del = Almacen.doc.valores.filter((v) => v.lote === lote && !v.borrada);
   if (!del.length || !confirm(`¿Deshacer la importación de «${del[0].archivo}»? Se borran sus ${del.length} valores en ${new Set(del.map((v) => v.obra_social)).size} obras sociales (las obras sociales agregadas quedan).`)) return;
@@ -1134,7 +1159,10 @@ async function construirExcel() {
     s.src = "vendor/xlsx.full.min.js"; s.onload = ok; s.onerror = () => mal(new Error("No se pudo cargar el generador de Excel"));
     document.head.appendChild(s);
   });
-  const lista = datos().prestaciones.slice().sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+  // Siempre todas las prestaciones (cirugía y anestesiología), sea cual sea el camino abierto: la planilla del Drive nunca pierde datos
+  const todas = Almacen.doc.prestaciones.filter((p) => !p.borrada).sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+  const deCirugia = todas.filter((p) => (p.especialidad || "cirugia") === "cirugia"), deAnestesia = todas.filter((p) => p.especialidad === "anestesia");
+  const lista = deCirugia;
   // Fechas como número de serie de planilla (días desde 30/12/1899) con formato dd/mm/aaaa: Google Sheets y Excel las
   // importan como fecha. (Las «celdas de fecha» ISO no las toma Google: quedaban vacías o como texto.)
   const fechaX = (t) => {
@@ -1142,18 +1170,19 @@ async function construirExcel() {
     const [y, m, d] = t.slice(0, 10).split("-").map(Number);
     return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5;
   };
-  const FECHAS = ["Fecha", "Presentada", "Cobro estimado", "Cobrada el", "Vigente desde", "Cargada en DARC", "Liquidada el"];
-  const est = (p) => (Motor.vencida(p, hoy()) ? "Vencida" : ESTADOS[p.estado]);
+  const FECHAS = ["Fecha", "Presentada", "Cobro estimado", "Cobrada el", "Vigente desde", "Cargada el", "Liquidada el"];
+  const etiquetas = (p) => ETIQUETAS[p.especialidad === "anestesia" ? "anestesia" : "cirugia"];
+  const est = (p) => (Motor.vencida(p, hoy()) ? "Vencida" : etiquetas(p).estados[p.estado]);
   // ¿El valor es un módulo (total para la institución, del que te toca un %) o tu honorario directo?
   const tipoValor = (p) => p.valor_manual ? "Cargado a mano" : /^Ayudantía en módulo/.test(p.valor_origen || "") ? "Módulo (ayudantía: no se cobra)"
     : /^Módulo|^Sin honorario conocido · Módulo/.test(p.valor_origen || "") ? "Módulo" : p.valor_estimado != null ? "Honorario directo" : "";
-  // Anestesiología: como la planilla de control (situación, documentación faltante, cargado en DARC, liquidado neto)
-  const anestesias = lista.filter((p) => p.tipo !== "consulta").map((p, i) => ({
+  // Anestesiología: como la planilla de control (situación, documentación faltante, cargado en la asociación, liquidado neto)
+  const anestesias = deAnestesia.map((p, i) => ({
     "N°": i + 1, "Fecha": fechaX(p.fecha), "Hora": p.hora || "", "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "",
-    "Obra social": p.obra_social || p.obra_social_texto || "", "Lugar": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": procedimientosDe(p),
+    "Obra social": p.obra_social || p.obra_social_texto || "", "Lugar": p.institucion || "", "Tipo": etiquetas(p).tipos[p.tipo], "Procedimiento": procedimientosDe(p),
     "Complejidad": Motor.complejidadEfectiva(p) ?? "", "Recargos": Motor.recargosAnestesia(p).map(([n, x]) => `${n} +${x} %`).join(", "),
     "Monto cargado (bruto)": p.valor_bruto ?? null, "Neto estimado": p.valor_estimado ?? null, "Situación": est(p),
-    "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Cargada en DARC": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
+    "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Cargada el": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Liquidada el": fechaX(p.fecha_cobro), "Cobrado (neto)": p.monto_cobrado ?? null,
     "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
     "Comentario": p.notas || "", "Origen del valor": p.valor_origen || "" }));
@@ -1174,8 +1203,8 @@ async function construirExcel() {
     "Estado": est(p), "Cobro estimado": fechaX(p.fecha_cobro_estimada), "Cobrada el": fechaX(p.fecha_cobro), "Monto cobrado": p.monto_cobrado ?? null,
     "N° atención": p.atencion || "", "Notas": p.notas || "" }));
   const grupos = {};
-  for (const p of lista) {
-    const k = p.fecha.slice(0, 7) + "|" + (p.obra_social || p.obra_social_texto || "Sin obra social");
+  for (const p of todas) {
+    const k = p.fecha.slice(0, 7) + "|" + (p.obra_social || p.obra_social_texto || "Sin obra social") + (p.especialidad === "anestesia" ? " (anestesiología)" : "");
     const g = (grupos[k] ||= { "Mes": p.fecha.slice(0, 7), "Obra social": k.split("|")[1], "Consultas": 0, "Cirugías y procedimientos": 0,
       "Estimado": 0, "Cobrado": 0, "Falta cobrar": 0 });
     g[p.tipo === "consulta" ? "Consultas" : "Cirugías y procedimientos"]++;
@@ -1203,9 +1232,11 @@ async function construirExcel() {
     h["!autofilter"] = { ref: h["!ref"] };
     XLSX.utils.book_append_sheet(libro, h, nombre);
   };
-  if (esAnestesia()) hoja(anestesias, "Anestesiología", ["N°", "Fecha", "Paciente", "Obra social", "Lugar", "Procedimiento", "Situación", "Doc faltante"]);
-  else hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
-  hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
+  if (deCirugia.length || !esAnestesia()) {
+    hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
+    hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
+  }
+  if (deAnestesia.length || esAnestesia()) hoja(anestesias, "Anestesiología", ["N°", "Fecha", "Paciente", "Obra social", "Lugar", "Procedimiento", "Situación", "Doc faltante"]);
   hoja(resumen, "Resumen mensual", ["Mes", "Obra social", "Estimado", "Cobrado"]);
   hoja(valores, "Valores cargados", ["Obra social", "Código", "Descripción", "Tipo de valor", "Monto"]);
   return XLSX.write(libro, { bookType: "xlsx", type: "array" });
@@ -1274,7 +1305,7 @@ async function arrancar() {
       }
     }
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
-    if (esAnestesia()) await Almacen.ajuste("pct_darc", $("#pct-darc").value === "" ? 0 : Number($("#pct-darc").value));
+    if (esAnestesia()) await Almacen.ajuste("pct_asociacion", $("#pct-asociacion").value === "" ? 0 : Number($("#pct-asociacion").value));
     const n = await recalcularPendientes();
     aviso(`Guardado; ${n} pendientes recalculadas.`);
     verValores();
@@ -1301,17 +1332,13 @@ async function arrancar() {
     const c = ev.target.closest("[data-liq-incluir]");
     if (c && conciliacion) conciliacion.filas[+c.dataset.liqIncluir].incluir = c.checked;
   });
-  $("#especialidad").addEventListener("change", async () => {
-    await Almacen.ajuste("especialidad", $("#especialidad").value);
-    aplicarModo();
-    const n = await recalcularPendientes();
-    aviso(`Especialidad: ${ESPECIALIDADES[$("#especialidad").value]}; ${n} pendientes recalculados.`);
-    verValores();
-  });
+  $("#especialidad").addEventListener("change", () => cambiarRama($("#especialidad").value));
+  $("#cambiar-rama").addEventListener("click", () => cambiarRama(esAnestesia() ? "cirugia" : "anestesia"));
+  $("#cerrar-sesion").addEventListener("click", bloquearYa);
   $("#ane-os").addEventListener("change", verAranceles);
   $("#ane-vigencia").addEventListener("change", verAranceles);
   $("#ane-guardar").addEventListener("click", () => guardarAranceles().catch((e) => aviso(e.message)));
-  $("#darc").addEventListener("click", (ev) => {
+  $("#circuito").addEventListener("click", (ev) => {
     const tr = ev.target.closest("tr[data-paso]");
     if (!tr) return;
     $("#f-todos-meses").checked = true; $("#f-estado").value = tr.dataset.paso; $("#f-tipo").value = "";
@@ -1362,7 +1389,11 @@ async function arrancar() {
   });
   $("#salir").addEventListener("click", async (ev) => {
     ev.preventDefault();
-    if (!confirm("Se borran los datos y el PIN de ESTE celular (la copia en tu Drive queda). ¿Seguir?")) return;
+    // Nunca se borra del celular algo que no esté a salvo en el Drive
+    if (!Almacen.doc.cuenta) return aviso("Tus datos están solo en este celular: conectá Google Drive (o descargá una copia) antes de desconectar.");
+    try { await Almacen.sincronizar(); } catch { /* se avisa abajo */ }
+    if (Almacen.pendiente || Almacen.estado !== "al día") return aviso("No se pudo subir lo último a tu Drive: no se desconecta para no perder datos. Probá de nuevo con señal.");
+    if (!confirm("Tus datos están a salvo en tu Drive. Se borran de ESTE celular junto con el PIN (para usarla de nuevo: entrar con Google). ¿Seguir?")) return;
     await Almacen.desconectar(); location.reload();
   });
   $("#tabla-os").addEventListener("click", (ev) => {
@@ -1372,6 +1403,21 @@ async function arrancar() {
   $("#nueva-os").addEventListener("click", () => editarObraSocial({}));
   $("#v-os").addEventListener("change", verTablaValores);
   $("#nuevo-valor").addEventListener("click", nuevoValor);
+  // Valores: cada sección se abre o se cierra (se recuerda en este celular)
+  $$("details.plegable").forEach((d) => {
+    try { d.open = localStorage.getItem("plegable-" + d.dataset.plegable) === "1"; } catch { /* sin almacenamiento */ }
+    d.addEventListener("toggle", () => { try { localStorage.setItem("plegable-" + d.dataset.plegable, d.open ? "1" : "0"); } catch { /* idem */ } });
+  });
+  $("#ver-respaldos").addEventListener("click", () => verRespaldos().catch((e) => aviso(e.message)));
+  $("#respaldos").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-respaldo]");
+    if (!b || !confirm(`¿Recuperar desde el respaldo del ${b.dataset.dia}? Vuelve lo que falta o se borró; no cambia lo que tenés hoy.`)) return;
+    try {
+      const n = await Almacen.recuperarRespaldo(b.dataset.respaldo);
+      aviso(n ? `${n} registros recuperados del respaldo del ${b.dataset.dia}.` : "No faltaba nada: tu base está completa.");
+      refrescar();
+    } catch (e) { aviso(e.message); }
+  });
   $("#importar-valores").addEventListener("change", (ev) => { const a = [...ev.target.files]; ev.target.value = ""; if (a.length) importarValores(a); });
   $("#lotes-valores").addEventListener("click", (ev) => { const b = ev.target.closest("[data-borrar-lote]"); if (b) borrarLote(b.dataset.borrarLote); });
   $("#tabla-valores").addEventListener("click", async (ev) => {
@@ -1423,7 +1469,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "30"; // igual que VERSION en sw.js
+const VERSION_APP = "31"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
