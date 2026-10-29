@@ -30,7 +30,7 @@ const ENDOSCOPIAS = { alta: "Alta", baja: "Baja", ambas: "Alta y baja" };
 const SI_NO = { "": "—", si: "Sí", no: "No" };
 const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" };
 const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
-  "diagnostico", "abordaje", "urgencia", "rol", "pct", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
+  "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
@@ -80,8 +80,7 @@ function datos() {
   const valoresPropios = vivos(d.valores);
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
-  const inst = Number(ajuste("pct_institucion_modulo", 35));
-  return { obras, pct_institucion: inst > 0 && inst < 100 ? inst : null, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
+  return { obras, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -209,6 +208,7 @@ function camposPrestacion(p, completo) {
     <label>Abordaje${sel("abordaje", { "": "—", laparoscopica: "Laparoscópica", convencional: "Convencional", robotica: "Robótica", percutanea: "Percutánea", endoscopica: "Endoscópica" }, p.abordaje || "")}</label>
     <label>Rol${sel("rol", { cirujano: "Cirujano", ayudante: "Ayudante" }, p.rol || "cirujano")}</label>
     <label class="economia">% a facturar<input type="number" name="pct" value="${p.pct ?? 100}" min="0" max="100"></label>
+    ${p.tipo === "consulta" ? "" : `<label class="economia">% del módulo para vos<input type="number" name="pct_modulo" value="${p.pct_modulo ?? ""}" min="0" max="100" step="0.1" placeholder="si paga por módulo"></label>`}
     ${campoCodigoOS(p)}
     <label class="check"><input type="checkbox" name="urgencia" ${p.urgencia ? "checked" : ""}> Urgencia</label>` : ""}
     ${completo ? `
@@ -567,7 +567,6 @@ function verValores() {
   $("#uq-valor").value = uq[0]?.valor ?? "";
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
-  $("#pct-institucion").value = ajuste("pct_institucion_modulo", 35);
   $("#apellido").value = ajuste("apellido", "");
   $("#min-bloqueo").value = String(minutosBloqueo());
   $("#uq-hist").textContent = "Historia UQ AAC: " + uq.map((u) => `${u.vigencia.slice(0, 7)} ${pesos(u.valor)}`).join(" · ");
@@ -580,7 +579,7 @@ function verValores() {
   for (const v of d.valores) { conteo[v.obra_social] = (conteo[v.obra_social] || 0) + 1; if (!ultima[v.obra_social] || ultima[v.obra_social] < v.vigencia) ultima[v.obra_social] = v.vigencia; }
   $("#tabla-os").innerHTML = `<table><tr><th>Obra social</th><th class="n">Presenta día</th><th class="n">Paga a (días)</th><th class="n">% módulo</th><th class="n">Valores</th></tr>` +
     d.obras.map((o) => `<tr data-os="${esc(o.nombre)}" style="${o.activa ? "" : "opacity:.5"}"><td>${esc(o.nombre)}${o.notas ? `<div class="ayuda" style="margin:0">${esc(o.notas)}</div>` : ""}</td>
-      <td class="n">${o.dia_presentacion || "—"}</td><td class="n">${o.dias_pago}</td><td class="n">${o.pct_modulo ?? (o.paga_modulo && d.pct_institucion ? `${100 - d.pct_institucion}<br><small>general</small>` : "—")}</td>
+      <td class="n">${o.dia_presentacion || "—"}</td><td class="n">${o.dias_pago}</td><td class="n">${o.pct_modulo ?? "—"}</td>
       <td class="n">${conteo[o.nombre] || 0}${ultima[o.nombre] ? "<br><small>" + ultima[o.nombre].slice(0, 7) + "</small>" : ""}</td></tr>`).join("") + "</table>";
   const elegida = $("#v-os").value;
   const nombres = [...new Set(d.obras.map((o) => o.nombre).concat("MÍNIMO ÉTICO CMPC"))];
@@ -623,8 +622,8 @@ function editarObraSocial(o) {
     <label class="ancho">Cómo aparece escrita (separado por comas)<input name="alias" value="${esc(o.alias)}"></label>
     <label>Día de presentación<input type="number" name="dia_presentacion" value="${o.dia_presentacion ?? 18}" min="0" max="28"></label>
     <label>Paga a (días)<input type="number" name="dias_pago" value="${o.dias_pago ?? 60}" min="0"></label>
-    <label>% del módulo para el cirujano<input type="number" name="pct_modulo" value="${o.pct_modulo ?? ""}" step="0.1" placeholder="vacío = el general"></label>
-    <label class="check ancho"><input type="checkbox" name="paga_modulo" ${o.paga_modulo ? "checked" : ""}> Paga por módulo (el valor de la lista es el total; la institución retiene su %)</label>
+    <label>% del módulo para el cirujano<input type="number" name="pct_modulo" value="${o.pct_modulo ?? ""}" step="0.1" placeholder="o cargalo en cada cirugía"></label>
+    <label class="check ancho"><input type="checkbox" name="paga_modulo" ${o.paga_modulo ? "checked" : ""}> Paga por módulo (al importar listas, los valores quedan como módulo)</label>
     <label>Categoría<input name="categoria" value="${esc(o.categoria)}"></label>
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(o.notas)}</textarea></label>
     <label class="check"><input type="checkbox" name="activa" ${o.activa === false ? "" : "checked"}> Activa</label></div>
@@ -662,7 +661,7 @@ function nuevoValor() {
 const NOMENCLADORES = { aac: "de la AAC", pami: "del nomenclador PAMI", propio: "propios de la obra social o del sanatorio" };
 const sinSeparadores = (c) => String(c).replace(/[.\-\s]/g, "");
 const tipoDeOS = (d, os) => (d.obras.find((o) => o.nombre === os)?.paga_modulo ? "modulo" : "honorario");
-const opcionesTipo = (elegido) => `<option value="honorario">Honorario del médico</option><option value="modulo" ${elegido === "modulo" ? "selected" : ""}>Módulo (total; la institución retiene su %)</option>`;
+const opcionesTipo = (elegido) => `<option value="honorario">Honorario del médico</option><option value="modulo" ${elegido === "modulo" ? "selected" : ""}>Módulo (total institución)</option>`;
 
 // Varios archivos de una vez (p. ej. uno por cirugía): los del sistema del sanatorio se revisan juntos; los demás, de a uno
 async function importarValores(archivos) {
@@ -776,7 +775,7 @@ function importarLargo(lista, osDe) {
           <option value="" ${e.aac ? "" : "selected"}>— ninguna (solo por el código ${esc(cod)}) —</option></select></label>`; }).join("")}
     </div>
     <p class="ayuda">Con la equivalencia AAC el valor se usa en tus cirugías aunque no tengan cargado el código del sanatorio.
-      «Módulo»: el valor es el total y te toca lo que no retiene la institución (Valores → Referencias, o el % de cada obra social).</p>
+      «Módulo»: el valor es el total; tu parte la ponés en cada cirugía («% del módulo para vos»).</p>
     <div class="tabla"><table><tr><th>Código</th><th>Obra social</th><th class="n">Valor</th><th>Tipo</th></tr>
       ${valores.map((g, k) => `<tr><td>${esc(g.codigo)}</td><td>${esc(g.os)}<br><small>${esc(g.os_texto)}</small></td>
         <td class="n">${pesos(g.monto)}${g.min !== g.max ? `<br><small>según plan ${pesos(g.min)} a ${pesos(g.max)}</small>` : ""}</td>
@@ -1055,7 +1054,6 @@ async function arrancar() {
       }
     }
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
-    await Almacen.ajuste("pct_institucion_modulo", $("#pct-institucion").value === "" ? 0 : Number($("#pct-institucion").value));
     const n = await recalcularPendientes();
     aviso(`Guardado; ${n} pendientes recalculadas.`);
     verValores();
@@ -1188,7 +1186,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "22"; // igual que VERSION en sw.js
+const VERSION_APP = "23"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

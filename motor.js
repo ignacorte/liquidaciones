@@ -232,11 +232,11 @@ const Motor = (() => {
     return vp && vp.modulo ? vp : null;
   }
 
-  // Parte del módulo para el cirujano: la de la obra social o, si no tiene, lo que no retiene la institución (ajuste general)
-  function pctModulo(datos, o) {
+  // Parte del módulo para el cirujano: la cargada en la cirugía o, si no, la de la obra social
+  function pctModulo(p, o) {
+    if (p.pct_modulo > 0) return { pct: Number(p.pct_modulo), nota: " (cargado en la cirugía)" };
     if (o && o.pct_modulo) return { pct: o.pct_modulo, nota: "" };
-    const inst = datos.pct_institucion;
-    return inst > 0 && inst < 100 ? { pct: 100 - inst, nota: ` (la institución retiene ${inst} %)` } : null;
+    return null;
   }
 
   function valor(datos, p, os, codigoAAC, codigoOS) {
@@ -260,14 +260,14 @@ const Motor = (() => {
     }
     if (vp && vp.modulo && !(fila && fila.tipo === "modulo")) {
       const o = datos.obras.find((x) => x.nombre === os);
-      const pm = pctModulo(datos, o);
+      const pm = pctModulo(p, o);
       if (pm) return [Math.round(vp.monto * pm.pct / 100 * factor), `Módulo PAMI ${vp.codigo} ${pesos(vp.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo PAMI ${vp.codigo}: ${vp.unidades} u. × ${pesosDec(vp.valorUnidad)} = ${pesos(vp.monto)} (total a la institución)`;
     }
     if (vp && vp.sinValor) modulo = ` · PAMI ${vp.codigo}: ${vp.unidades} u. ${vp.tipo} (falta el valor de esa unidad)`;
     if (fila && fila.tipo === "modulo") {
       const o = datos.obras.find((x) => x.nombre === os);
-      const pm = pctModulo(datos, o);
+      const pm = pctModulo(p, o);
       if (pm) return [Math.round(fila.monto * pm.pct / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo ${os} ${fila.codigo}: ${pesos(fila.monto)} (total a la institución)`;
     }
@@ -276,7 +276,7 @@ const Motor = (() => {
     const hon = honorarioAAC(codigoAAC, uq, p.fecha, p.hora, p.abordaje, p.urgencia);
     if (!hon) {
       // Sin práctica de la AAC equivalente (p. ej. biopsia renal: la AAC no tiene urología de ese tipo)
-      if (modulo) return [null, `Sin honorario conocido${modulo}. Cargá el «% del módulo para el cirujano» (Valores → Obras sociales) o el valor a mano.`];
+      if (modulo) return [null, `Sin honorario conocido${modulo}. Cargá el «% del módulo para vos» en la cirugía o el valor a mano.`];
       return [null, "Sin código: elegí el código del procedimiento"];
     }
     const aj = hon.ajustes.map(([n, x]) => ` +${x} % ${n}`).join("");
