@@ -53,7 +53,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -186,14 +186,55 @@ function verInicio() {
     kpi("Falta cobrar", pesos(t.pendiente)) + kpi("Vencido", pesos(t.vencido), t.vencido ? "rojo" : "") +
     kpi(esAnestesia() ? "Consultas preanestésicas" : "Consultas", t.consultas) + kpi(esAnestesia() ? "Anestesiologías" : "Cirugías", t.cirugias) + kpi("Prestaciones", t.n) +
     kpi(`Pérdida por demora (${inflacion} %/mes)`, pesos(t.perdida_inflacion), t.perdida_inflacion ? "rojo" : "");
+  const debitado = datos().prestaciones.filter((p) => p.fecha.slice(0, 7) === mes() && p.estado === "debitada")
+    .reduce((s, p) => s + Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)), 0);
+  if (debitado) $("#kpis").innerHTML += kpi("Debitado", pesos(debitado), "rojo");
+  verParaHacer();
+  verEvolucion();
+  // Días reales de cobro por obra social (de lo ya cobrado, todos los meses)
+  const plazos = Object.fromEntries(Motor.plazosReales(datos()).map((x) => [x.obra_social, x.dias]));
   const max = Math.max(1, ...r.por_obra_social.map((o) => o.estimado));
-  $("#por-os").innerHTML = r.por_obra_social.length ? `<table><tr><th>Obra social</th><th class="n">#</th><th class="n">Estimado</th><th class="n">Cobrado</th><th class="n">Falta</th></tr>` +
+  $("#por-os").innerHTML = r.por_obra_social.length ? `<table><tr><th>Obra social</th><th class="n">#</th><th class="n">Estimado</th><th class="n">Cobrado</th><th class="n">Falta</th><th class="n">Días cobro</th></tr>` +
     r.por_obra_social.map((o) => `<tr data-os="${esc(o.obra_social)}"><td>${esc(o.obra_social)}<div class="barra"><i style="width:${(100 * o.estimado) / max}%"></i></div></td>
-      <td class="n">${o.n}</td><td class="n">${pesos(o.estimado)}</td><td class="n">${pesos(o.cobrado)}</td><td class="n">${pesos(o.pendiente)}</td></tr>`).join("") + "</table>"
+      <td class="n">${o.n}</td><td class="n">${pesos(o.estimado)}</td><td class="n">${pesos(o.cobrado)}</td><td class="n">${pesos(o.pendiente)}</td><td class="n">${plazos[o.obra_social] ?? "—"}</td></tr>`).join("") + "</table>"
     : `<p class="ayuda">Sin prestaciones en ${nombreMes(mes())}. Cargá el listado del día o un parte desde «Cargar».</p>`;
   $("#por-paciente").innerHTML = r.por_paciente.length ? `<table><tr><th>Paciente</th><th class="n">#</th><th class="n">Estimado</th><th class="n">Cobrado</th></tr>` +
     r.por_paciente.map((p) => `<tr><td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${esc(p.obra_social)}</div></td>
       <td class="n">${p.n}</td><td class="n">${pesos(p.estimado)}</td><td class="n">${pesos(p.cobrado)}</td></tr>`).join("") + "</table>" : "";
+}
+
+// Alertas: lo que conviene resolver (de todos los meses). Tocar una lleva a la lista ya filtrada.
+function verParaHacer() {
+  const lista = datos().prestaciones, h = hoy();
+  const viejas = (p) => p.estado === "pendiente" && (Date.parse(h) - Date.parse(p.fecha)) / 864e5 > 30;
+  const items = [
+    ["vencida", "", `Cobros vencidos (más tiempo del que suele pagar la obra social)`, lista.filter((p) => Motor.vencida(p, h))],
+    ...(esAnestesia() ? [["falta_doc", "", "Falta documentación (no se pueden cargar)", lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length)],
+      ["para_cargar", "", "Listas para cargar en la asociación", lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length)]]
+      : [["pendiente", "", "Sin presentar hace más de 30 días", lista.filter(viejas)]]),
+    ["", "-", "Obra social sin reconocer", lista.filter((p) => !p.obra_social && p.tipo !== "consulta")],
+    ["debitada", "", "Debitadas sin motivo anotado", lista.filter((p) => p.estado === "debitada" && !p.motivo_debito)],
+  ].filter((x) => x[3].length);
+  $("#para-hacer-card").hidden = !items.length || modoRegistro();
+  $("#para-hacer").innerHTML = `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
+    <td class="n economia">${pesos(l.reduce((s, p) => s + (p.valor_estimado || 0), 0))}</td></tr>`).join("")}</table>`;
+  $$("#para-hacer tr[data-hacer]").forEach((tr) => tr.addEventListener("click", () => {
+    const [est, os] = items[+tr.dataset.hacer];
+    $("#f-estado").value = est; $("#f-os").value = os; $("#f-tipo").value = ""; $("#f-q").value = ""; $("#f-todos-meses").checked = true;
+    ir("prestaciones");
+  }));
+}
+
+// Evolución: estimado, cobrado, falta y debitado de los últimos 6 meses (hasta el mes elegido)
+function verEvolucion() {
+  const [y, m] = mes().split("-").map(Number), d = datos();
+  const meses = Array.from({ length: 6 }, (_, i) => { const f = new Date(y, m - 1 - (5 - i), 1); return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, "0")}`; });
+  $("#evolucion").innerHTML = `<table><tr><th>Mes</th><th class="n">Estimado</th><th class="n">Cobrado</th><th class="n">Falta</th><th class="n">Debitado</th></tr>` +
+    meses.map((k) => {
+      const t = Motor.resumen(d, k, hoy(), 0).totales;
+      const deb = d.prestaciones.filter((p) => p.fecha.slice(0, 7) === k && p.estado === "debitada").reduce((s, p) => s + Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)), 0);
+      return `<tr><td>${nombreMes(k)}</td><td class="n">${pesos(t.estimado)}</td><td class="n">${pesos(t.cobrado)}</td><td class="n">${pesos(t.pendiente)}</td><td class="n">${deb ? pesos(deb) : "—"}</td></tr>`;
+    }).join("") + "</table>";
 }
 
 // Anestesiología: en qué paso está cada anestesia (documentación → carga en la asociación → liquidación), de todos los meses
@@ -358,6 +399,7 @@ function camposPrestacion(p, completo) {
     <label class="economia">${esAnestesia() ? "Cargada el" : "Presentada el"}${campoFecha("fecha_presentacion", p.estado === "pendiente" ? "" : p.fecha_presentacion)}</label>
     <label class="economia">${esAnestesia() ? "Liquidada el" : "Cobrada el"}${campoFecha("fecha_cobro", p.fecha_cobro)}</label>
     <label class="economia">${esAnestesia() ? "Monto liquidado, neto ($)" : "Monto cobrado ($)"}<input type="number" name="monto_cobrado" value="${p.monto_cobrado ?? ""}"></label>
+    ${p.estado === "debitada" || p.motivo_debito ? `<label class="economia ancho">Motivo del débito<input name="motivo_debito" value="${esc(p.motivo_debito)}" placeholder="p. ej. falta autorización, código mal facturado"></label>` : ""}
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(p.notas)}</textarea></label>` : ""}
   </div>
   ${faltantes(p).length ? `<div class="alerta" style="margin:4px 0">Falta: ${faltantes(p).join(", ")}</div>` : ""}
@@ -492,7 +534,7 @@ function enlazarEstimacion(el, obtener, guardar) {
       aviso(`${x.nombre}: ${archivos.length === 1 ? "agregada" : archivos.length + " fotos agregadas"}. Se guarda en tu Drive al tocar Guardar.`);
       return;
     }
-    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "nro_circuito", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
+    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "nro_circuito", "motivo_debito", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
     if (ev.target.name === "codigo_os") { const p = obtener(); if (p) { p.codigo_os_manual = true; guardar(p); } }
     if (["endoscopia", "polipectomia"].includes(ev.target.name) && esTextoAutomatico(obtener()?.procedimiento)) {
       const p = obtener(); p.procedimiento = textoEndoscopia(p); guardar(p); return recalcular("procedimiento");
@@ -1501,7 +1543,7 @@ async function construirExcel(rama = esAnestesia() ? "anestesia" : "cirugia") {
     "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "", "Observaciones (endoscopía)": p.observaciones || "",
     "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Cobro estimado": fechaX(p.fecha_cobro_estimada), "Cobrada el": fechaX(p.fecha_cobro), "Monto cobrado": p.monto_cobrado ?? null,
-    "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
+    "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null, "Motivo del débito": p.motivo_debito || "",
     "N° atención": p.atencion || "", "Origen del valor": p.valor_origen || "", "Notas": p.notas || "" }));
   const consultas = lista.filter((p) => p.tipo === "consulta").map((p) => ({
     "Fecha": fechaX(p.fecha), "Hora": p.hora || "", "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "",
@@ -1788,7 +1830,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "43"; // igual que VERSION en sw.js
+const VERSION_APP = "44"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
