@@ -742,7 +742,7 @@ const Lector = (() => {
   function esAutorizacion(texto) {
     const t = plano(texto);
     return /autorizaci|autorizad[oa]|bono de (consulta|prestacion|practica)|orden de (internacion|practica|prestacion|cirugia)/.test(t) &&
-      /(n|nro|numero|cod|codigo)\.?\s*(de\s+)?autoriz|afiliado|prestacion|practica|vencimiento|validez|token|obra social|prestador/.test(t) &&
+      /(n|nro|numero|cod|codigo)\.?\s*(de\s+)?autoriz|afiliado|prestacion|practica|vencimiento|validez|token|obra s[o0]cial|prestador|solicito|\brp\b|diagnostico/.test(t) &&
       !/foja\s+quirurgica|protocolo\s+(quirurgico|operatorio)/.test(t) && !esFojaAnestesia(texto);
   }
 
