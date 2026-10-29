@@ -51,7 +51,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -361,6 +361,7 @@ function camposAnestesia(p) {
       <button type="button" class="boton chico secundario" data-agregar-extra>+ Agregar otra intervención (mismo acto)</button></div>
     <label>Edad del paciente${sel("edad_grupo", EDADES, p.edad_grupo || "")}</label>
     <label>Institución / lugar<input name="institucion" value="${esc(p.institucion)}"></label>
+    <label>N° de circuito<input name="nro_circuito" value="${esc(p.nro_circuito)}" inputmode="numeric" placeholder="el de la asociación"></label>
     ${marca("feriado", "Feriado (+50 %)" + (Motor.feriadoNacional(p.fecha) ? " · es feriado nacional" : ""))}
     ${marca("obesidad", "Obesidad mórbida (+2 complejidades)")}
     ${marca("suspendida", "Operación suspendida (complejidad 1)")}
@@ -371,10 +372,10 @@ function camposAnestesia(p) {
 
 // Un documento de la anestesia: casilla, archivos por guardar, enlaces al Drive y botón para adjuntar fotos o PDF
 function documento(p, clase, x, marca) {
-  const nuevos = p._docs?.[clase] || [], enDrive = p[x.lista] || [];
+  const nuevos = documentosDe(p)[clase] || [], enDrive = p[x.lista] || [];
   return `${marca(x.campo, x.nombre)}
     <div class="ancho" data-doc="${clase}">
-      ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._detectados || []).includes(clase) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length} ${nuevos.length === 1 ? "archivo" : "archivos"}): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")}.</p>` : ""}
+      ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._fotos || []).some((f) => f.clase === clase && f.reconocida) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length} ${nuevos.length === 1 ? "archivo" : "archivos"}): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")}.</p>` : ""}
       ${enDrive.length ? `<p class="ayuda" style="margin:0">En tu Drive: ${enDrive.map((a, i) => `<a href="${esc(a.link)}" target="_blank" rel="noopener">ver${enDrive.length > 1 ? " " + (i + 1) : ""}</a>`).join(" · ")}</p>` : ""}
       <label class="boton chico secundario" style="margin:2px 0 6px">📎 ${nuevos.length || enDrive.length ? "Agregar otra foto" : "Adjuntar (foto o PDF)"}<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-doc="${clase}"></label>
     </div>`;
@@ -462,7 +463,7 @@ function enlazarEstimacion(el, obtener, guardar) {
       aviso(`${x.nombre}: ${archivos.length === 1 ? "agregada" : archivos.length + " fotos agregadas"}. Se guarda en tu Drive al tocar Guardar.`);
       return;
     }
-    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
+    if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "nro_circuito", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
     if (ev.target.name === "codigo_os") { const p = obtener(); if (p) { p.codigo_os_manual = true; guardar(p); } }
     if (["endoscopia", "polipectomia"].includes(ev.target.name) && esTextoAutomatico(obtener()?.procedimiento)) {
       const p = obtener(); p.procedimiento = textoEndoscopia(p); guardar(p); return recalcular("procedimiento");
@@ -575,16 +576,18 @@ async function leer(tipo, archivos, textoPegado) {
     }
     // Anestesiología: cada foto se reconoce por separado (foja quirúrgica, foja de anestesia o autorización); lo reconocido
     // cuenta como presentado y el archivo se guarda en el Drive. Con un solo paciente leído (lo normal: las fotos de un acto).
+    // Lo que no se reconoce queda para elegir en la revisión («¿Qué es esta foto?»): nada se guarda sin que se sepa qué es.
     if (tipo === "parte" && esAnestesia() && archivos?.length && filas.length === 1) {
       const f = filas[0];
-      if ((f.paciente || "").trim() && f.fecha) archivos.forEach((a, i) => {
-        const clase = Lector.tipoDocumento(partes[i] ?? (archivos.length === 1 ? texto : ""), f);
-        if (!clase) return;
-        f[DOCS[clase].campo] = true;
-        f._docs = { ...(f._docs || {}), [clase]: [...(f._docs?.[clase] || []), a] };
-        f._detectados = [...new Set([...(f._detectados || []), clase])];
+      f._fotos = archivos.map((a, i) => {
+        const clase = Lector.tipoDocumento(partes[i] ?? (archivos.length === 1 ? texto : ""), f) || "";
+        if (clase) f[DOCS[clase].campo] = true;
+        return { archivo: a, clase, reconocida: !!clase };
       });
-      if (f._detectados) aviso("Reconocí: " + f._detectados.map((c) => DOCS[c].corto).join(", ") + ". Se guarda en tu Drive.");
+      const rec = [...new Set(f._fotos.map((x) => x.clase).filter(Boolean))];
+      const sinSaber = f._fotos.filter((x) => !x.clase).length;
+      aviso((rec.length ? "Reconocí: " + rec.map((c) => DOCS[c].corto).join(", ") + ". " : "") +
+        (sinSaber ? `Elegí qué es ${sinSaber === 1 ? "la foto" : sinSaber + " fotos"} sin reconocer (abajo, «Fotos cargadas»).` : "Se guarda en tu Drive."));
     }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
@@ -610,14 +613,19 @@ function mostrarRevision(filas, titulo) {
     const pintar = () => {
       const x = filasRevision[i];
       div.className = "revision" + (x.incluir ? "" : " apagada");
-      div.innerHTML = `<label class="check"><input type="checkbox" data-incluir ${x.incluir ? "checked" : ""}>
+      div.innerHTML = (x._fotos ? fotosCargadas(x) : "") + `<label class="check"><input type="checkbox" data-incluir ${x.incluir ? "checked" : ""}>
         <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${x.estudio ? ' <span class="chip vencida">informe de estudio</span>' : ""}${fechaDudosa(x) ? ' <span class="chip vencida">revisá la fecha</span>' : ""}</label>` +
         camposPrestacion(x, false);
     };
     pintar();
     div.addEventListener("change", (ev) => {
       if (ev.target.matches("[data-incluir]")) { filasRevision[i].incluir = ev.target.checked; div.classList.toggle("apagada", !ev.target.checked); }
-      else {
+      else if (ev.target.matches("[data-foto-clase]")) {
+        const x = leerCampos(div, filasRevision[i]), clase = ev.target.value;
+        x._fotos = x._fotos.map((y, k) => (k === +ev.target.dataset.fotoClase ? { ...y, clase, reconocida: false } : y));
+        if (clase) x[DOCS[clase].campo] = true;
+        filasRevision[i] = x; pintar();
+      } else {
         filasRevision[i] = leerCampos(div, filasRevision[i]);
         if (ev.target.name === "fecha") filasRevision[i].fecha_leida = true;
       }
@@ -627,6 +635,22 @@ function mostrarRevision(filas, titulo) {
   });
 }
 
+// Anestesiología: cada foto leída con lo que es (reconocido o elegido); se guarda en su carpeta del Drive al tocar Guardar
+function fotosCargadas(x) {
+  const opciones = { "": "— ¿Qué es? (no se guarda) —", ...Object.fromEntries(Object.entries(DOCS).map(([k, d]) => [k, d.nombre])) };
+  return `<div class="ancho" style="margin-bottom:8px"><div class="ayuda" style="margin:0 0 4px"><b>Fotos cargadas</b> · cada una va a tu Drive según lo que sea</div>
+    ${x._fotos.map((f, k) => `<div class="fila" style="margin:0 0 4px;flex-wrap:nowrap;align-items:center">
+      ${f.archivo.type?.startsWith("image/") ? `<img src="${URL.createObjectURL(f.archivo)}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:6px">` : "<span>📄</span>"}
+      <select data-foto-clase="${k}" ${f.clase ? "" : 'style="border-color:var(--rojo, #c00)"'}>${Object.entries(opciones).map(([v, t]) => `<option value="${v}" ${v === f.clase ? "selected" : ""}>${t}</option>`).join("")}</select>
+      ${f.reconocida ? '<span class="ayuda" style="margin:0">reconocida</span>' : ""}</div>`).join("")}</div>`;
+}
+// Archivos por guardar de una prestación: los adjuntados con el botón de cada documento y las fotos leídas con su clase
+const documentosDe = (f) => {
+  const docs = Object.fromEntries(Object.entries(f._docs || {}).map(([k, v]) => [k, [...v]]));
+  for (const x of f._fotos || []) if (x.clase) (docs[x.clase] ||= []).push(x.archivo);
+  return docs;
+};
+
 // Fecha no leída (se puso la de hoy) o de hace más de un año: casi siempre es otra fecha del documento
 const fechaDudosa = (x) => !x.fecha_leida || Math.abs(Date.now() - Date.parse(x.fecha)) > 366 * 864e5;
 
@@ -635,13 +659,32 @@ function cerrarRevision() { ultimaLectura = null; $("#agregar-foto").hidden = tr
 // Documentos de la anestesia → Drive («Liquidaciones/Anestesiología/Fojas» y «…/Autorizaciones»), ligados a la prestación.
 // Quedan cifrados en el celular y se suben en la sincronización (también si al guardar no había señal o el acceso de Google
 // estaba vencido). Devuelve cuántos archivos quedaron por subir.
+// «GOMEZ, ANA MARIA – Circuito 1234 – Foja quirúrgica – 2026-10-21 (2).jpg» (sin número de circuito, sin esa parte)
+function nombreDocumento(p, x, n, ext) {
+  const limpio = (t) => String(t || "").replace(/[\\/:*?"<>|]/g, " ").trim();
+  return [limpio(p.paciente) || "paciente", p.nro_circuito && "Circuito " + limpio(p.nro_circuito), x.archivo, p.fecha].filter(Boolean).join(" – ") +
+    (n ? ` (${n})` : "") + ext;
+}
+// Si cambian el paciente, la fecha o el n° de circuito, los documentos ya subidos se renombran en el Drive
+async function renombrarDocumentos(p) {
+  let n = 0;
+  for (const x of Object.values(DOCS)) {
+    const lista = p[x.lista] || [];
+    for (const [i, a] of lista.entries()) {
+      const ext = (a.nombre.match(/(?: \(\d+\))?(\.[a-z0-9]+)$/i) || [, ""])[1];
+      const nuevo = nombreDocumento(p, x, lista.length > 1 ? i + 1 : 0, ext);
+      if (a.id && nuevo !== a.nombre) { await Almacen.encolarRenombre(p.id, x.lista, a.id, nuevo); n++; }
+    }
+  }
+  if (n && Almacen.tieneToken()) Almacen.sincronizar().then(refrescar).catch(() => {});
+}
 async function guardarDocumentos(p, docs) {
   let n = 0;
   for (const [clase, archivos] of Object.entries(docs || {})) {
     const x = DOCS[clase];
     for (const [i, a] of [...archivos].entries()) {
       const ext = (a.name.match(/\.[a-z0-9]+$/i) || [a.type === "application/pdf" ? ".pdf" : ".jpg"])[0];
-      const nombre = `${x.archivo} ${(p.paciente || "paciente").replace(/[\\/:*?"<>|]/g, " ")} ${p.fecha || ""}${archivos.length > 1 ? ` (${i + 1})` : ""}${ext}`;
+      const nombre = nombreDocumento(p, x, archivos.length > 1 ? i + 1 : 0, ext);
       await Almacen.encolarAdjunto(p.id, nombre, a, x.ruta, { campo: x.campo, lista: x.lista });
       n++;
     }
@@ -665,7 +708,7 @@ async function guardarLote() {
         (p.procedimiento || "") === (f.procedimiento || ""));
       if (ya) { repetidas.push(f.paciente); continue; }
       const guardada = await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
-      fojas += await guardarDocumentos(guardada, f._docs);
+      fojas += await guardarDocumentos(guardada, documentosDe(f));
       n++;
     }
     const mesGuardado = elegidas[0].fecha.slice(0, 7);
@@ -699,6 +742,7 @@ function editar(p) {
       if (f.length) return aviso("Falta completar: " + f.join(", "));
       try {
         const guardada = await guardarPrestacion(datosForm);
+        if (p.id) await renombrarDocumentos(guardada);
         const n = await guardarDocumentos(guardada, datosForm._docs);
         dlg.close(); aviso(n ? "Guardado · los documentos van a tu Drive › Liquidaciones › Anestesiología" : "Guardado"); refrescar();
       }
@@ -1259,7 +1303,7 @@ async function construirExcel(rama = esAnestesia() ? "anestesia" : "cirugia") {
     "Obra social": p.obra_social || p.obra_social_texto || "", "Lugar": p.institucion || "", "Tipo": etiquetas(p).tipos[p.tipo], "Procedimiento": procedimientosDe(p),
     "Complejidad": Motor.complejidadEfectiva(p) ?? "", "Recargos": Motor.recargosAnestesia(p).map(([n, x]) => `${n} +${x} %`).join(", "),
     "Monto cargado (bruto)": p.valor_bruto ?? null, "Neto estimado": p.valor_estimado ?? null, "Situación": est(p),
-    "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Foja quirúrgica (Drive)": (p.foja_archivos || []).map((a) => a.link).join(" "),
+    "N° de circuito": p.nro_circuito || "", "Doc faltante": docFaltante(p).join(" / ").toUpperCase(), "Foja quirúrgica (Drive)": (p.foja_archivos || []).map((a) => a.link).join(" "),
     "Foja de anestesia (Drive)": (p.foja_anestesia_archivos || []).map((a) => a.link).join(" "), "Autorización (Drive)": (p.autorizacion_archivos || []).map((a) => a.link).join(" "), "Cargada el": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
     "Liquidada el": fechaX(p.fecha_cobro), "Cobrado (neto)": p.monto_cobrado ?? null,
     "Diferencia": p.monto_cobrado != null && p.valor_estimado != null ? p.monto_cobrado - p.valor_estimado : null,
@@ -1343,7 +1387,8 @@ function exportarCSV() {
 function mostrarSync(e) {
   const cuenta = Almacen.doc.cuenta;
   $("#sync").textContent = cuenta ? "Drive: " + (Almacen.pendiente && e === "al día" ? "cambios sin subir" : e) : "Solo en este dispositivo";
-  Almacen.adjuntosPendientes().then((n) => { if (n) $("#sync").textContent += ` · ${n} ${n === 1 ? "documento" : "documentos"} por subir`; }).catch(() => {});
+  Almacen.adjuntosPendientes().then((n) => { if (n) $("#sync").textContent += ` · ${n} ${n === 1 ? "documento" : "documentos"} por subir` +
+    (Almacen.errorAdjuntos ? ` (${Almacen.errorAdjuntos})` : ""); }).catch(() => {});
   // Cambios que no llegaron a Drive (venció el acceso de Google): botón para subirlos
   $("#subir-ahora").hidden = !(cuenta && Almacen.pendiente && !Almacen.tieneToken() && !Almacen.bloqueada());
   if (estado.vista === "valores") verValores();
@@ -1559,7 +1604,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "38"; // igual que VERSION en sw.js
+const VERSION_APP = "39"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

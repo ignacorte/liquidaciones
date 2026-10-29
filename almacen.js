@@ -379,7 +379,9 @@ const Almacen = (() => {
         } else {
           await subirNuevo(ARCHIVO, JSON.stringify(doc), "application/json");
         }
-        await subirAdjuntos().catch(() => {}); // fojas pendientes (si falla, quedan en el celular para la próxima)
+        // Documentos pendientes: si falla, quedan en el celular para la próxima y se muestra el motivo
+        errorAdjuntos = "";
+        await subirAdjuntos().catch((e) => { errorAdjuntos = e.message || "error al subir"; });
         // Planillas (cirugía en «Liquidaciones», anestesiología en «Liquidaciones/Anestesiología»); si fallan, queda el JSON (lo importante)
         if (planilla) for (const x of await planilla()) await subirPlanilla(x.bytes, x.nombre, x.ruta).catch(() => {});
         doc.ultima_sync = Date.now();
@@ -430,7 +432,7 @@ const Almacen = (() => {
 
   // Fojas por subir: quedan CIFRADAS en el celular y se suben al Drive en la próxima sincronización (aunque el acceso de
   // Google esté vencido al guardar o no haya señal). Al subirse, el enlace queda en la prestación.
-  let adjuntos = null;
+  let adjuntos = null, errorAdjuntos = "";
   async function leerAdjuntos() {
     if (!adjuntos) { const s = await idbLeer("adjuntos"); adjuntos = s ? await descifrar(s) : []; }
     return adjuntos;
@@ -445,10 +447,33 @@ const Almacen = (() => {
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
   }
+  async function encolarRenombre(prestacionId, lista, id, nombre) {
+    await leerAdjuntos();
+    adjuntos = adjuntos.filter((a) => a.renombrar !== id); // vale el último nombre
+    adjuntos.push({ prestacionId, lista, renombrar: id, nombre });
+    await guardarAdjuntos();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
+    programarSync();
+  }
   async function subirAdjuntos() {
     await leerAdjuntos();
     while (adjuntos.length) {
       const a = adjuntos[0];
+      if (a.renombrar) {
+        // Renombrar un documento ya subido (cambió el paciente o el n° de circuito)
+        // (si el archivo ya no está en el Drive, se descarta: no traba la cola)
+        const r = await drive(`${API}/${a.renombrar}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: a.nombre }) })
+          .catch((e) => { if (/ 404$/.test(e.message)) return null; throw e; });
+        if (!r) { adjuntos.shift(); await guardarAdjuntos(); continue; }
+        const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
+        if (i >= 0) {
+          const p = doc.prestaciones[i];
+          doc.prestaciones[i] = { ...p, actualizado: Date.now(), [a.lista]: (p[a.lista] || []).map((x) => (x.id === a.renombrar ? { ...x, nombre: a.nombre } : x)) };
+          cambios++;
+        }
+        adjuntos.shift(); await guardarAdjuntos(); await escribirLocal();
+        continue;
+      }
       const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
       const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), await carpetaRuta(a.ruta));
       const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
@@ -501,7 +526,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, encolarAdjunto, enlaceCarpeta,
+    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, enlaceCarpeta, get errorAdjuntos() { return errorAdjuntos; },
     adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
