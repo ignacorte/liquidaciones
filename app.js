@@ -94,7 +94,8 @@ function datos() {
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
   const esp = ajuste("especialidad", "cirugia");
-  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
+  const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
+  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -149,7 +150,7 @@ function verInicio() {
   const kpi = (titulo, valor, clase = "") => `<div class="kpi ${clase}"><small>${titulo}</small><b>${valor}</b></div>`;
   $("#kpis").innerHTML = kpi("Facturado estimado", pesos(t.estimado)) + kpi("Cobrado", pesos(t.cobrado), "verde") +
     kpi("Falta cobrar", pesos(t.pendiente)) + kpi("Vencido", pesos(t.vencido), t.vencido ? "rojo" : "") +
-    kpi("Consultas", t.consultas) + kpi("Cirugías", t.cirugias) + kpi("Prestaciones", t.n) +
+    kpi(esAnestesia() ? "Consultas preanestésicas" : "Consultas", t.consultas) + kpi(esAnestesia() ? "Anestesiologías" : "Cirugías", t.cirugias) + kpi("Prestaciones", t.n) +
     kpi(`Pérdida por demora (${inflacion} %/mes)`, pesos(t.perdida_inflacion), t.perdida_inflacion ? "rojo" : "");
   const max = Math.max(1, ...r.por_obra_social.map((o) => o.estimado));
   $("#por-os").innerHTML = r.por_obra_social.length ? `<table><tr><th>Obra social</th><th class="n">#</th><th class="n">Estimado</th><th class="n">Cobrado</th><th class="n">Falta</th></tr>` +
@@ -516,13 +517,13 @@ async function leer(tipo, archivos, textoPegado) {
       filas.forEach((f) => Object.assign(f, { incluir: false, estudio: true }));
       aviso("Parece el informe de un estudio (TAC, ecografía…), no un procedimiento: quedó destildado.");
     }
-    if (tipo === "parte" && !ajuste("apellido", "")) aviso("Cargá tu apellido en Valores → Mi cuenta para saber si fuiste cirujano o ayudante.");
+    if (tipo === "parte" && !esAnestesia() && !ajuste("apellido", "")) aviso("Cargá tu apellido en Valores → Mi cuenta para saber si fuiste cirujano o ayudante.");
     // Varios códigos en el parte («180116 310009»): el principal es el quirúrgico (módulo, después práctica quirúrgica);
     // los demás (p. ej. la ecografía) van como otros procedimientos del mismo acto, con su nombre del nomenclador
     if (tipo === "parte") for (const f of filas) {
       const cods = [...new Set(f.codigos_os || [])];
       delete f.codigos_os;
-      if (cods.length < 2) continue;
+      if (cods.length < 2 || esAnestesia()) continue;
       const info = (c) => Motor.catalogos.PAMI_NOM?.codes.find((x) => x.code === c);
       const peso = (c) => (/MODULADA/.test(info(c)?.tipo || "") ? 3 : /QUIRURGICA/.test(info(c)?.tipo || "") ? 2 : info(c) ? 1 : 0);
       const [principal, ...resto] = [...cods].sort((a, b) => peso(b) - peso(a));
@@ -738,9 +739,9 @@ function verValores() {
   $("#conectar").textContent = doc.cuenta ? "Reconectar Google Drive" : "Conectar Google Drive";
   const conteo = {}, ultima = {};
   for (const v of d.valores) { conteo[v.obra_social] = (conteo[v.obra_social] || 0) + 1; if (!ultima[v.obra_social] || ultima[v.obra_social] < v.vigencia) ultima[v.obra_social] = v.vigencia; }
-  $("#tabla-os").innerHTML = `<table><tr><th>Obra social</th><th class="n">Presenta día</th><th class="n">Paga a (días)</th><th class="n">% módulo</th><th class="n">Valores</th></tr>` +
+  $("#tabla-os").innerHTML = `<table><tr><th>Obra social</th><th class="n">Presenta día</th><th class="n">Paga a (días)</th>${esAnestesia() ? "" : '<th class="n">% módulo</th>'}<th class="n">${esAnestesia() ? "Aranceles" : "Valores"}</th></tr>` +
     d.obras.map((o) => `<tr data-os="${esc(o.nombre)}" style="${o.activa ? "" : "opacity:.5"}"><td>${esc(o.nombre)}${o.notas ? `<div class="ayuda" style="margin:0">${esc(o.notas)}</div>` : ""}</td>
-      <td class="n">${o.dia_presentacion || "—"}</td><td class="n">${o.dias_pago}</td><td class="n">${o.pct_modulo ?? "—"}</td>
+      <td class="n">${o.dia_presentacion || "—"}</td><td class="n">${o.dias_pago}</td>${esAnestesia() ? "" : `<td class="n">${o.pct_modulo ?? "—"}</td>`}
       <td class="n">${conteo[o.nombre] || 0}${ultima[o.nombre] ? "<br><small>" + ultima[o.nombre].slice(0, 7) + "</small>" : ""}</td></tr>`).join("") + "</table>";
   const elegida = $("#v-os").value;
   const nombres = [...new Set(d.obras.map((o) => o.nombre).concat("MÍNIMO ÉTICO CMPC"))];
@@ -820,8 +821,8 @@ function editarObraSocial(o) {
     <label class="ancho">Cómo aparece escrita (separado por comas)<input name="alias" value="${esc(o.alias)}"></label>
     <label>Día de presentación<input type="number" name="dia_presentacion" value="${o.dia_presentacion ?? 18}" min="0" max="28"></label>
     <label>Paga a (días)<input type="number" name="dias_pago" value="${o.dias_pago ?? 60}" min="0"></label>
-    <label>% del módulo para el cirujano<input type="number" name="pct_modulo" value="${o.pct_modulo ?? ""}" step="0.1" placeholder="o cargalo en cada cirugía"></label>
-    <label class="check ancho"><input type="checkbox" name="paga_modulo" ${o.paga_modulo ? "checked" : ""}> Paga por módulo (al importar listas, los valores quedan como módulo)</label>
+    ${esAnestesia() ? "" : `<label>% del módulo para el cirujano<input type="number" name="pct_modulo" value="${o.pct_modulo ?? ""}" step="0.1" placeholder="o cargalo en cada cirugía"></label>
+    <label class="check ancho"><input type="checkbox" name="paga_modulo" ${o.paga_modulo ? "checked" : ""}> Paga por módulo (al importar listas, los valores quedan como módulo)</label>`}
     <label>Categoría<input name="categoria" value="${esc(o.categoria)}"></label>
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(o.notas)}</textarea></label>
     <label class="check"><input type="checkbox" name="activa" ${o.activa === false ? "" : "checked"}> Activa</label></div>
@@ -1464,7 +1465,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "32"; // igual que VERSION en sw.js
+const VERSION_APP = "33"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

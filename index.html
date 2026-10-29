@@ -178,12 +178,12 @@
     <details class="card economia plegable" data-plegable="referencias">
       <summary><h2>Referencias</h2></summary>
       <div class="grid">
-        <label>Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
-        <label>Vigencia UQ<input id="uq-vigencia" type="month"></label>
+        <label class="solo-cirugia">Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
+        <label class="solo-cirugia">Vigencia UQ<input id="uq-vigencia" type="month"></label>
         <label>Inflación mensual (%)<input id="inflacion" type="number" step="0.1"></label>
         <label class="solo-anestesia">Retención de la asociación (%)<input id="pct-asociacion" type="number" step="0.1" min="0" max="99"></label>
       </div>
-      <p class="ayuda" id="uq-hist"></p>
+      <p class="ayuda solo-cirugia" id="uq-hist"></p>
       <div class="fila">
         <button class="boton chico" id="guardar-ref">Guardar</button>
         <button class="boton chico secundario" id="recalcular">Recalcular pendientes</button>
@@ -208,7 +208,7 @@
       <div class="fila"><button class="boton chico" id="ane-guardar">Guardar aranceles</button></div>
       <div class="tabla" id="ane-tabla"></div>
     </details>
-    <details class="card economia plegable" data-plegable="valores">
+    <details class="card economia solo-cirugia plegable" data-plegable="valores">
       <summary><h2>Valores por código</h2></summary>
       <label>Obra social<select id="v-os"></select></label>
       <div class="tabla" id="tabla-valores"></div>
