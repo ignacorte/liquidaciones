@@ -378,6 +378,7 @@ function documento(p, clase, x, marca) {
       ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._fotos || []).some((f) => f.clase === clase && f.reconocida) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length} ${nuevos.length === 1 ? "archivo" : "archivos"}): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")}.</p>` : ""}
       ${enDrive.length ? `<p class="ayuda" style="margin:0">En tu Drive: ${enDrive.map((a, i) => `<a href="${esc(a.link)}" target="_blank" rel="noopener">ver${enDrive.length > 1 ? " " + (i + 1) : ""}</a>`).join(" · ")}</p>` : ""}
       <label class="boton chico secundario" style="margin:2px 0 6px">📎 ${nuevos.length || enDrive.length ? "Agregar otra foto" : "Adjuntar (foto o PDF)"}<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-doc="${clase}"></label>
+      <button type="button" class="boton chico secundario" style="margin:2px 0 6px" data-camara="[data-adjuntar-doc=${clase}]">📷 Varias seguidas</button>
     </div>`;
 }
 
@@ -719,6 +720,66 @@ async function guardarLote() {
     ir("prestaciones");
   } catch (e) { aviso(e.message); }
 }
+
+// ---------- Cámara: varias fotos seguidas ----------
+// La cámara del celular (por el selector de archivos) saca una sola foto por vez. Esta saca las que hagan falta y al tocar
+// «Listo» las entrega al mismo botón que se usaba (como si se hubieran elegido juntas). Sin permiso de cámara: el selector.
+async function camaraVarias(input) {
+  let flujo;
+  try {
+    flujo = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 3072 } }, audio: false });
+  } catch {
+    aviso("No se pudo abrir la cámara: elegí las fotos (mantené apretada la primera para elegir varias).");
+    return input.click();
+  }
+  const fotos = [], dlg = document.createElement("dialog");
+  dlg.className = "camara";
+  dlg.innerHTML = `<video autoplay playsinline muted></video>
+    <div class="camara-fotos"></div>
+    <div class="fila camara-botones"><button type="button" class="boton secundario" data-cancelar>Cancelar</button>
+      <button type="button" class="disparo" data-sacar aria-label="Sacar foto"></button>
+      <button type="button" class="boton" data-listo disabled>Listo (0)</button></div>`;
+  document.body.appendChild(dlg);
+  const video = dlg.querySelector("video");
+  video.srcObject = flujo;
+  const cerrar = () => { flujo.getTracks().forEach((t) => t.stop()); dlg.close(); dlg.remove(); };
+  const sacar = async () => {
+    let blob = null;
+    try { if (window.ImageCapture) blob = await new ImageCapture(flujo.getVideoTracks()[0]).takePhoto(); } catch {}
+    if (!blob) {
+      const c = document.createElement("canvas");
+      c.width = video.videoWidth; c.height = video.videoHeight;
+      c.getContext("2d").drawImage(video, 0, 0);
+      blob = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.92));
+    }
+    if (!blob) return;
+    const f = new File([blob], `foto-${Date.now()}-${fotos.length + 1}.jpg`, { type: "image/jpeg" });
+    fotos.push(f);
+    dlg.querySelector(".camara-fotos").insertAdjacentHTML("beforeend", `<img src="${URL.createObjectURL(f)}" alt="Foto ${fotos.length}">`);
+    const listo = dlg.querySelector("[data-listo]");
+    listo.disabled = false; listo.textContent = `Listo (${fotos.length})`;
+    video.classList.add("flash"); setTimeout(() => video.classList.remove("flash"), 150);
+  };
+  dlg.onclick = (ev) => {
+    if (ev.target.closest("[data-cancelar]")) cerrar();
+    else if (ev.target.closest("[data-sacar]")) sacar().catch((e) => aviso(e.message));
+    else if (ev.target.closest("[data-listo]") && fotos.length) {
+      cerrar();
+      const dt = new DataTransfer();
+      fotos.forEach((f) => dt.items.add(f));
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+  dlg.addEventListener("cancel", cerrar);
+  dlg.showModal();
+}
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-camara]");
+  if (!b) return;
+  const input = b.parentElement.querySelector(b.dataset.camara) || document.querySelector(b.dataset.camara);
+  if (input) camaraVarias(input);
+});
 
 // ---------- Editar en diálogo ----------
 
@@ -1604,7 +1665,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "39"; // igual que VERSION en sw.js
+const VERSION_APP = "40"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

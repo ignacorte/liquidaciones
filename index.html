@@ -70,9 +70,12 @@
         <p class="ayuda">Captura de pantalla, foto o PDF de la historia clínica. Se lee dentro del celular (nada sale del teléfono); la app reconoce la obra social y sugiere código y valor. Revisás antes de guardar.</p>
         <label class="boton grande"><span>📋</span> Listado diario de consultas
           <input type="file" accept="image/*,application/pdf" multiple hidden data-leer="listado"></label>
+        <button type="button" class="boton chico secundario varias" data-camara="[data-leer=listado]">📷 Sacar varias fotos seguidas</button>
         <div style="height:10px"></div>
         <label class="boton grande"><span>🩺</span> Parte quirúrgico
           <input type="file" accept="image/*,application/pdf" multiple hidden data-leer="parte"></label>
+        <button type="button" class="boton chico secundario varias" data-camara="[data-leer=parte]">📷 Sacar varias fotos seguidas</button>
+        <p class="ayuda" style="margin-top:6px">Para elegir <b>varias de la galería</b> a la vez: mantené apretada la primera y tocá las demás.</p>
         <p class="ayuda" style="margin-top:10px">Para que se lea bien: captura de pantalla, o foto <b>de frente y de cerca</b> (sin ángulo ni reflejos). Lo más exacto: «Imprimir» → guardar como PDF.</p>
         <details style="margin-top:10px"><summary class="ayuda">Pegar texto copiado de la historia clínica</summary>
           <textarea id="texto-pegado" rows="6" placeholder="Pegá acá el parte o el listado"></textarea>
@@ -108,6 +111,7 @@
         </div>
         <div class="fila" id="agregar-foto" hidden>
           <label class="boton secundario">📷 Agregar otra foto o página<input type="file" accept="image/*,application/pdf" multiple hidden id="agregar-foto-input"></label>
+          <button type="button" class="boton secundario" data-camara="#agregar-foto-input">📷 Varias seguidas</button>
           <span class="ayuda" id="agregar-foto-n"></span>
         </div>
       </div>

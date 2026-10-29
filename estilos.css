@@ -90,3 +90,14 @@ details.plegable > summary h2 { margin: 0; }
 details.plegable > summary::after { content: "▸"; font-size: 18px; opacity: .6; transition: transform .15s; }
 details.plegable[open] > summary::after { transform: rotate(90deg); }
 details.plegable[open] > summary { margin-bottom: 10px; }
+
+/* Cámara: varias fotos seguidas */
+.boton.varias { margin-top: 6px; width: 100%; }
+dialog.camara { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; background: #000; color: #fff; }
+dialog.camara video { width: 100%; height: calc(100dvh - 170px); object-fit: contain; background: #000; transition: opacity .15s; }
+dialog.camara video.flash { opacity: .3; }
+.camara-fotos { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px; min-height: 64px; }
+.camara-fotos img { height: 56px; width: 42px; object-fit: cover; border-radius: 4px; border: 1px solid #fff; flex: none; }
+.camara-botones { justify-content: space-between; align-items: center; padding: 6px 16px 14px; margin: 0; flex-wrap: nowrap; }
+.disparo { width: 68px; height: 68px; border-radius: 50%; border: 5px solid #fff; background: #ddd; flex: none; }
+.disparo:active { background: #fff; transform: scale(.94); }
