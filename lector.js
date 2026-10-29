@@ -160,8 +160,8 @@ const Lector = (() => {
     return paginas.join("\n");
   }
 
-  async function textoDe(archivos, avance, { paginas } = {}) {
-    const partes = [];
+  // «partes» (opcional): recibe el texto de cada archivo por separado (para reconocer qué documento es cada foto)
+  async function textoDe(archivos, avance, { paginas, partes = [] } = {}) {
     for (const [i, a] of archivos.entries()) {
       avance && avance(`Leyendo ${i + 1} de ${archivos.length}…`);
       partes.push(a.type === "application/pdf" ? await textoPDF(a, avance, paginas) : await leerImagen(await preparar(a), avance));
@@ -728,6 +728,32 @@ const Lector = (() => {
     return titulo && equipo && !esEstudio(texto) && !!((f.paciente || "").trim() && f.fecha && (f.procedimiento || "").trim());
   }
 
+  // Foja de anestesia (registro / ficha / hoja anestésica): por el título o por varios datos típicos del registro
+  function esFojaAnestesia(texto) {
+    const t = plano(texto);
+    if (/(registro|foja|ficha|hoja|parte|planilla|protocolo|record)\s+(de\s+)?(la\s+)?anest/.test(t)) return true;
+    const marcas = [/\basa\s*(i{1,3}|iv|v|[1-5])\b/, /induccion/, /intubacion|tubo endotraqueal|\btet?\b|mascara laringea/, /sevoflurano|isoflurano|desflurano/,
+      /propofol|fentanil|remifentanil|midazolam|ketamina/, /rocuronio|atracurio|vecuronio|succinilcolina/, /raquianestesia|subaracnoide|peridural|bloqueo/,
+      /anestesia general|sedacion/, /spo2|saturacion|capnogra|etco2/, /aldrete|recuperacion anestesica/];
+    return marcas.filter((r) => r.test(t)).length >= 3 && !/foja\s+quirurgica|protocolo\s+(quirurgico|operatorio)|descripcion\s+(quirurgica|operatoria)/.test(t);
+  }
+
+  // Autorización de la obra social (orden autorizada, bono, autorización de prestación)
+  function esAutorizacion(texto) {
+    const t = plano(texto);
+    return /autorizaci|autorizad[oa]|bono de (consulta|prestacion|practica)|orden de (internacion|practica|prestacion|cirugia)/.test(t) &&
+      /(n|nro|numero|cod|codigo)\.?\s*(de\s+)?autoriz|afiliado|prestacion|practica|vencimiento|validez|token|obra social|prestador/.test(t) &&
+      !/foja\s+quirurgica|protocolo\s+(quirurgico|operatorio)/.test(t) && !esFojaAnestesia(texto);
+  }
+
+  // ¿Qué documento es (para anestesiología)? «quirurgica», «anestesia», «autorizacion» o null
+  function tipoDocumento(texto, f) {
+    if (esFojaAnestesia(texto)) return "anestesia";
+    if (esFojaCompleta(texto, f)) return "quirurgica";
+    if (esAutorizacion(texto)) return "autorizacion";
+    return null;
+  }
+
   // Captura de pantalla de esta misma app (no es un parte ni un listado)
   const esCapturaDeLaApp = (texto) => /revisa los datos leidos|buscar otro codigo|agregar otro procedimiento \(mismo acto\)|buscar codigo pami/.test(plano(texto));
 
@@ -761,5 +787,5 @@ const Lector = (() => {
     }));
   }
 
-  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta };
+  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento };
 })();

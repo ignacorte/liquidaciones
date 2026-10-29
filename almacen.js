@@ -387,7 +387,7 @@ const Almacen = (() => {
         // Si hubo cambios mientras se subía, falta otra vuelta
         // «Al día» solo si también se subieron las fojas (si no, «Cerrar cuenta» las borraría del celular)
         if (cambios === cambiosAlEmpezar && !(adjuntos || []).length) { await marcarPendiente(false); avisar("al día"); }
-        else if (cambios === cambiosAlEmpezar) avisar("fojas sin subir");
+        else if (cambios === cambiosAlEmpezar) avisar("documentos sin subir");
         else { avisar("sincronizando…"); setTimeout(() => sincronizar().catch(() => {}), 500); }
       } catch (e) {
         avisar(e.reconectar ? "cambios sin subir" : "sin conexión: se guarda en el celular");
@@ -437,9 +437,10 @@ const Almacen = (() => {
   }
   const guardarAdjuntos = async () => idbEscribir({ adjuntos: await cifrar(adjuntos) });
   const aBase64 = (archivo) => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = mal; r.readAsDataURL(archivo); });
-  async function encolarAdjunto(prestacionId, nombre, archivo, ruta) {
+  // campo / lista: la casilla que se tilda y la lista de enlaces de la prestación (por defecto, la foja quirúrgica)
+  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos" } = {}) {
     await leerAdjuntos();
-    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta });
+    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista });
     await guardarAdjuntos();
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
@@ -452,9 +453,9 @@ const Almacen = (() => {
       const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), await carpetaRuta(a.ruta));
       const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
       if (i >= 0) {
-        const p = doc.prestaciones[i];
-        doc.prestaciones[i] = { ...p, doc_foja: true, actualizado: Date.now(),
-          foja_archivos: [...(p.foja_archivos || []), { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre }] };
+        const p = doc.prestaciones[i], campo = a.campo || "doc_foja", lista = a.lista || "foja_archivos";
+        doc.prestaciones[i] = { ...p, [campo]: true, actualizado: Date.now(),
+          [lista]: [...(p[lista] || []), { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre }] };
         cambios++;
       }
       adjuntos.shift();
