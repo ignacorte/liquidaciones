@@ -86,14 +86,14 @@ async function cargarBase() {
     uq: valores.uq_aac.map((u) => ({ valor: u.valor, vigencia: u.vigencia.slice(0, 7) + "-01", fuente: u.fuente, base: true })) };
 }
 
-function datos() {
+function datos(rama) {
   const d = Almacen.doc, vivos = (l) => l.filter((x) => !x.borrada);
   const propias = new Map(vivos(d.obras).map((o) => [o.nombre, o]));
   const obras = estado.base.obras.filter((o) => !propias.has(o.nombre)).concat([...propias.values()]).map((o) => ({ activa: true, ...o }));
   const valoresPropios = vivos(d.valores);
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
-  const esp = ajuste("especialidad", "cirugia");
+  const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
   return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
@@ -360,9 +360,9 @@ function camposAnestesia(p) {
     <div class="ancho ayuda" style="margin:6px 0 0"><b>Documentación</b></div>
     ${marca("doc_foja", "Foja quirúrgica")}
     <div class="ancho">
-      ${p._foja ? '<p class="ayuda" style="margin:0">📄 Es la foja quirúrgica completa: se marca y el archivo se guarda en tu Drive al guardar.</p>' : ""}
+      ${p._foja ? `<p class="ayuda" style="margin:0">📄 ${p.foja_completa ? "Es la foja quirúrgica completa" : "Foja"} (${p._foja.length} ${p._foja.length === 1 ? "archivo" : "archivos"}): al guardar va a tu Drive › Liquidaciones › Anestesiología › Fojas.</p>` : ""}
       ${(p.foja_archivos || []).length ? `<p class="ayuda" style="margin:0">Foja en tu Drive: ${p.foja_archivos.map((a, i) => `<a href="${esc(a.link)}" target="_blank" rel="noopener">ver${p.foja_archivos.length > 1 ? " " + (i + 1) : ""}</a>`).join(" · ")}</p>` : ""}
-      ${p._foja ? "" : `<label class="boton chico secundario" style="margin-top:4px">📎 Adjuntar foja (foto o PDF)<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-foja></label>`}
+      ${`<label class="boton chico secundario" style="margin-top:4px">📎 ${p._foja || (p.foja_archivos || []).length ? "Agregar otra foto de la foja" : "Adjuntar foja (foto o PDF)"}<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-foja></label>`}
     </div>
     ${marca("doc_autorizacion", "Orden / autorización")}
     <p class="ancho ayuda" style="margin:0">Nocturno (20 a 7 h, +35 %) y fin de semana (sábado 13 h a lunes 7 h, +50 %) salen de la fecha y la hora.</p>`;
@@ -446,12 +446,8 @@ function enlazarEstimacion(el, obtener, guardar) {
     if (ev.target.matches("[data-adjuntar-foja]") && ev.target.files.length && obtener()) {
       const archivos = [...ev.target.files], p = obtener();
       ev.target.value = "";
-      aviso("Guardando la foja en tu Drive…");
-      try {
-        const lista = await subirFojas(p, archivos);
-        guardar({ ...p, doc_foja: true, foja_archivos: [...(p.foja_archivos || []), ...lista] });
-        aviso("Foja guardada en tu Drive. Tocá Guardar para confirmar.");
-      } catch (e) { aviso(e.message); }
+      guardar({ ...p, doc_foja: true, _foja: [...(p._foja || []), ...archivos] });
+      aviso(`${archivos.length === 1 ? "Foja agregada" : archivos.length + " fotos agregadas"}: se guarda en tu Drive al tocar Guardar.`);
       return;
     }
     if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
@@ -566,7 +562,7 @@ async function leer(tipo, archivos, textoPegado) {
     }
     // Anestesiología: si lo cargado es la foja quirúrgica completa, cuenta como presentada y el archivo se guarda en el Drive
     if (tipo === "parte" && esAnestesia() && archivos?.length) for (const f of filas) {
-      if (Lector.esFojaCompleta(texto, f)) Object.assign(f, { doc_foja: true, _foja: archivos });
+      if (Lector.esFojaCompleta(texto, f)) Object.assign(f, { doc_foja: true, _foja: archivos, foja_completa: true });
     }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
@@ -614,23 +610,16 @@ const fechaDudosa = (x) => !x.fecha_leida || Math.abs(Date.now() - Date.parse(x.
 
 function cerrarRevision() { ultimaLectura = null; $("#agregar-foto").hidden = true; conciliacion = null; $("#guardar-lote").textContent = "Guardar"; $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
 
-// Foja quirúrgica al Drive («Liquidaciones/Fojas»), ligada a la prestación
-async function subirFojas(p, archivos) {
-  if (!Almacen.tieneToken()) throw new Error("Conectá Google Drive para guardar la foja (Valores → Mi cuenta).");
-  const lista = [];
+// Foja quirúrgica → Drive («Liquidaciones/Anestesiología/Fojas»), ligada a la prestación. Queda cifrada en el celular y se
+// sube en la sincronización (también si al guardar no había señal o el acceso de Google estaba vencido).
+const RUTA_FOJAS = ["Anestesiología", "Fojas"];
+async function guardarFoja(p, archivos) {
   for (const [i, a] of [...archivos].entries()) {
     const ext = (a.name.match(/\.[a-z0-9]+$/i) || [a.type === "application/pdf" ? ".pdf" : ".jpg"])[0];
     const nombre = `Foja ${(p.paciente || "paciente").replace(/[\\/:*?"<>|]/g, " ")} ${p.fecha || ""}${archivos.length > 1 ? ` (${i + 1})` : ""}${ext}`;
-    const r = await Almacen.subirAdjunto(nombre, a);
-    lista.push({ id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre });
+    await Almacen.encolarAdjunto(p.id, nombre, a, RUTA_FOJAS);
   }
-  return lista;
-}
-async function guardarFoja(p, archivos) {
-  try {
-    const lista = await subirFojas(p, archivos);
-    await guardarPrestacion({ ...p, doc_foja: true, foja_archivos: [...(p.foja_archivos || []), ...lista] });
-  } catch (e) { aviso(`${p.paciente}: la foja quedó marcada pero no se pudo guardar el archivo (${e.message})`); }
+  if (Almacen.tieneToken()) Almacen.sincronizar().then(refrescar).catch(() => {});
 }
 
 async function guardarLote() {
@@ -641,18 +630,19 @@ async function guardarLote() {
   if (incompleta) return aviso(`${incompleta.paciente || "Un paciente"}: falta ${faltantes(incompleta).join(", ")}`);
   const existentes = datos().prestaciones;
   const repetidas = [];
-  let n = 0;
+  let n = 0, fojas = 0;
   try {
     for (const f of elegidas) {
       const ya = existentes.some((p) => p.fecha === f.fecha && p.tipo === f.tipo && (p.paciente || "").toLowerCase() === (f.paciente || "").trim().toLowerCase() &&
         (p.procedimiento || "") === (f.procedimiento || ""));
       if (ya) { repetidas.push(f.paciente); continue; }
       const guardada = await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
-      if (f._foja) await guardarFoja(guardada, f._foja);
+      if (f._foja) { await guardarFoja(guardada, f._foja); fojas++; }
       n++;
     }
     const mesGuardado = elegidas[0].fecha.slice(0, 7);
-    aviso(`Guardadas ${n} en ${nombreMes(mesGuardado)}` + (repetidas.length ? ` · ya estaban: ${repetidas.join(", ")}` : ""));
+    aviso(`Guardadas ${n} en ${nombreMes(mesGuardado)}` + (repetidas.length ? ` · ya estaban: ${repetidas.join(", ")}` : "") +
+      (fojas ? ` · foja → tu Drive: Liquidaciones › Anestesiología › Fojas${Almacen.tieneToken() ? "" : " (se sube al conectar)"}` : ""));
     cerrarRevision();
     $("#mes").value = mesGuardado;
     ir("prestaciones");
@@ -679,7 +669,11 @@ function editar(p) {
     if (ev.target.matches("[data-ok]")) {
       const datosForm = leerCampos(cuerpo, actual), f = faltantes(datosForm);
       if (f.length) return aviso("Falta completar: " + f.join(", "));
-      try { await guardarPrestacion(datosForm); dlg.close(); aviso("Guardado"); refrescar(); }
+      try {
+        const guardada = await guardarPrestacion(datosForm);
+        if (datosForm._foja?.length) await guardarFoja(guardada, datosForm._foja);
+        dlg.close(); aviso(datosForm._foja?.length ? "Guardado · la foja va a tu Drive › Liquidaciones › Anestesiología › Fojas" : "Guardado"); refrescar();
+      }
       catch (e) { aviso(e.message); }
     }
   };
@@ -775,6 +769,12 @@ function verValores() {
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
+  // Dónde está cada cosa en el Drive
+  $("#donde-drive").innerHTML = esAnestesia()
+    ? "En tu Google Drive: carpeta <b>Liquidaciones › Anestesiología</b>, con la planilla <b>«Anestesiología – planilla»</b> y la carpeta <b>Fojas</b> (las fojas quirúrgicas). En <b>Liquidaciones</b> quedan los datos y los respaldos diarios."
+    : "En tu Google Drive: carpeta <b>Liquidaciones</b>, con la planilla <b>«Liquidaciones – planilla»</b> (cirugías, consultas, resumen mensual y valores), los datos y los respaldos diarios.";
+  $("#abrir-carpeta").hidden = true;
+  if (Almacen.tieneToken()) Almacen.enlaceCarpeta(esAnestesia() ? ["Anestesiología"] : []).then((l) => { $("#abrir-carpeta").href = l; $("#abrir-carpeta").hidden = false; }).catch(() => {});
   verAranceles();
   $("#apellido").value = ajuste("apellido", "");
   $("#min-bloqueo").value = String(minutosBloqueo());
@@ -1200,16 +1200,17 @@ async function aplicarLiquidacion() {
 
 // ---------- Planilla Excel: cirugías y procedimientos, consultas, resumen mensual ----------
 
-async function construirExcel() {
+// Una planilla por rama: cirugía («Liquidaciones – planilla», en «Liquidaciones») y anestesiología («Anestesiología – planilla»,
+// en «Liquidaciones/Anestesiología»). Cada una con todas las prestaciones de su rama, sea cual sea la rama abierta.
+async function construirExcel(rama = esAnestesia() ? "anestesia" : "cirugia") {
   await new Promise((ok, mal) => {
     if (window.XLSX) return ok();
     const s = document.createElement("script");
     s.src = "vendor/xlsx.full.min.js"; s.onload = ok; s.onerror = () => mal(new Error("No se pudo cargar el generador de Excel"));
     document.head.appendChild(s);
   });
-  // Siempre todas las prestaciones (cirugía y anestesiología), sea cual sea el camino abierto: la planilla del Drive nunca pierde datos
-  const todas = Almacen.doc.prestaciones.filter((p) => !p.borrada).sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
-  const deCirugia = todas.filter((p) => (p.especialidad || "cirugia") === "cirugia"), deAnestesia = todas.filter((p) => p.especialidad === "anestesia");
+  const todas = datos(rama).prestaciones.sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+  const deCirugia = rama === "cirugia" ? todas : [], deAnestesia = rama === "anestesia" ? todas : [];
   const lista = deCirugia;
   // Fechas como número de serie de planilla (días desde 30/12/1899) con formato dd/mm/aaaa: Google Sheets y Excel las
   // importan como fecha. (Las «celdas de fecha» ISO no las toma Google: quedaban vacías o como texto.)
@@ -1261,7 +1262,7 @@ async function construirExcel() {
     g["Falta cobrar"] += ["pendiente", "presentada"].includes(p.estado) ? p.valor_estimado || 0 : 0;
   }
   // Valores (los de la app, los cargados y los importados): qué es módulo y qué es honorario directo
-  const valores = datos().valores.slice().sort((a, b) => a.obra_social.localeCompare(b.obra_social) || String(a.codigo).localeCompare(String(b.codigo)) || b.vigencia.localeCompare(a.vigencia))
+  const valores = datos(rama).valores.slice().sort((a, b) => a.obra_social.localeCompare(b.obra_social) || String(a.codigo).localeCompare(String(b.codigo)) || b.vigencia.localeCompare(a.vigencia))
     .map((v) => ({ "Obra social": v.obra_social, "Código": v.codigo, "Equivale a (AAC)": v.codigo_aac || "", "Descripción": v.descripcion || "",
       "Tipo de valor": v.tipo === "modulo" ? "Módulo (total institución)" : "Honorario directo", "Monto": v.monto ?? null,
       "Vigente desde": fechaX(v.vigencia), "Fuente": v.fuente || "" }));
@@ -1280,14 +1281,24 @@ async function construirExcel() {
     h["!autofilter"] = { ref: h["!ref"] };
     XLSX.utils.book_append_sheet(libro, h, nombre);
   };
-  if (deCirugia.length || !esAnestesia()) {
+  if (rama === "cirugia") {
     hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
     hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
-  }
-  if (deAnestesia.length || esAnestesia()) hoja(anestesias, "Anestesiología", ["N°", "Fecha", "Paciente", "Obra social", "Lugar", "Procedimiento", "Situación", "Doc faltante"]);
+  } else hoja(anestesias, "Anestesiología", ["N°", "Fecha", "Paciente", "Obra social", "Lugar", "Procedimiento", "Situación", "Doc faltante"]);
   hoja(resumen, "Resumen mensual", ["Mes", "Obra social", "Estimado", "Cobrado"]);
-  hoja(valores, "Valores cargados", ["Obra social", "Código", "Descripción", "Tipo de valor", "Monto"]);
+  hoja(valores, rama === "cirugia" ? "Valores cargados" : "Aranceles por complejidad", ["Obra social", "Código", "Descripción", "Tipo de valor", "Monto"]);
   return XLSX.write(libro, { bookType: "xlsx", type: "array" });
+}
+
+// Las planillas del Drive: la de cada rama que tenga datos (o la abierta)
+async function planillasDrive() {
+  const todas = Almacen.doc.prestaciones.filter((p) => !p.borrada);
+  const out = [];
+  if (todas.some((p) => (p.especialidad || "cirugia") === "cirugia") || !esAnestesia())
+    out.push({ nombre: "Liquidaciones – planilla", ruta: [], bytes: await construirExcel("cirugia") });
+  if (todas.some((p) => p.especialidad === "anestesia") || esAnestesia())
+    out.push({ nombre: "Anestesiología – planilla", ruta: ["Anestesiología"], bytes: await construirExcel("anestesia") });
+  return out;
 }
 
 function exportarCSV() {
@@ -1303,6 +1314,7 @@ function exportarCSV() {
 function mostrarSync(e) {
   const cuenta = Almacen.doc.cuenta;
   $("#sync").textContent = cuenta ? "Drive: " + (Almacen.pendiente && e === "al día" ? "cambios sin subir" : e) : "Solo en este dispositivo";
+  Almacen.adjuntosPendientes().then((n) => { if (n) $("#sync").textContent += ` · ${n} ${n === 1 ? "foja" : "fojas"} por subir`; }).catch(() => {});
   // Cambios que no llegaron a Drive (venció el acceso de Google): botón para subirlos
   $("#subir-ahora").hidden = !(cuenta && Almacen.pendiente && !Almacen.tieneToken() && !Almacen.bloqueada());
   if (estado.vista === "valores") verValores();
@@ -1374,7 +1386,7 @@ async function arrancar() {
       aviso("Excel guardado en Drive › Liquidaciones › Liquidaciones.xlsx");
     } catch (e) { aviso(e.message); }
   });
-  Almacen.planilla = construirExcel; // se actualiza en el Drive en cada sincronización
+  Almacen.planilla = planillasDrive; // se actualizan en el Drive en cada sincronización
   // Sumar otra foto o página al documento que se está revisando: se vuelve a leer todo junto
   $("#agregar-foto-input").addEventListener("change", (ev) => {
     const nuevas = [...ev.target.files];
@@ -1518,7 +1530,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "36"; // igual que VERSION en sw.js
+const VERSION_APP = "37"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1668,7 +1680,8 @@ async function menuConfiguracion() {
 async function cerrarCuenta() {
   if (!Almacen.doc.cuenta) return aviso("Tus datos están solo en este celular: conectá Google Drive (o descargá una copia) antes de cerrar la cuenta.");
   try { await Almacen.sincronizar(); } catch { /* se avisa abajo */ }
-  if (Almacen.pendiente || Almacen.estado !== "al día") return aviso("No se pudo subir lo último a tu Drive: no se cierra la cuenta para no perder datos. Probá de nuevo con señal.");
+  if (Almacen.pendiente || Almacen.estado !== "al día" || await Almacen.adjuntosPendientes())
+    return aviso("No se pudo subir todo a tu Drive (datos o fojas): no se cierra la cuenta para no perder nada. Probá de nuevo con señal.");
   if (!confirm("Tus datos están a salvo en tu Drive. Se quitan de ESTE celular junto con el PIN (para volver: ingresar con Google). ¿Seguir?")) return;
   await Almacen.desconectar(); location.reload();
 }

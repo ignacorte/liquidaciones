@@ -107,6 +107,7 @@ const Almacen = (() => {
 
   async function bloquear() {
     llave = null;
+    adjuntos = null; // las fojas descifradas no quedan en memoria
     doc = vacio();
     tokenMem = null;
     clearTimeout(temporizador);
@@ -378,11 +379,15 @@ const Almacen = (() => {
         } else {
           await subirNuevo(ARCHIVO, JSON.stringify(doc), "application/json");
         }
-        if (planilla) await subirPlanilla(await planilla()).catch(() => {}); // si falla, queda el JSON (lo importante)
+        await subirAdjuntos().catch(() => {}); // fojas pendientes (si falla, quedan en el celular para la próxima)
+        // Planillas (cirugía en «Liquidaciones», anestesiología en «Liquidaciones/Anestesiología»); si fallan, queda el JSON (lo importante)
+        if (planilla) for (const x of await planilla()) await subirPlanilla(x.bytes, x.nombre, x.ruta).catch(() => {});
         doc.ultima_sync = Date.now();
         await escribirLocal();
         // Si hubo cambios mientras se subía, falta otra vuelta
-        if (cambios === cambiosAlEmpezar) { await marcarPendiente(false); avisar("al día"); }
+        // «Al día» solo si también se subieron las fojas (si no, «Cerrar cuenta» las borraría del celular)
+        if (cambios === cambiosAlEmpezar && !(adjuntos || []).length) { await marcarPendiente(false); avisar("al día"); }
+        else if (cambios === cambiosAlEmpezar) avisar("fojas sin subir");
         else { avisar("sincronizando…"); setTimeout(() => sincronizar().catch(() => {}), 500); }
       } catch (e) {
         avisar(e.reconectar ? "cambios sin subir" : "sin conexión: se guarda en el celular");
@@ -397,28 +402,77 @@ const Almacen = (() => {
   const XLSX_TIPO = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", HOJA_TIPO = "application/vnd.google-apps.spreadsheet";
   const PLANILLA = "Liquidaciones – planilla", PLANILLA_VIEJA = "Liquidaciones.xlsx";
   let planilla = null; // función de la app que arma el Excel (ArrayBuffer)
-  async function crearHoja(bytes) {
-    const meta = { name: PLANILLA, mimeType: HOJA_TIPO, parents: [await carpeta()] };
+  async function crearHoja(bytes, nombre = PLANILLA, padre = null) {
+    const meta = { name: nombre, mimeType: HOJA_TIPO, parents: [padre || await carpeta()] };
     const limite = "liq" + Date.now();
     const cuerpo = new Blob([`--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${limite}\r\nContent-Type: ${XLSX_TIPO}\r\n\r\n`,
       bytes, `\r\n--${limite}--`]);
     return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
   }
-  // Fojas quirúrgicas (y otros papeles) en la carpeta «Liquidaciones/Fojas» del Drive del médico
-  async function subirAdjunto(nombre, archivo) {
-    const tipoCarpeta = "application/vnd.google-apps.folder";
-    let fojas = await buscar("Fojas", tipoCarpeta);
-    if (!fojas) fojas = await (await drive(API, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Fojas", mimeType: tipoCarpeta, parents: [await carpeta()] }) })).json();
-    const meta = { name: nombre, parents: [fojas.id] }, limite = "liq" + Date.now();
+  // Carpetas dentro de «Liquidaciones» (p. ej. ["Anestesiología", "Fojas"]); se crean si no están
+  const carpetas = {};
+  async function carpetaRuta(ruta = []) {
+    let padre = await carpeta();
+    for (const nombre of ruta) {
+      const k = padre + "/" + nombre;
+      if (!carpetas[k]) {
+        const tipo = "application/vnd.google-apps.folder";
+        const q = `name='${nombre}' and '${padre}' in parents and mimeType='${tipo}' and trashed=false`;
+        const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`)).json();
+        carpetas[k] = r.files?.[0]?.id || (await (await drive(API, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: nombre, mimeType: tipo, parents: [padre] }) })).json()).id;
+      }
+      padre = carpetas[k];
+    }
+    return padre;
+  }
+  const enlaceCarpeta = async (ruta) => `https://drive.google.com/drive/folders/${await carpetaRuta(ruta)}`;
+
+  // Fojas por subir: quedan CIFRADAS en el celular y se suben al Drive en la próxima sincronización (aunque el acceso de
+  // Google esté vencido al guardar o no haya señal). Al subirse, el enlace queda en la prestación.
+  let adjuntos = null;
+  async function leerAdjuntos() {
+    if (!adjuntos) { const s = await idbLeer("adjuntos"); adjuntos = s ? await descifrar(s) : []; }
+    return adjuntos;
+  }
+  const guardarAdjuntos = async () => idbEscribir({ adjuntos: await cifrar(adjuntos) });
+  const aBase64 = (archivo) => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = mal; r.readAsDataURL(archivo); });
+  async function encolarAdjunto(prestacionId, nombre, archivo, ruta) {
+    await leerAdjuntos();
+    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta });
+    await guardarAdjuntos();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
+    programarSync();
+  }
+  async function subirAdjuntos() {
+    await leerAdjuntos();
+    while (adjuntos.length) {
+      const a = adjuntos[0];
+      const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
+      const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), await carpetaRuta(a.ruta));
+      const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
+      if (i >= 0) {
+        const p = doc.prestaciones[i];
+        doc.prestaciones[i] = { ...p, doc_foja: true, actualizado: Date.now(),
+          foja_archivos: [...(p.foja_archivos || []), { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre }] };
+        cambios++;
+      }
+      adjuntos.shift();
+      await guardarAdjuntos();
+      await escribirLocal();
+    }
+  }
+  async function subirArchivo(nombre, archivo, padre) {
+    const meta = { name: nombre, parents: [padre] }, limite = "liq" + Date.now();
     const cuerpo = new Blob([`--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${limite}\r\nContent-Type: ${archivo.type || "application/octet-stream"}\r\n\r\n`,
       archivo, `\r\n--${limite}--`]);
     return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
   }
-  async function subirPlanilla(bytes) {
+  async function subirPlanilla(bytes, nombre = PLANILLA, ruta = []) {
     const vieja = await buscar(PLANILLA_VIEJA);
     if (vieja) await drive(`${API}/${vieja.id}`, { method: "DELETE" }).catch(() => {});
-    const hoja = await buscar(PLANILLA, HOJA_TIPO);
+    const padre = await carpetaRuta(ruta);
+    const hoja = await buscar(nombre, HOJA_TIPO);
     if (hoja) {
       // Reemplazar el contenido (Google lo convierte); si no lo acepta, crear una nueva y borrar la anterior
       try {
@@ -426,12 +480,12 @@ const Almacen = (() => {
         return hoja;
       } catch (e) {
         if (e.reconectar) throw e;
-        const nueva = await crearHoja(bytes);
+        const nueva = await crearHoja(bytes, nombre, padre);
         await drive(`${API}/${hoja.id}`, { method: "DELETE" }).catch(() => {});
         return nueva;
       }
     }
-    return crearHoja(bytes);
+    return crearHoja(bytes, nombre, padre);
   }
 
   // Planilla del mes como Google Sheets en la carpeta Liquidaciones (para el contador)
@@ -446,7 +500,8 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, subirAdjunto, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, encolarAdjunto, enlaceCarpeta,
+    adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
     accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),
