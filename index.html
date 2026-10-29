@@ -56,6 +56,7 @@
   <section id="v-inicio">
     <div class="alerta" id="sin-copia" hidden></div>
     <div class="kpis" id="kpis"></div>
+    <div class="card solo-anestesia"><h2>Circuito DARC</h2><div class="tabla" id="darc"></div></div>
     <div class="card"><h2>Por obra social</h2><div class="tabla" id="por-os"></div></div>
     <div class="card"><h2>Por paciente</h2><div class="tabla" id="por-paciente"></div></div>
   </section>
@@ -136,7 +137,7 @@
   <!-- Cobros -->
   <section id="v-cobros" hidden>
     <div class="card"><h2>Cuándo cobro</h2><p class="ayuda">Lo que falta cobrar, por el mes en que debería entrar según el plazo de cada obra social.</p><div id="flujo"></div></div>
-    <div class="card"><h2>Para presentar</h2><div id="a-presentar"></div></div>
+    <div class="card"><h2 id="titulo-presentar">Para presentar</h2><div id="a-presentar"></div></div>
     <div class="card"><h2>Vencidas</h2><p class="ayuda">Ya pasó la fecha estimada de cobro: reclamar o revisar débitos.</p><div id="vencidas"></div></div>
     <div class="card"><h2>Cuánto tarda cada una (real)</h2><p class="ayuda">Promedio entre la prestación y el cobro, según lo que marcaste como cobrado.</p><div id="plazos-reales"></div></div>
   </section>
@@ -150,6 +151,7 @@
         <button class="boton chico secundario" id="sincronizar">Sincronizar ahora</button>
         <button class="boton chico secundario" id="planilla">Guardar Excel en Drive</button></div>
       <p class="ayuda">En tu Drive (carpeta «Liquidaciones») quedan dos archivos que se actualizan solos: los datos (.json) y la Hoja de cálculo <b>«Liquidaciones – planilla»</b> con las hojas «Cirugías y procedimientos», «Consultas» y «Resumen mensual».</p>
+      <label>Especialidad<select id="especialidad"><option value="cirugia">Cirugía</option><option value="anestesia">Anestesiología</option></select></label>
       <label>Uso de la app<select id="modo"><option value="completo">Completo: procedimientos, consultas, valores y cobros</option>
         <option value="registro">Solo registro de procedimientos (sin montos ni cobros)</option></select></label>
       <p class="ayuda">Apellido como figura en los partes (para saber si fuiste ayudante):</p>
@@ -169,6 +171,7 @@
         <label>Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
         <label>Vigencia UQ<input id="uq-vigencia" type="month"></label>
         <label>Inflación mensual (%)<input id="inflacion" type="number" step="0.1"></label>
+        <label class="solo-anestesia">Retención de la asociación (DARC, %)<input id="pct-darc" type="number" step="0.1" min="0" max="99"></label>
       </div>
       <p class="ayuda" id="uq-hist"></p>
       <div class="fila">
@@ -183,6 +186,17 @@
         También podés cargar tu % del módulo en cada cirugía.</p>
       <div class="tabla" id="tabla-os"></div>
       <button class="boton chico secundario" id="nueva-os">+ Obra social</button>
+    </div>
+    <div class="card economia solo-anestesia">
+      <h2>Aranceles por complejidad</h2>
+      <p class="ayuda">Lo que paga cada obra social por complejidad (convenio de la asociación). De 8 a 13 se calcula sobre la 7 (× 1,5 / 2 / 3 / 4 / 5 / 6), salvo que cargues el valor.</p>
+      <div class="grid">
+        <label>Obra social<select id="ane-os"></select></label>
+        <label>Vigentes desde<input type="month" id="ane-vigencia"></label>
+      </div>
+      <div class="grid" id="ane-valores"></div>
+      <div class="fila"><button class="boton chico" id="ane-guardar">Guardar aranceles</button></div>
+      <div class="tabla" id="ane-tabla"></div>
     </div>
     <div class="card economia">
       <h2>Valores por código</h2>

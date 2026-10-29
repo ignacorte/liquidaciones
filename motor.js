@@ -39,7 +39,8 @@ const Motor = (() => {
 
   function palabras(texto) {
     const words = new Set();
-    for (let w of plano(texto).match(/[a-z]+/g) || []) {
+    // «videolaparoscopía», «videocolecistectomía»: el prefijo pegado se separa (en lo escrito y en los nomencladores)
+    for (let w of plano(texto).replace(/\bvideo(?=[a-z]{6,})/g, "video ").match(/[a-z]+/g) || []) {
       (EXTRA_ROOTS[w] || []).forEach((r) => words.add(r));
       w = SYNONYMS[w] || w;
       if (w.length > 2 && !STOPWORDS.has(w)) words.add(raiz(w));
@@ -302,7 +303,97 @@ const Motor = (() => {
   }
 
   // Completa una prestación: obra social del padrón, código sugerido, valor y fechas. No modifica p.
+  // ---------- Anestesiología ----------
+  // Honorario = arancel de la complejidad (Nomenclador Único de Anestesiólogos de Córdoba) según el convenio de la asociación
+  // (DARC) con cada obra social, más recargos (nocturno, fin de semana o feriado, edades extremas) y las intervenciones
+  // múltiples; la asociación retiene su % administrativo. Los aranceles se cargan como valores con código «ANE-<complejidad>».
+  const EDADES = { neonato: "neonato", lactante: "1 mes a 3 años", nino: "3 a 14 años", mayor70: "70 años o más" };
+  const codigoComplejidad = (c) => "ANE-" + c;
+  function arancelAnestesia(datos, os, c, fecha) {
+    const fila = (n) => datos.valores.filter((v) => v.obra_social === os && v.codigo === codigoComplejidad(n) && v.vigencia <= fecha)
+      .sort((a, b) => b.vigencia.localeCompare(a.vigencia))[0];
+    const propia = fila(c);
+    if (propia) return { monto: propia.monto, fila: propia, nota: "" };
+    // Complejidad 8 a 13 = la 7 por 1,5 / 2 / 3 / 4 / 5 / 6
+    const factor = catalogos.ANEST?.reglas.mayor_a_7[c], f7 = factor && fila(7);
+    return f7 ? { monto: f7.monto * factor, fila: f7, nota: ` (complejidad 7 × ${String(factor).replace(".", ",")})` } : null;
+  }
+  function recargosAnestesia(p) {
+    const r = catalogos.ANEST?.reglas || {}, out = [];
+    const h = /^\d{1,2}:\d{2}/.test(p.hora || "") ? +p.hora.split(":")[0] : null;
+    if (h !== null && (h >= 20 || h < 7)) out.push(["nocturno", r.nocturno_pct]);
+    // Fin de semana: del sábado 13 h al lunes 7 h. El feriado no se suma al fin de semana
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(p.fecha || "") ? new Date(p.fecha + "T12:00:00").getDay() : -1;
+    const finde = dia === 0 || (dia === 6 && h !== null && h >= 13) || (dia === 1 && h !== null && h < 7);
+    if (p.feriado) out.push(["feriado", r.feriado_pct]); else if (finde) out.push(["fin de semana", r.fin_de_semana_pct]);
+    if (p.edad_grupo && r.edad?.[p.edad_grupo]) out.push([EDADES[p.edad_grupo], r.edad[p.edad_grupo]]);
+    return out;
+  }
+  const complejidadEfectiva = (p) => (p.suspendida ? 1 : Number(p.complejidad) ? Math.min(13, Number(p.complejidad) + (p.obesidad ? 2 : 0)) : null);
+  function ultimoCobroAnestesia(datos, os, c, id) {
+    return datos.prestaciones.filter((x) => !x.borrada && x.id !== id && x.obra_social === os && complejidadEfectiva(x) === c && x.tipo !== "consulta" &&
+      !(x.extras || []).length && !recargosAnestesia(x).length && x.monto_cobrado > 0).sort((a, b) => (b.fecha_cobro || "").localeCompare(a.fecha_cobro || ""))[0] || null;
+  }
+  // [neto para vos, bruto a cargar en la asociación, explicación]
+  function valorAnestesia(datos, p, os) {
+    if (p.valor_manual) return [Number(p.valor_manual), null, "Cargado a mano"];
+    const r = catalogos.ANEST?.reglas || {}, darc = datos.pct_darc || 0;
+    const neto = (b) => Math.round(b * (1 - darc / 100)), notaDarc = darc ? ` · − ${darc} % de retención de la asociación` : "";
+    const sinArancel = (c) => `Sin arancel de ${os || "esa obra social"} para complejidad ${c}: cargalo en Valores → Aranceles por complejidad`;
+    if (p.tipo === "consulta") {
+      const a = arancelAnestesia(datos, os, 1, p.fecha);
+      if (!a) return [null, null, sinArancel(1)];
+      const b = a.monto * r.preanestesica_pct_de_1 / 100;
+      return [neto(b), Math.round(b), `Consulta preanestésica: ${r.preanestesica_pct_de_1} % de la complejidad 1 (${pesos(a.monto)})${notaDarc}`];
+    }
+    const c = complejidadEfectiva(p);
+    if (!c) return [null, null, "Elegí la complejidad del procedimiento"];
+    const a = arancelAnestesia(datos, os, c, p.fecha);
+    // Lo más nuevo manda: un cobro real (neto) posterior a la vigencia de los aranceles
+    const sinAgregados = !(p.extras || []).some((x) => Number(x.complejidad)) && !recargosAnestesia(p).length;
+    const cobro = sinAgregados ? ultimoCobroAnestesia(datos, os, c, p.id) : null;
+    if (cobro && (!a || (cobro.fecha_cobro || "") >= a.fila.vigencia)) return [Math.round(cobro.monto_cobrado), null, `Último cobro real ${os} complejidad ${c} (${cobro.fecha_cobro})`];
+    if (!a) return [null, null, sinArancel(c)];
+    const rec = recargosAnestesia(p), pctRec = rec.reduce((t, [, x]) => t + x, 0);
+    let bruto = a.monto * (1 + pctRec / 100);
+    let texto = `${os} complejidad ${c}${a.nota}${p.suspendida ? " (operación suspendida)" : p.obesidad ? " (+2 por obesidad mórbida)" : ""}: ${pesos(a.monto)}` +
+      rec.map(([n, x]) => ` + ${x} % ${n}`).join("");
+    // Intervenciones múltiples: 100 % de la más importante + 50 % (misma vía) o 75 % (otra vía o bilateral) de las demás
+    for (const x of p.suspendida ? [] : p.extras || []) {
+      const cx = Number(x.complejidad);
+      const ax = cx && arancelAnestesia(datos, os, cx, p.fecha);
+      if (!ax) continue;
+      const pct = x.via === "distinta" ? r.multiple_distinta_via_pct : r.multiple_misma_via_pct;
+      bruto += ax.monto * pct / 100 * (1 + pctRec / 100);
+      texto += ` + complejidad ${cx} al ${pct} %`;
+    }
+    return [neto(bruto), Math.round(bruto), texto + notaDarc];
+  }
+  function estimarAnestesia(datos, p) {
+    const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
+    // Primero la práctica que coincide exactamente; después la que menos agrega a lo escrito («…convertida» no gana a la simple)
+    const sugerir5 = (t) => {
+      const q = palabras(t || ""), exacta = plano(t || "").trim();
+      return sugerir("ANEST", t || "", 10).map((c, i) => ({ c, i, igual: plano(c.name) === exacta, extra: [...palabras(c.name)].filter((w) => !q.has(w)).length }))
+        .sort((a, b) => b.igual - a.igual || a.extra - b.extra || a.i - b.i).slice(0, 5)
+        .map(({ c }) => ({ code: c.code, name: c.name, complejidad: c.complejidad, subgrupo: c.subgrupo }));
+    };
+    const out = { obra_social: os, codigo_aac: null, codigo_os: p.codigo_os || null, complejidad: Number(p.complejidad) || null, sugerencias: null };
+    if (p.tipo !== "consulta") {
+      out.sugerencias = { anest: sugerir5(p.procedimiento) };
+      if (!out.complejidad && out.sugerencias.anest.length) out.complejidad = out.sugerencias.anest[0].complejidad;
+      out.extras = (p.extras || []).map((x) => {
+        const sug = Number(x.complejidad) ? null : sugerir5(x.procedimiento);
+        return { ...x, complejidad: Number(x.complejidad) || sug?.[0]?.complejidad || null, via: x.via || "misma", sugerencias: sug ? { anest: sug } : x.sugerencias };
+      });
+    }
+    [out.valor_estimado, out.valor_bruto, out.valor_origen] = valorAnestesia(datos, { ...p, ...out, obra_social: os }, os);
+    Object.assign(out, fechasCobro(datos, os, p.fecha, p.fecha_presentacion));
+    return out;
+  }
+
   function estimar(datos, p) {
+    if (datos.especialidad === "anestesia") return estimarAnestesia(datos, p);
     const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
     const out = { obra_social: os, codigo_aac: p.codigo_aac || null, codigo_os: p.codigo_os || null, sugerencias: null };
     const equivalente = equivalenteAAC(os, out.codigo_os);
@@ -422,9 +513,9 @@ const Motor = (() => {
   }
 
   async function cargarCatalogos(base = "datos/") {
-    const [aac, pami, nom, unidades] = await Promise.all(["aac_2026_08.json", "pami_2024_02.json", "pami_nomenclador_2026_10.json", "pami_unidades.json"]
-      .map((f) => fetch(base + f).then((r) => r.json())));
-    catalogos.AAC = aac; catalogos.PAMI = pami;
+    const [aac, pami, nom, unidades, anest] = await Promise.all(["aac_2026_08.json", "pami_2024_02.json", "pami_nomenclador_2026_10.json", "pami_unidades.json",
+      "anestesia_nomenclador_2019.json"].map((f) => fetch(base + f).then((r) => r.json())));
+    catalogos.AAC = aac; catalogos.PAMI = pami; catalogos.ANEST = anest;
     catalogos.PAMI_NOM = nom;
     unidadesPami = unidades.unidades;
     // Para sugerir el código PAMI: los módulos de cirugía (con lo que incluye cada uno) + las prácticas quirúrgicas, clínicas
@@ -457,5 +548,5 @@ const Motor = (() => {
   }
 
   return { plano, sugerir, buscar, infoCodigo, honorarioAAC, obraSocialCanonica, estimar, completar, sugerencias, fechasCobro,
-           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami, viaDe };
+           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami, viaDe, recargosAnestesia, complejidadEfectiva };
 })();
