@@ -187,19 +187,36 @@ const Motor = (() => {
 
   // «08.02.03» = «080203» (las listas importadas traen los códigos con o sin puntos)
   const mismoCodigo = (a, b) => String(a ?? "").replace(/[.\-\s]/g, "") === String(b ?? "").replace(/[.\-\s]/g, "");
-  function valorOS(datos, os, codigoAAC, codigoOS, fecha) {
+  // Vía de una práctica por su nombre («VIDEOCOLECISTECTOMIA», «apendicectomía por video» → laparoscópica); "" = no lo dice
+  function viaDe(texto) {
+    const t = plano(texto || "");
+    if (/endosc/.test(t)) return "endoscopica";
+    if (/video|laparosc|robot/.test(t)) return "laparoscopica";
+    if (/percut/.test(t)) return "percutanea";
+    if (/convencional|abiert|laparotom/.test(t)) return "convencional";
+    return "";
+  }
+  const viaParecida = (a, b) => a === b || (a === "laparoscopica" && b === "robotica") || (a === "robotica" && b === "laparoscopica");
+
+  // Valor de la obra social para el código. Por el código de la obra social, o por la equivalencia AAC; en ese caso, si el
+  // valor es de una vía (video) y la cirugía de otra (convencional), es otra cirugía y no se usa.
+  function valorOS(datos, os, codigoAAC, codigoOS, fecha, abordaje = "") {
     if (!os) return null;
+    const directo = (v) => codigoOS && mismoCodigo(v.codigo, codigoOS);
+    const via = (v) => v.abordaje ?? viaDe(v.descripcion);
     const c = datos.valores.filter((v) => v.obra_social === os && v.vigencia <= fecha &&
-      ((codigoAAC && v.codigo_aac === codigoAAC) || (codigoOS && mismoCodigo(v.codigo, codigoOS))));
-    c.sort((a, b) => (b.tipo === "honorario") - (a.tipo === "honorario") || b.vigencia.localeCompare(a.vigencia));
+      (directo(v) || (codigoAAC && v.codigo_aac === codigoAAC && !(via(v) && abordaje && !viaParecida(via(v), abordaje)))));
+    const coincide = (v) => (abordaje && via(v) && viaParecida(via(v), abordaje) ? 2 : !via(v) ? 1 : 0);
+    c.sort((a, b) => directo(b) - directo(a) || coincide(b) - coincide(a) || (b.tipo === "honorario") - (a.tipo === "honorario") || b.vigencia.localeCompare(a.vigencia));
     return c[0] || null;
   }
 
   // Lo cobrado la última vez por la misma práctica (mismo código AAC, o mismo código de la obra social)
-  function ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, id) {
+  function ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, id, abordaje = "") {
     if (!os || !(codigoAAC || codigoOS)) return null;
     return datos.prestaciones.filter((p) => !p.borrada && p.obra_social === os && ((codigoAAC && p.codigo_aac === codigoAAC) ||
       (codigoOS && p.codigo_os === codigoOS)) && (p.rol || "cirujano") === rol &&
+      !(abordaje && p.abordaje && !viaParecida(p.abordaje, abordaje)) &&
       (p.pct || 100) === pct && p.monto_cobrado > 0 && p.id !== id).sort((a, b) => (b.fecha_cobro || "").localeCompare(a.fecha_cobro || ""))[0] || null;
   }
 
@@ -246,11 +263,12 @@ const Motor = (() => {
     const factor = (rol === "ayudante" ? reglas.assistant_pct / 100 : 1) * pct / 100;
     const extra = (rol === "ayudante" ? ` × ${reglas.assistant_pct} % (ayudante)` : "") + (pct !== 100 ? ` × ${pct} % (operación múltiple)` : "");
     const tabla = os === "PARTICULAR" ? PARTICULAR_TABLA : os;
-    const fila = valorOS(datos, tabla, codigoAAC, codigoOS, p.fecha);
-    if (fila && fila.tipo === "honorario") {
+    const fila = valorOS(datos, tabla, codigoAAC, codigoOS, p.fecha, p.abordaje || "");
+    // Lo más nuevo manda: un cobro real posterior a la vigencia de la lista dice cuánto se paga de verdad
+    const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id, p.abordaje || "");
+    if (fila && fila.tipo === "honorario" && !(cobro && (cobro.fecha_cobro || "") >= fila.vigencia)) {
       return [Math.round(fila.monto * factor), `${tabla} ${fila.codigo} vigente desde ${fila.vigencia.slice(0, 7)}${extra} · ${fila.fuente || "s/fuente"}`];
     }
-    const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id);
     if (cobro) return [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC || codigoOS} (${cobro.fecha_cobro})`];
     let modulo = "";
     const vp = os === "PAMI" && codigoOS ? valorPami(codigoOS, p.fecha) : null;
@@ -439,5 +457,5 @@ const Motor = (() => {
   }
 
   return { plano, sugerir, buscar, infoCodigo, honorarioAAC, obraSocialCanonica, estimar, completar, sugerencias, fechasCobro,
-           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami };
+           resumen, cobros, plazosReales, vencida, cargarCatalogos, catalogos, valorUQ, CONSULTA, equivalenteAAC, valorPami, viaDe };
 })();

@@ -375,6 +375,7 @@ const Lector = (() => {
     if (/laparosc|videolap|\btapp\b|\btep\b|\betep\b|\bipom\b/.test(t)) return "laparoscopica";
     if (/percut/.test(t)) return "percutanea";
     if (/endosc/.test(t)) return "endoscopica";
+    if (/\bvideo/.test(t)) return "laparoscopica"; // «VIDEOCOLECISTECTOMIA»
     if (/laparotom|convencional|abiert|lichtenstein|\brives\b|stoppa/.test(t)) return "convencional";
     return "";
   }

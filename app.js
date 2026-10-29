@@ -737,7 +737,7 @@ function importarAncho({ archivo, lectura, interpretado: { columnas, items } }, 
         const previo = propios.find((v) => v.obra_social === os && sinSeparadores(v.codigo) === sinSeparadores(it.codigo) && v.vigencia === vigencia);
         registros.push({ id: previo?.id, obra_social: os, codigo: f.clase === "aac" ? it.codigo : sinSeparadores(it.codigo),
           codigo_aac: f.clase === "aac" ? (e.es === "aac" ? e.aac : it.codigo) : f.equivalencias ? e.aac || null : null, nomenclador: f.clase,
-          descripcion: it.descripcion, monto: Math.round(it.montos[c.j] * 100) / 100, vigencia, tipo: f["tipo_" + c.j] || "honorario",
+          descripcion: it.descripcion, abordaje: Motor.viaDe(it.descripcion), monto: Math.round(it.montos[c.j] * 100) / 100, vigencia, tipo: f["tipo_" + c.j] || "honorario",
           fuente: `Importado de «${archivo.name}»`, confianza: "importado", lote, archivo: archivo.name });
       }
     }
@@ -811,7 +811,7 @@ function importarLargo(lista, osDe) {
     const registros = [...valores, ...(f.agregar_nuevas ? nuevos.map((g) => ({ ...g, nueva: true })) : [])].map((g, k) => {
       const previo = propios.find((v) => v.obra_social === g.os && sinSeparadores(v.codigo) === sinSeparadores(g.codigo) && v.vigencia === vigencia);
       return { id: previo?.id, obra_social: g.os, codigo: sinSeparadores(g.codigo), codigo_aac: aac.get(g.codigo) || null, nomenclador: nom.sistema,
-        descripcion: g.descripcion + (g.min !== g.max ? ` (según plan ${pesos(g.min)} a ${pesos(g.max)})` : ""), monto: g.monto, vigencia,
+        descripcion: g.descripcion + (g.min !== g.max ? ` (según plan ${pesos(g.min)} a ${pesos(g.max)})` : ""), abordaje: Motor.viaDe(g.descripcion), monto: g.monto, vigencia,
         tipo: (g.nueva ? f.tipo_nuevas : f["tipo_" + k]) || "honorario", fuente: `Importado de «${g.archivo || nombresArchivos[0]}» (${g.os_texto})`, confianza: "importado", lote,
         archivo: nombresArchivos.length === 1 ? nombresArchivos[0] : `${nombresArchivos.length} archivos` };
     });
@@ -1217,7 +1217,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "26"; // igual que VERSION en sw.js
+const VERSION_APP = "27"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
