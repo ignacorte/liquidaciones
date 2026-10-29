@@ -116,22 +116,23 @@ const Importador = (() => {
   // Encabezados que no son el honorario del médico (por defecto se ignoran). «Galeno» no: es también una obra social
   const NO_HONORARIO = /gasto|insumo|derecho|sanatori|pension|material|anestes|ayudant|\buq\b|unidad|cant|porc|%|iva|cama/;
 
-  // Columnas: código (la de más códigos), descripción (la de más texto) y columnas de montos (números grandes)
-  function interpretar(lectura) {
+  // Columnas: código (la de más códigos), descripción (la de al lado, o la de más texto) y columnas de montos.
+  // Formato «largo» (un renglón por práctica y obra social, como el listado de valores del sistema del sanatorio):
+  // si hay una columna de obras sociales, cada renglón es el valor de esa práctica para esa obra social.
+  function interpretar(lectura, obraSocial = () => null) {
     const filas = lectura.filas.filter((f) => f.some((c) => String(c).trim()));
     const ancho = Math.max(0, ...filas.map((f) => f.length));
     const cuenta = (prueba) => Array.from({ length: ancho }, (_, j) => filas.filter((f) => prueba(f[j])).length);
     const codigos = cuenta(esCodigo), textos = cuenta(esTexto), numeros = cuenta((c) => monto(c) > 0);
     // La de códigos: la primera de la izquierda con casi tantos códigos como la que más (los montos enteros también «parecen» códigos)
     const colCodigo = codigos.findIndex((n) => n >= 0.6 * Math.max(...codigos));
-    if (colCodigo < 0 || codigos[colCodigo] < 2) return { columnas: [], items: [] };
-    const colDesc = textos.map((t, j) => (j === colCodigo ? -1 : t)).reduce((m, t, j, a) => (t > a[m] ? j : m), colCodigo === 0 ? 1 : 0);
-    const esFila = (f) => esCodigo(f[colCodigo]) && f.some((c, j) => j !== colCodigo && monto(c) > 0);
-    const datos = filas.filter(esFila);
-    const posibles = Array.from({ length: ancho }, (_, j) => j).filter((j) => j !== colCodigo && j !== colDesc && numeros[j] >= Math.max(2, datos.length * 0.3));
+    if (colCodigo < 0 || codigos[colCodigo] < 1) return { columnas: [], items: [] };
+    const maxTexto = Math.max(...textos.filter((_, j) => j !== colCodigo));
+    const colDesc = textos[colCodigo + 1] >= 0.5 * maxTexto ? colCodigo + 1
+      : textos.map((t, j) => (j === colCodigo ? -1 : t)).reduce((m, t, j, a) => (t > a[m] ? j : m), colCodigo === 0 ? 1 : 0);
+    const primeraConCodigo = filas.findIndex((f) => esCodigo(f[colCodigo]));
     // Encabezado de cada columna: el último renglón sin datos con texto en esa columna, antes del primer dato
-    const primera = filas.findIndex(esFila);
-    const encabezado = (j) => {
+    const encabezado = (j, primera) => {
       for (let i = primera - 1; i >= 0 && i >= primera - 6; i--) {
         const f = filas[i];
         if (lectura.tabla) { if (esTitulo(f[j])) return f[j]; continue; }
@@ -142,19 +143,75 @@ const Importador = (() => {
       }
       return "";
     };
+    const titulo = (j) => plano(encabezado(j, primeraConCodigo));
+    // Columnas que nunca son montos: códigos, números de obra social, CUIT, IVA…
+    const noMonto = (j) => /cod|nro|numero|^id$|cuit|afiliado|iva|plan/.test(titulo(j));
+    // ¿Columna de obras sociales?
+    const conCodigo = filas.filter((f) => esCodigo(f[colCodigo]));
+    let colOS = -1;
+    if (lectura.tabla) {
+      const puntaje = Array.from({ length: ancho }, (_, j) => {
+        if (j === colCodigo || j === colDesc) return 0;
+        const n = conCodigo.filter((f) => typeof f[j] === "string" && obraSocial(f[j])).length;
+        return (/os_nom|obra ?social|financiador|cobertura|prepaga|entidad|convenio/.test(titulo(j)) ? n * 2 : n);
+      });
+      const mejor = puntaje.indexOf(Math.max(...puntaje));
+      const distintos = new Set(conCodigo.map((f) => String(f[colCodigo]))).size;
+      if (puntaje[mejor] >= Math.max(3, conCodigo.length * 0.3) && conCodigo.length >= distintos * 2) colOS = mejor;
+    }
+    const esFila = (f) => esCodigo(f[colCodigo]) && f.some((c, j) => j !== colCodigo && j !== colOS && !noMonto(j) && monto(c) > 0);
+    const datos = filas.filter(esFila);
+    const primera = filas.findIndex(esFila);
+    const posibles = Array.from({ length: ancho }, (_, j) => j)
+      .filter((j) => j !== colCodigo && j !== colDesc && j !== colOS && !noMonto(j) && numeros[j] >= Math.max(1, datos.length * 0.3));
     const columnas = posibles.map((j) => {
       const vals = datos.map((f) => monto(f[j])).filter((x) => x > 0);
-      const nombre = encabezado(j) || `Columna ${j + 1}`;
-      return { j, nombre, ejemplo: vals[0], chica: Math.max(...vals) < 1000, ignorar: NO_HONORARIO.test(plano(nombre)) || Math.max(...vals) < 1000,
-        modulo: /modulo|total|institu|integral/.test(plano(nombre)) };
+      const nombre = encabezado(j, primera) || `Columna ${j + 1}`;
+      return { j, nombre, ejemplo: vals[0], ignorar: NO_HONORARIO.test(plano(nombre)) || Math.max(...vals) < 1000,
+        modulo: /modulo|institu|integral/.test(plano(nombre)) };
     });
     const items = datos.map((f) => ({
       codigo: String(f[colCodigo]).trim(), descripcion: String(f[colDesc] ?? "").replace(/\s+/g, " ").trim(),
+      os_texto: colOS >= 0 ? String(f[colOS]).trim() : "",
       montos: Object.fromEntries(columnas.map((c) => [c.j, monto(f[c.j])]).filter(([, x]) => x > 0)),
     }));
+    if (colOS >= 0) {
+      // Largo: una columna de valor (la de «total» si hay; si no, la primera útil)
+      const total = columnas.find((c) => /^total$|^total[^a-z]|importe|valor|monto/.test(plano(c.nombre))) || columnas.find((c) => !c.ignorar) || columnas[0];
+      for (const c of columnas) c.ignorar = c !== total;
+      return { largo: true, columnaOS: encabezado(colOS, primera) || "Obra social", columnas, items };
+    }
     // Mismo código repetido (p. ej. una hoja por categoría): queda el primero
     const vistos = new Set();
     return { columnas, items: items.filter((it) => (vistos.has(it.codigo) ? false : vistos.add(it.codigo))) };
+  }
+
+  // Formato largo → un valor por práctica y obra social de la app. De cada obra social del archivo, el valor más repetido
+  // entre sus planes; si varias del archivo son la misma obra social («GALENO» y «GALENO ART LABOULAYE»), gana la principal.
+  function porObraSocial(items, j, obraSocial) {
+    const grupos = new Map();
+    for (const it of items) {
+      const x = it.montos[j];
+      if (!x) continue;
+      const k = it.codigo + "|" + it.os_texto;
+      if (!grupos.has(k)) grupos.set(k, { codigo: it.codigo, descripcion: it.descripcion, os_texto: it.os_texto, valores: [] });
+      grupos.get(k).valores.push(x);
+    }
+    const variante = /\b(art|lby|lbye|laboulaye|seguros?|aseguradora)\b|\(lby/;
+    const elegidos = new Map(), sinOS = new Map();
+    for (const g of grupos.values()) {
+      const veces = new Map();
+      for (const v of g.valores) veces.set(v, (veces.get(v) || 0) + 1);
+      g.monto = [...veces].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
+      g.min = Math.min(...g.valores); g.max = Math.max(...g.valores); g.planes = g.valores.length;
+      g.os = obraSocial(g.os_texto);
+      if (!g.os) { sinOS.set(g.os_texto, (sinOS.get(g.os_texto) || 0) + 1); continue; }
+      const nombre = plano(g.os_texto.replace(/^\s*\d+\s*-\s*/, ""));
+      g.puntaje = (variante.test(nombre) ? -1000 : 0) + g.planes * 10 - nombre.length / 100;
+      const k = g.codigo + "|" + g.os, previo = elegidos.get(k);
+      if (!previo || g.puntaje > previo.puntaje) elegidos.set(k, g);
+    }
+    return { valores: [...elegidos.values()], sinReconocer: [...sinOS.keys()] };
   }
 
   // Vigencia escrita en el archivo («vigencia octubre 2026», «a partir del 01/11/2026», «valores 11/2026») → «2026-11»
@@ -180,5 +237,5 @@ const Importador = (() => {
     return "";
   }
 
-  return { leer, interpretar, vigencia, obraSocial, monto, filasTexto };
+  return { leer, interpretar, porObraSocial, vigencia, obraSocial, monto, filasTexto };
 })();

@@ -658,10 +658,12 @@ async function importarValores(archivo) {
   aviso("Leyendo «" + archivo.name + "»…");
   let lectura;
   try { lectura = await Importador.leer(archivo, (t) => aviso(t)); } catch (e) { return aviso(e.message); }
-  const { columnas, items } = Importador.interpretar(lectura);
+  const d = datos(), osDe = (t) => Motor.obraSocialCanonica(d, t);
+  const interpretado = Importador.interpretar(lectura, osDe);
+  const { columnas, items } = interpretado;
   if (!items.length || !columnas.length)
     return aviso("No encontré renglones con código y monto en «" + archivo.name + "». La lista tiene que tener una columna de códigos y una de montos.");
-  const d = datos();
+  if (interpretado.largo) return importarLargo(archivo, lectura, interpretado, osDe);
   const osArchivo = Importador.obraSocial(d, archivo.name, lectura.texto) || $("#v-os").value;
   const nombres = [...new Set(d.obras.map((o) => o.nombre).concat("MÍNIMO ÉTICO CMPC"))];
   // Cada columna de montos: de qué obra social es (por su encabezado) o, la primera útil, de la obra social del archivo
@@ -704,6 +706,50 @@ async function importarValores(archivo) {
     const n = await recalcularPendientes();
     $("#v-os").value = elegidas[0] && f["col_" + elegidas[0].j];
     aviso(`${registros.length} valores guardados (${[...new Set(elegidas.map((c) => f["col_" + c.j]))].join(", ")}); ${n} pendientes recalculados.`);
+  });
+}
+
+// Listado del sistema del sanatorio: un renglón por práctica, obra social y plan
+function importarLargo(archivo, lectura, { columnas, items, columnaOS }, osDe) {
+  const col = columnas.find((c) => !c.ignorar) || columnas[0];
+  const { valores, sinReconocer } = Importador.porObraSocial(items, col.j, osDe);
+  if (!valores.length) return aviso(`«${archivo.name}»: ninguna obra social del archivo coincide con las tuyas (Valores → Obras sociales).`);
+  const practicas = [...new Map(valores.map((g) => [g.codigo, g.descripcion])).entries()];
+  const totalOS = new Set(items.map((it) => it.os_texto)).size;
+  const sugerencias = practicas.slice(0, 30).map(([, desc]) => Motor.sugerir("AAC", desc).slice(0, 3));
+  valores.sort((a, b) => a.codigo.localeCompare(b.codigo) || a.os.localeCompare(b.os));
+  dialogo(`<h2>Importar valores</h2>
+    <p class="ayuda">«${esc(archivo.name)}»: ${practicas.length === 1 ? "1 práctica" : practicas.length + " prácticas"} con valores para ${totalOS} obras sociales
+      y planes (columna «${esc(columnaOS)}»; valor de la columna «${esc(col.nombre)}»). Se cargan <b>${valores.length} valores</b> para tus obras sociales.</p>
+    <div class="grid">
+      <label>Vigentes desde<input type="month" name="vigencia" value="${Importador.vigencia(lectura.texto + "\\n" + archivo.name) || mes()}"></label>
+      <label>Tipo<select name="tipo"><option value="honorario">Honorario del médico</option><option value="modulo">Módulo (total institución)</option></select></label>
+      ${practicas.slice(0, 30).map(([cod, desc], i) => `<label class="ancho">${esc(cod)} · ${esc(desc)} equivale en la AAC a<select name="aac_${i}">
+        ${sugerencias[i].map((c, k) => `<option value="${esc(c.code)}" ${k === 0 ? "selected" : ""}>${esc(c.code)} · ${esc(c.name.slice(0, 70))}</option>`).join("")}
+        <option value="">— ninguna (solo por el código ${esc(cod)}) —</option></select></label>`).join("")}
+    </div>
+    <p class="ayuda">Con la equivalencia AAC el valor se usa en tus cirugías aunque no tengan cargado el código del sanatorio.</p>
+    <div class="tabla"><table><tr><th>Código</th><th>Obra social</th><th>En el archivo</th><th class="n">Valor</th></tr>
+      ${valores.map((g) => `<tr><td>${esc(g.codigo)}</td><td>${esc(g.os)}</td><td><small>${esc(g.os_texto)}</small></td>
+        <td class="n">${pesos(g.monto)}${g.min !== g.max ? `<br><small>según plan ${pesos(g.min)} a ${pesos(g.max)}</small>` : ""}</td></tr>`).join("")}
+    </table></div>
+    ${sinReconocer.length ? `<details><summary class="ayuda">${sinReconocer.length} obras sociales del archivo que no tenés cargadas (no se importan)</summary>
+      <p class="ayuda">${sinReconocer.map(esc).join(" · ")}</p><p class="ayuda">Para importarlas, agregalas en Valores → Obras sociales y volvé a importar el archivo.</p></details>` : ""}`,
+  async (f) => {
+    if (!f.vigencia) { aviso("Falta desde cuándo rigen los valores."); return false; }
+    const vigencia = f.vigencia.slice(0, 7) + "-01", lote = "lote-" + Date.now(), sin = (c) => String(c).replace(/[.\-\s]/g, "");
+    const aac = new Map(practicas.slice(0, 30).map(([cod], i) => [cod, f["aac_" + i] || null]));
+    const propios = Almacen.doc.valores.filter((v) => !v.borrada);
+    const registros = valores.map((g) => {
+      const previo = propios.find((v) => v.obra_social === g.os && sin(v.codigo) === sin(g.codigo) && v.vigencia === vigencia);
+      return { id: previo?.id, obra_social: g.os, codigo: sin(g.codigo), codigo_aac: aac.get(g.codigo) || null,
+        descripcion: g.descripcion + (g.min !== g.max ? ` (según plan ${pesos(g.min)} a ${pesos(g.max)})` : ""), monto: g.monto, vigencia,
+        tipo: f.tipo || "honorario", fuente: `Importado de «${archivo.name}» (${g.os_texto})`, confianza: "importado", lote, archivo: archivo.name };
+    });
+    await Almacen.guardarVarios("valores", registros);
+    const n = await recalcularPendientes();
+    $("#v-os").value = registros[0].obra_social;
+    aviso(`${registros.length} valores guardados en ${new Set(registros.map((r) => r.obra_social)).size} obras sociales; ${n} pendientes recalculados.`);
   });
 }
 
@@ -1091,7 +1137,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "20"; // igual que VERSION en sw.js
+const VERSION_APP = "21"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
