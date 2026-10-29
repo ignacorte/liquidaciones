@@ -455,38 +455,44 @@ const Almacen = (() => {
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
   }
+  // Uno que falla no traba a los demás (sigue con el resto; al final se informa el error). Sin acceso a Google: se corta.
   async function subirAdjuntos() {
     await leerAdjuntos();
-    while (adjuntos.length) {
-      const a = adjuntos[0];
-      if (a.renombrar) {
-        // Renombrar un documento ya subido (cambió el paciente o el n° de circuito)
-        // (si el archivo ya no está en el Drive, se descarta: no traba la cola)
-        const r = await drive(`${API}/${a.renombrar}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: a.nombre }) })
-          .catch((e) => { if (/ 404$/.test(e.message)) return null; throw e; });
-        if (!r) { adjuntos.shift(); await guardarAdjuntos(); continue; }
-        const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
-        if (i >= 0) {
-          const p = doc.prestaciones[i];
-          doc.prestaciones[i] = { ...p, actualizado: Date.now(), [a.lista]: (p[a.lista] || []).map((x) => (x.id === a.renombrar ? { ...x, nombre: a.nombre } : x)) };
-          cambios++;
-        }
-        adjuntos.shift(); await guardarAdjuntos(); await escribirLocal();
-        continue;
-      }
-      const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
-      const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), await carpetaRuta(a.ruta));
+    let error = null;
+    for (const a of [...adjuntos]) {
+      try { await subirUno(a); }
+      catch (e) { if (e.reconectar) throw e; error = e; }
+    }
+    if (error) throw error;
+  }
+  const quitar = async (a) => { adjuntos = adjuntos.filter((x) => x !== a); await guardarAdjuntos(); };
+  async function subirUno(a) {
+    if (a.renombrar) {
+      // Renombrar un documento ya subido (cambió el paciente o el n° de circuito)
+      // (si el archivo ya no está en el Drive, se descarta: no traba la cola)
+      const r = await drive(`${API}/${a.renombrar}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: a.nombre }) })
+        .catch((e) => { if (/ 404$/.test(e.message)) return null; throw e; });
+      if (!r) return quitar(a);
       const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
       if (i >= 0) {
-        const p = doc.prestaciones[i], campo = a.campo || "doc_foja", lista = a.lista || "foja_archivos";
-        doc.prestaciones[i] = { ...p, [campo]: true, actualizado: Date.now(),
-          [lista]: [...(p[lista] || []), { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre }] };
+        const p = doc.prestaciones[i];
+        doc.prestaciones[i] = { ...p, actualizado: Date.now(), [a.lista]: (p[a.lista] || []).map((x) => (x.id === a.renombrar ? { ...x, nombre: a.nombre } : x)) };
         cambios++;
       }
-      adjuntos.shift();
-      await guardarAdjuntos();
-      await escribirLocal();
+      await quitar(a); await escribirLocal();
+      return;
     }
+    const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
+    const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), await carpetaRuta(a.ruta));
+    const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
+    if (i >= 0) {
+      const p = doc.prestaciones[i], campo = a.campo || "doc_foja", lista = a.lista || "foja_archivos";
+      doc.prestaciones[i] = { ...p, [campo]: true, actualizado: Date.now(),
+        [lista]: [...(p[lista] || []), { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre }] };
+      cambios++;
+    }
+    await quitar(a);
+    await escribirLocal();
   }
   async function subirArchivo(nombre, archivo, padre) {
     const meta = { name: nombre, parents: [padre] }, limite = "liq" + Date.now();

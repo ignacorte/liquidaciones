@@ -596,7 +596,8 @@ async function leer(tipo, archivos, textoPegado) {
     aviso(e.message);
     if (e.texto !== undefined && !e.capturaApp) {
       $("#texto-leido").textContent = e.texto;
-      mostrarRevision([{ fecha: hoy(), tipo: tipo === "parte" ? "cirugia" : "consulta", paciente: "", rol: "cirujano", pct: 100, incluir: true, origen: "manual" }], "Completar a mano");
+      mostrarRevision([{ fecha: hoy(), tipo: tipo === "parte" ? "cirugia" : "consulta", paciente: "", rol: "cirujano", pct: 100, incluir: true, origen: "manual",
+        ...(tipo === "parte" && esAnestesia() && archivos?.length ? { _fotos: archivos.map((a) => ({ archivo: a, clase: "", reconocida: false })) } : {}) }], "Completar a mano");
     } else $("#cargar-botones").hidden = false;
   } finally { $("#leyendo").hidden = true; }
 }
@@ -690,8 +691,17 @@ async function guardarDocumentos(p, docs) {
       n++;
     }
   }
-  if (n && Almacen.tieneToken()) Almacen.sincronizar().then(refrescar).catch(() => {});
+  if (n) informarSubida();
   return n;
+}
+// Después de guardar documentos: sube y dice claramente si llegaron al Drive o por qué no (quedan en el celular)
+async function informarSubida() {
+  if (!Almacen.tieneToken()) return setTimeout(() => aviso("Los documentos quedaron guardados en el celular. Para subirlos al Drive, tocá «Subir a Drive» arriba (se venció el acceso de Google)."), 3600);
+  try { await Almacen.sincronizar(); } catch {}
+  refrescar();
+  const quedan = await Almacen.adjuntosPendientes();
+  aviso(quedan ? `No se pudo subir ${quedan === 1 ? "1 documento" : quedan + " documentos"} al Drive: ${Almacen.errorAdjuntos || Almacen.estado}. Quedan en el celular y se reintenta solo.`
+    : "✓ Documentos subidos a tu Drive (Liquidaciones › Anestesiología)");
 }
 
 async function guardarLote() {
@@ -701,20 +711,33 @@ async function guardarLote() {
   const incompleta = elegidas.find((f) => faltantes(f).length);
   if (incompleta) return aviso(`${incompleta.paciente || "Un paciente"}: falta ${faltantes(incompleta).join(", ")}`);
   const existentes = datos().prestaciones;
-  const repetidas = [];
+  const repetidas = [], completadas = [];
   let n = 0, fojas = 0;
   try {
     for (const f of elegidas) {
-      const ya = existentes.some((p) => p.fecha === f.fecha && p.tipo === f.tipo && (p.paciente || "").toLowerCase() === (f.paciente || "").trim().toLowerCase() &&
-        (p.procedimiento || "") === (f.procedimiento || ""));
-      if (ya) { repetidas.push(f.paciente); continue; }
+      const mismo = (p) => p.fecha === f.fecha && (p.paciente || "").trim().toLowerCase() === (f.paciente || "").trim().toLowerCase();
+      const ya = existentes.find((p) => mismo(p) && p.tipo === f.tipo && (p.procedimiento || "") === (f.procedimiento || ""));
+      const docs = documentosDe(f);
+      if (ya || (Object.keys(docs).length && esAnestesia())) {
+        // Ya cargado: no se duplica, pero las fotos de los documentos se agregan a ese paciente (antes se descartaban)
+        const existente = ya || existentes.find((p) => mismo(p) && p.especialidad === "anestesia");
+        if (existente && Object.keys(docs).length) {
+          const marcas = Object.fromEntries(Object.keys(docs).map((c) => [DOCS[c].campo, true]));
+          const guardada = await guardarPrestacion({ ...existente, ...marcas });
+          fojas += await guardarDocumentos(guardada, docs);
+          completadas.push(f.paciente);
+          continue;
+        }
+        if (ya) { repetidas.push(f.paciente); continue; }
+      }
       const guardada = await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
       fojas += await guardarDocumentos(guardada, documentosDe(f));
       n++;
     }
     const mesGuardado = elegidas[0].fecha.slice(0, 7);
     aviso(`Guardadas ${n} en ${nombreMes(mesGuardado)}` + (repetidas.length ? ` · ya estaban: ${repetidas.join(", ")}` : "") +
-      (fojas ? ` · documentos → tu Drive: Liquidaciones › Anestesiología${Almacen.tieneToken() ? "" : " (se suben al conectar)"}` : ""));
+      (completadas.length ? ` · documentos agregados a ${completadas.join(", ")}` : "") +
+      (fojas ? ` · ${fojas} ${fojas === 1 ? "documento" : "documentos"} subiendo a tu Drive…` : ""));
     cerrarRevision();
     $("#mes").value = mesGuardado;
     ir("prestaciones");
@@ -1665,7 +1688,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "40"; // igual que VERSION en sw.js
+const VERSION_APP = "41"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
