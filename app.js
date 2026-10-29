@@ -123,7 +123,7 @@ function ir(vista) {
   $$("nav.abajo button").forEach((b) => b.classList.toggle("activa", b.dataset.vista === vista));
   const afuera = ["bienvenida", "pin"].includes(vista);
   $("nav.abajo").hidden = afuera;
-  $("#bloquear").hidden = afuera || !Almacen.tienePin();
+  $("#bloquear").hidden = afuera;
   $("#cambiar-rama").hidden = afuera;
   $("#titulo").textContent = TITULOS[vista];
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
@@ -1389,12 +1389,7 @@ async function arrancar() {
   });
   $("#salir").addEventListener("click", async (ev) => {
     ev.preventDefault();
-    // Nunca se borra del celular algo que no esté a salvo en el Drive
-    if (!Almacen.doc.cuenta) return aviso("Tus datos están solo en este celular: conectá Google Drive (o descargá una copia) antes de desconectar.");
-    try { await Almacen.sincronizar(); } catch { /* se avisa abajo */ }
-    if (Almacen.pendiente || Almacen.estado !== "al día") return aviso("No se pudo subir lo último a tu Drive: no se desconecta para no perder datos. Probá de nuevo con señal.");
-    if (!confirm("Tus datos están a salvo en tu Drive. Se borran de ESTE celular junto con el PIN (para usarla de nuevo: entrar con Google). ¿Seguir?")) return;
-    await Almacen.desconectar(); location.reload();
+    await cerrarCuenta();
   });
   $("#tabla-os").addEventListener("click", (ev) => {
     const tr = ev.target.closest("tr[data-os]");
@@ -1469,7 +1464,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "31"; // igual que VERSION en sw.js
+const VERSION_APP = "32"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1571,7 +1566,7 @@ function configurarSeguridad() {
     await Almacen.olvidePin();
     location.reload();
   });
-  $("#bloquear").addEventListener("click", bloquearYa);
+  $("#bloquear").addEventListener("click", () => menuConfiguracion().catch((e) => aviso(e.message)));
   $("#cambiar-pin").addEventListener("click", () => pedirPin("cambiar"));
   // Bloqueo automático: N minutos (Valores → Mi cuenta) sin tocar la app, o al volver a ella después de ese tiempo
   let ultima = Date.now();
@@ -1584,6 +1579,46 @@ function configurarSeguridad() {
 }
 
 // Se recarga la página: no queda en memoria ni en pantalla ningún dato de pacientes
+// ⚙️ Configuración (arriba a la derecha): rama del administrador, cerrar sesión, cerrar la cuenta en este celular…
+async function menuConfiguracion() {
+  const admin = await esAdmin(), dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
+  if (dlg.open) return;
+  cuerpo._actual = null;
+  const cuenta = Almacen.doc.cuenta;
+  cuerpo.innerHTML = `<h2>Configuración</h2>
+    <p class="ayuda">${cuenta ? "Cuenta: " + esc(cuenta) : "Sin Google Drive: los datos están solo en este celular."} · ${ESPECIALIDADES[esAnestesia() ? "anestesia" : "cirugia"]}</p>
+    <div style="display:grid;gap:8px">
+      ${admin ? `<button class="boton secundario" data-menu="rama">⇄ Pasar a ${esAnestesia() ? "Cirugía" : "Anestesiología"}</button>` : ""}
+      <button class="boton secundario" data-menu="valores">⚙️ Valores y mi cuenta</button>
+      <button class="boton secundario" data-menu="actualizar">⟳ Buscar actualización</button>
+      ${Almacen.tienePin() ? '<button class="boton secundario" data-menu="sesion">🔒 Cerrar sesión <small>(pide el PIN para volver)</small></button>' : ""}
+      <button class="boton peligro" data-menu="cuenta">Cerrar cuenta en este celular</button>
+      <button class="boton secundario" data-menu="cerrar">Volver</button>
+    </div>
+    <p class="ayuda">«Cerrar cuenta» quita la cuenta y los datos de este celular solo si todo está guardado en tu Drive; para volver: ingresar con Google.</p>`;
+  cuerpo.onclick = async (ev) => {
+    const b = ev.target.closest("[data-menu]");
+    if (!b) return;
+    dlg.close();
+    const accion = b.dataset.menu;
+    if (accion === "rama") await cambiarRama(esAnestesia() ? "cirugia" : "anestesia");
+    else if (accion === "valores") ir("valores");
+    else if (accion === "actualizar") { aviso("Buscando la versión nueva…"); actualizarAhora(); }
+    else if (accion === "sesion") await bloquearYa();
+    else if (accion === "cuenta") await cerrarCuenta();
+  };
+  dlg.showModal();
+}
+
+// Cerrar la cuenta en este celular: nunca se borra del celular algo que no esté a salvo en el Drive
+async function cerrarCuenta() {
+  if (!Almacen.doc.cuenta) return aviso("Tus datos están solo en este celular: conectá Google Drive (o descargá una copia) antes de cerrar la cuenta.");
+  try { await Almacen.sincronizar(); } catch { /* se avisa abajo */ }
+  if (Almacen.pendiente || Almacen.estado !== "al día") return aviso("No se pudo subir lo último a tu Drive: no se cierra la cuenta para no perder datos. Probá de nuevo con señal.");
+  if (!confirm("Tus datos están a salvo en tu Drive. Se quitan de ESTE celular junto con el PIN (para volver: ingresar con Google). ¿Seguir?")) return;
+  await Almacen.desconectar(); location.reload();
+}
+
 async function bloquearYa() {
   await Almacen.bloquear();
   location.reload();
