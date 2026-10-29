@@ -157,7 +157,8 @@ const Importador = (() => {
       });
       const mejor = puntaje.indexOf(Math.max(...puntaje));
       const distintos = new Set(conCodigo.map((f) => String(f[colCodigo]))).size;
-      if (puntaje[mejor] >= Math.max(3, conCodigo.length * 0.3) && conCodigo.length >= distintos * 2) colOS = mejor;
+      const conTitulo = /os_nom|obra ?social|financiador|cobertura|prepaga|entidad|convenio/.test(titulo(mejor));
+      if ((conTitulo ? puntaje[mejor] >= 2 : puntaje[mejor] >= Math.max(3, conCodigo.length * 0.3)) && conCodigo.length >= distintos * 2) colOS = mejor;
     }
     const esFila = (f) => esCodigo(f[colCodigo]) && f.some((c, j) => j !== colCodigo && j !== colOS && !noMonto(j) && monto(c) > 0);
     const datos = filas.filter(esFila);
@@ -274,5 +275,9 @@ const Importador = (() => {
     return { sistema, porCodigo, nAAC, nPAMI, conDesc };
   }
 
-  return { leer, interpretar, porObraSocial, nomenclador, vigencia, obraSocial, monto, filasTexto };
+  // Nombre para una obra social nueva: «6004 - SAN PEDRO (LBY)» → «SAN PEDRO» (las variantes de una sede se juntan)
+  const nombreBase = (t) => String(t).replace(/^\s*\d+\s*-\s*/, "").replace(/\(\s*lbye?\s*\)|\blbye?\b|\blaboulaye\b/gi, " ")
+    .replace(/\s+/g, " ").replace(/[\s.,\-(]+$/, "").trim().toUpperCase();
+
+  return { leer, interpretar, porObraSocial, nomenclador, nombreBase, vigencia, obraSocial, monto, filasTexto };
 })();

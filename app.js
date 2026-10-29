@@ -746,17 +746,23 @@ function importarAncho({ archivo, lectura, interpretado: { columnas, items } }, 
 // Listados del sistema del sanatorio: un renglón por práctica, obra social y plan (uno o varios archivos)
 function importarLargo(lista, osDe) {
   const d = datos();
-  let valores = [], items = [];
+  let valores = [], items = [], nuevos = [];
   const sinReconocer = new Set(), columnasUsadas = new Set();
   for (const { archivo, interpretado: { columnas, items: its } } of lista) {
     const col = columnas.find((c) => !c.ignorar) || columnas[0];
     columnasUsadas.add(col.nombre);
     const r = Importador.porObraSocial(its, col.j, osDe);
     valores = valores.concat(r.valores.map((g) => ({ ...g, archivo: archivo.name }))); r.sinReconocer.forEach((x) => sinReconocer.add(x)); items = items.concat(its);
+    // Las que no están en la app: se pueden agregar como obras sociales nuevas (con sus valores)
+    const faltan = new Set(r.sinReconocer);
+    nuevos = nuevos.concat(Importador.porObraSocial(its.filter((it) => faltan.has(it.os_texto)), col.j, (t) => Importador.nombreBase(t) || null)
+      .valores.map((g) => ({ ...g, archivo: archivo.name })));
   }
+  const obrasNuevas = new Map();
+  for (const g of nuevos) obrasNuevas.set(g.os, [...new Set([...(obrasNuevas.get(g.os) || []), g.os_texto])]);
   const nombresArchivos = lista.map((x) => x.archivo.name);
-  if (!valores.length) return aviso(`${nombresArchivos.join(", ")}: ninguna obra social del archivo coincide con las tuyas (Valores → Obras sociales).`);
-  const practicas = [...new Map(valores.map((g) => [g.codigo, g.descripcion])).entries()];
+  if (!valores.length && !nuevos.length) return aviso(`${nombresArchivos.join(", ")}: no hay valores para importar.`);
+  const practicas = [...new Map([...valores, ...nuevos].map((g) => [g.codigo, g.descripcion])).entries()];
   const nom = Importador.nomenclador(practicas.map(([codigo, descripcion]) => ({ codigo, descripcion })));
   const totalOS = new Set(items.map((it) => it.os_texto)).size;
   valores.sort((a, b) => a.codigo.localeCompare(b.codigo) || a.os.localeCompare(b.os));
@@ -781,20 +787,30 @@ function importarLargo(lista, osDe) {
         <td class="n">${pesos(g.monto)}${g.min !== g.max ? `<br><small>según plan ${pesos(g.min)} a ${pesos(g.max)}</small>` : ""}</td>
         <td><select name="tipo_${k}">${opcionesTipo(tipoDeOS(d, g.os))}</select></td></tr>`).join("")}
     </table></div>
-    ${sinReconocer.size ? `<details><summary class="ayuda">${sinReconocer.size} obras sociales del archivo que no tenés cargadas (no se importan)</summary>
-      <p class="ayuda">${[...sinReconocer].map(esc).join(" · ")}</p><p class="ayuda">Para importarlas, agregalas en Valores → Obras sociales y volvé a importar el archivo.</p></details>` : ""}`,
+    ${obrasNuevas.size ? `<label class="check"><input type="checkbox" name="agregar_nuevas"> Agregar también las <b>${obrasNuevas.size} obras sociales</b> del archivo que no tenés
+      cargadas, con sus ${nuevos.length} valores</label>
+      <label>Tipo de esos valores<select name="tipo_nuevas">${opcionesTipo("honorario")}</select></label>
+      <details><summary class="ayuda">Ver cuáles son</summary><div class="tabla"><table><tr><th>Obra social nueva</th><th>En el archivo</th><th class="n">Valor</th></tr>
+        ${nuevos.map((g) => `<tr><td>${esc(g.os)}</td><td><small>${esc(obrasNuevas.get(g.os).join(" · "))}</small></td><td class="n">${pesos(g.monto)}</td></tr>`).join("")}
+      </table></div><p class="ayuda">Las variantes de una sede («SAN PEDRO» y «SAN PEDRO (LBY)») quedan como una sola. Plazos de cobro por defecto
+        (presenta el 18, paga a 60 días): cambialos en Valores → Obras sociales.</p></details>` : ""}`,
   async (f) => {
     if (!f.vigencia) { aviso("Falta desde cuándo rigen los valores."); return false; }
     const vigencia = f.vigencia.slice(0, 7) + "-01", lote = "lote-" + Date.now();
     const aac = new Map(practicas.map(([cod], i) => [cod, f["aac_" + i] || null]));
     const propios = Almacen.doc.valores.filter((v) => !v.borrada);
-    const registros = valores.map((g, k) => {
+    if (f.agregar_nuevas) {
+      await Almacen.guardarVarios("obras", [...obrasNuevas].map(([nombre, alias]) => ({ id: "os-" + nombre, nombre, alias: alias.join(", "),
+        dia_presentacion: 18, dias_pago: 60, activa: true, notas: `Agregada al importar ${nombresArchivos.join(", ")}` })));
+    }
+    const registros = [...valores, ...(f.agregar_nuevas ? nuevos.map((g) => ({ ...g, nueva: true })) : [])].map((g, k) => {
       const previo = propios.find((v) => v.obra_social === g.os && sinSeparadores(v.codigo) === sinSeparadores(g.codigo) && v.vigencia === vigencia);
       return { id: previo?.id, obra_social: g.os, codigo: sinSeparadores(g.codigo), codigo_aac: aac.get(g.codigo) || null, nomenclador: nom.sistema,
         descripcion: g.descripcion + (g.min !== g.max ? ` (según plan ${pesos(g.min)} a ${pesos(g.max)})` : ""), monto: g.monto, vigencia,
-        tipo: f["tipo_" + k] || "honorario", fuente: `Importado de «${g.archivo || nombresArchivos[0]}» (${g.os_texto})`, confianza: "importado", lote,
+        tipo: (g.nueva ? f.tipo_nuevas : f["tipo_" + k]) || "honorario", fuente: `Importado de «${g.archivo || nombresArchivos[0]}» (${g.os_texto})`, confianza: "importado", lote,
         archivo: nombresArchivos.length === 1 ? nombresArchivos[0] : `${nombresArchivos.length} archivos` };
     });
+    if (!registros.length) { aviso("Ninguna obra social del archivo coincide con las tuyas: tildá «Agregar también…» para importarlas."); return false; }
     await Almacen.guardarVarios("valores", registros);
     const n = await recalcularPendientes();
     $("#v-os").value = registros[0].obra_social;
@@ -943,12 +959,16 @@ async function construirExcel() {
     const [y, m, d] = t.slice(0, 10).split("-").map(Number);
     return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5;
   };
-  const FECHAS = ["Fecha", "Presentada", "Cobro estimado", "Cobrada el"];
+  const FECHAS = ["Fecha", "Presentada", "Cobro estimado", "Cobrada el", "Vigente desde"];
   const est = (p) => (Motor.vencida(p, hoy()) ? "Vencida" : ESTADOS[p.estado]);
+  // ¿El valor es un módulo (total para la institución, del que te toca un %) o tu honorario directo?
+  const tipoValor = (p) => p.valor_manual ? "Cargado a mano" : /^Ayudantía en módulo/.test(p.valor_origen || "") ? "Módulo (ayudantía: no se cobra)"
+    : /^Módulo|^Sin honorario conocido · Módulo/.test(p.valor_origen || "") ? "Módulo" : p.valor_estimado != null ? "Honorario directo" : "";
   const cirugias = lista.filter((p) => p.tipo !== "consulta").map((p) => ({
     "Fecha": fechaX(p.fecha), "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "", "Obra social": p.obra_social || p.obra_social_texto || "",
     "Institución": p.institucion || "", "Tipo": TIPOS[p.tipo], "Procedimiento": procedimientosDe(p), "Código AAC": codigosDe(p, "codigo_aac"),
     "Código obra social": codigosDe(p, "codigo_os"), "Rol": p.rol === "ayudante" ? "Ayudante" : "Cirujano", "% facturado": p.pct ?? 100,
+    "Tipo de valor": tipoValor(p), "% del módulo": p.pct_modulo ?? null,
     "Endoscopía": p.tipo === "endoscopia" ? ENDOSCOPIAS[p.endoscopia] || "" : "", "Llegó a ciego": p.ciego ? SI_NO[p.ciego] : "",
     "Polipectomía": p.polipectomia ? SI_NO[p.polipectomia] : "", "Observaciones (endoscopía)": p.observaciones || "",
     "Valor estimado": p.valor_estimado ?? null, "Estado": est(p), "Presentada": fechaX(p.estado !== "pendiente" && p.fecha_presentacion),
@@ -970,9 +990,14 @@ async function construirExcel() {
     g["Cobrado"] += ["cobrada", "debitada"].includes(p.estado) ? p.monto_cobrado || 0 : 0;
     g["Falta cobrar"] += ["pendiente", "presentada"].includes(p.estado) ? p.valor_estimado || 0 : 0;
   }
+  // Valores (los de la app, los cargados y los importados): qué es módulo y qué es honorario directo
+  const valores = datos().valores.slice().sort((a, b) => a.obra_social.localeCompare(b.obra_social) || String(a.codigo).localeCompare(String(b.codigo)) || b.vigencia.localeCompare(a.vigencia))
+    .map((v) => ({ "Obra social": v.obra_social, "Código": v.codigo, "Equivale a (AAC)": v.codigo_aac || "", "Descripción": v.descripcion || "",
+      "Tipo de valor": v.tipo === "modulo" ? "Módulo (total institución)" : "Honorario directo", "Monto": v.monto ?? null,
+      "Vigente desde": fechaX(v.vigencia), "Fuente": v.fuente || "" }));
   const resumen = Object.values(grupos).sort((a, b) => b["Mes"].localeCompare(a["Mes"]) || b["Estimado"] - a["Estimado"]);
   const libro = XLSX.utils.book_new();
-  const DINERO = ["Valor estimado", "Monto cobrado", "Diferencia", "Estimado", "Cobrado", "Falta cobrar"];
+  const DINERO = ["Valor estimado", "Monto cobrado", "Diferencia", "Estimado", "Cobrado", "Falta cobrar", "Monto"];
   const hoja = (filas, nombre, columnas) => {
     const h = XLSX.utils.json_to_sheet(filas.length ? filas : [Object.fromEntries(columnas.map((c) => [c, ""]))]);
     const cab = Object.keys(filas[0] || Object.fromEntries(columnas.map((c) => [c, ""])));
@@ -988,6 +1013,7 @@ async function construirExcel() {
   hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
   hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
   hoja(resumen, "Resumen mensual", ["Mes", "Obra social", "Estimado", "Cobrado"]);
+  hoja(valores, "Valores cargados", ["Obra social", "Código", "Descripción", "Tipo de valor", "Monto"]);
   return XLSX.write(libro, { bookType: "xlsx", type: "array" });
 }
 
@@ -1186,7 +1212,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "23"; // igual que VERSION en sw.js
+const VERSION_APP = "24"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
