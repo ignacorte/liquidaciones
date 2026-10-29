@@ -94,7 +94,32 @@ const Importador = (() => {
     let texto;
     if (/\.txt$/.test(n) || archivo.type === "text/plain") texto = await archivo.text();
     else texto = await Lector.textoDe([archivo], avance, { paginas: 60 });
-    return { filas: filasTexto(texto), texto, tabla: false };
+    return seccionado(texto) || { filas: filasTexto(texto), texto, tabla: false };
+  }
+
+  // «Nomenclador valorizado» (Colegio Médico): un título por práctica («080709   COLECISTECTOMIA») y debajo un renglón por
+  // obra social («24 ASOCIACION MUTUAL …   481.634,91   486.613,02   968.247,93»). Se arma como tabla larga.
+  const RE_TITULO = /^\s*(\d{2}\.\d{2}\.\d{2}|\d{6}|\d{8})\s+([A-Za-zÁÉÍÓÚÑáéíóúñ][^\d]{3,}?)\s*$/;
+  const RE_RENGLON = /^\s*(\d{1,6})\s+(.+?)\s+(\$?\s?\d[\d.]*,\d{2}(?:\s+\$?\s?\d[\d.]*,\d{2}){0,4})\s*$/;
+  function seccionado(texto) {
+    const lineas = texto.split(/\r?\n/);
+    let practica = null, nTitulos = 0, columnas = null;
+    const filas = [];
+    for (const l of lineas) {
+      if (!columnas && /honorario/i.test(l)) {
+        // Encabezado de columnas: las palabras del final («Honorarios   Gastos   Importe»)
+        columnas = l.split(/\s{2,}/).map((c) => c.trim()).filter((c) => /^[A-Za-zÁÉÍÓÚÑáéíóúñ. ]{3,}$/.test(c) && !/epoca|codigo|c[oó]digo/i.test(c));
+      }
+      const t = l.match(RE_TITULO);
+      if (t) { practica = { codigo: t[1], descripcion: t[2].trim() }; nTitulos++; continue; }
+      const r = practica && !/promedio|total/i.test(l) && l.match(RE_RENGLON);
+      if (r) filas.push([practica.codigo, practica.descripcion, `${r[1]} - ${r[2].trim()}`, ...r[3].trim().split(/\s+(?=\$?\s?\d)/)]);
+    }
+    if (!nTitulos || filas.length < 5) return null;
+    const montos = Math.max(...filas.map((f) => f.length - 3));
+    const nombres = (columnas || []).slice(-montos);
+    const cab = ["Código", "Descripción", "Obra social", ...Array.from({ length: montos }, (_, k) => nombres[k] || `Monto ${k + 1}`)];
+    return { filas: [cab, ...filas], texto, tabla: true };
   }
 
   // ---------- Celdas → valores ----------
@@ -178,7 +203,9 @@ const Importador = (() => {
     }));
     if (colOS >= 0) {
       // Largo: una columna de valor (la de «total» si hay; si no, la primera útil)
-      const total = columnas.find((c) => /^total$|^total[^a-z]|importe|valor|monto/.test(plano(c.nombre))) || columnas.find((c) => !c.ignorar) || columnas[0];
+      // Honorarios si la lista los separa de los gastos; si no, el total
+      const total = columnas.find((c) => /honorario/.test(plano(c.nombre))) || columnas.find((c) => /^total$|^total[^a-z]|importe|valor|monto/.test(plano(c.nombre)))
+        || columnas.find((c) => !c.ignorar) || columnas[0];
       for (const c of columnas) c.ignorar = c !== total;
       return { largo: true, columnaOS: encabezado(colOS, primera) || "Obra social", columnas, items };
     }
@@ -267,7 +294,12 @@ const Importador = (() => {
         const dePami = pami.get(String(it.codigo).replace(/\D/g, ""));
         if (propio) { r.es = "aac"; r.aac = propio; r.nombre = aac.get(propio).name; nAAC++; }
         else if (dePami && coincidencia(it.descripcion, texto(dePami)) >= 0.5) { r.es = "pami"; nPAMI++; }
-        if (!r.aac) { const s = Motor.sugerir("AAC", it.descripcion)[0]; if (s) { r.aac = s.code; r.nombre = s.name; } }
+        if (!r.aac) {
+          // Entre las sugeridas, primero la del mismo capítulo que el código del archivo (080202 → 08.xx.xx, abdomen)
+          const cap = String(it.codigo).replace(/\D/g, "").slice(0, 2), sug = Motor.sugerir("AAC", it.descripcion);
+          const s = sug.find((c) => c.code.startsWith(cap + ".")) || sug[0];
+          if (s) { r.aac = s.code; r.nombre = s.name; }
+        }
       }
       porCodigo.set(it.codigo, r);
     }
