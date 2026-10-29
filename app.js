@@ -32,7 +32,7 @@ const ESPECIALIDADES = { cirugia: "Cirugía", anestesia: "Anestesiología" };
 const esAnestesia = () => ajuste("especialidad", "cirugia") === "anestesia";
 const ETIQUETAS = {
   cirugia: { tipos: { ...TIPOS }, estados: { pendiente: "Sin presentar", presentada: "Presentada", cobrada: "Cobrada", debitada: "Debitada" } },
-  anestesia: { tipos: { cirugia: "Anestesia", endoscopia: "Anestesia fuera de quirófano", practica: "Dolor / práctica", consulta: "Consulta preanestésica" },
+  anestesia: { tipos: { cirugia: "Anestesiología", endoscopia: "Anestesiología fuera de quirófano", practica: "Dolor / práctica", consulta: "Consulta preanestésica" },
                estados: { pendiente: "Sin cargar en DARC", presentada: "Cargada en DARC", cobrada: "Liquidada", debitada: "Debitada" } },
 };
 const EDADES = { "": "—", neonato: "Neonato (hasta 30 días) +50 %", lactante: "1 mes a 3 años +40 %", nino: "3 a 14 años +30 %", mayor70: "70 años o más +30 %" };
@@ -578,7 +578,7 @@ function editar(p) {
   if (esAnestesia()) actual = { ...actual, ...Motor.estimar(datos(), { ...actual, fecha: actual.fecha || hoy() }) };
   else if (actual.tipo !== "consulta" && !actual.sugerencias) actual.sugerencias = Motor.sugerencias(actual);
   const pintar = () => {
-    cuerpo.innerHTML = `<h2>${p.id ? "Prestación" : "Nueva " + TIPOS[p.tipo].toLowerCase()}</h2>` + camposPrestacion(actual, true) +
+    cuerpo.innerHTML = `<h2>${p.id ? "Prestación" : esAnestesia() ? TIPOS[p.tipo] : "Nueva " + TIPOS[p.tipo].toLowerCase()}</h2>` + camposPrestacion(actual, true) +
       `<div class="fila"><button class="boton" data-ok>Guardar</button><button class="boton secundario" data-cerrar>Cerrar</button>
        ${p.id ? '<button class="boton peligro chico" data-borrar>Borrar</button>' : ""}</div>`;
   };
@@ -1176,7 +1176,7 @@ async function construirExcel() {
     h["!autofilter"] = { ref: h["!ref"] };
     XLSX.utils.book_append_sheet(libro, h, nombre);
   };
-  if (esAnestesia()) hoja(anestesias, "Anestesias", ["N°", "Fecha", "Paciente", "Obra social", "Lugar", "Procedimiento", "Situación", "Doc faltante"]);
+  if (esAnestesia()) hoja(anestesias, "Anestesiología", ["N°", "Fecha", "Paciente", "Obra social", "Lugar", "Procedimiento", "Situación", "Doc faltante"]);
   else hoja(cirugias, "Cirugías y procedimientos", ["Fecha", "Paciente", "Obra social", "Procedimiento"]);
   hoja(consultas, "Consultas", ["Fecha", "Paciente", "Obra social"]);
   hoja(resumen, "Resumen mensual", ["Mes", "Obra social", "Estimado", "Cobrado"]);
@@ -1396,7 +1396,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "28"; // igual que VERSION en sw.js
+const VERSION_APP = "29"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
