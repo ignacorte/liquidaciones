@@ -83,7 +83,7 @@
         <h2>Cargar la liquidación</h2>
         <p class="ayuda">El PDF «Detalle Liquidación» que te pasa la institución: marca como cobradas las prestaciones liquidadas (con el monto real) y agrega las que no estaban cargadas.</p>
         <label class="boton grande secundario"><span>💵</span> Liquidación (PDF)
-          <input type="file" accept="application/pdf,image/*" hidden data-liq></label>
+          <input type="file" accept="application/pdf,image/*" multiple hidden data-liq></label>
       </div>
       <div class="card">
         <h2>Cargar a mano</h2>
@@ -105,6 +105,10 @@
         <div class="fila">
           <button class="boton" id="guardar-lote">Guardar</button>
           <button class="boton secundario" id="cancelar-lote">Cancelar</button>
+        </div>
+        <div class="fila" id="agregar-foto" hidden>
+          <label class="boton secundario">📷 Agregar otra foto o página<input type="file" accept="image/*,application/pdf" multiple hidden id="agregar-foto-input"></label>
+          <span class="ayuda" id="agregar-foto-n"></span>
         </div>
       </div>
     </div>

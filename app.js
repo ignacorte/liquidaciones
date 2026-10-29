@@ -520,7 +520,11 @@ function enlazarEstimacion(el, obtener, guardar) {
 
 let filasRevision = [];
 
+// Lo último leído, para sumarle fotos o páginas de a una (la cámara del celular saca una por vez)
+let ultimaLectura = null;
+
 async function leer(tipo, archivos, textoPegado) {
+  ultimaLectura = textoPegado == null && archivos?.length ? { tipo, archivos } : null;
   $("#cargar-botones").hidden = true; $("#leyendo").hidden = false;
   const avance = (t) => ($("#leyendo-texto").textContent = t);
   try {
@@ -578,6 +582,8 @@ async function leer(tipo, archivos, textoPegado) {
 function mostrarRevision(filas, titulo) {
   filasRevision = filas;
   $("#revision").hidden = false;
+  $("#agregar-foto").hidden = !ultimaLectura;
+  $("#agregar-foto-n").textContent = ultimaLectura ? `${ultimaLectura.archivos.length} ${ultimaLectura.archivos.length === 1 ? "foto" : "fotos o páginas"} leídas` : "";
   $("#revision-titulo").textContent = titulo + ` (${filas.length})`;
   const cont = $("#revision-filas");
   cont.innerHTML = "";
@@ -606,7 +612,7 @@ function mostrarRevision(filas, titulo) {
 // Fecha no leída (se puso la de hoy) o de hace más de un año: casi siempre es otra fecha del documento
 const fechaDudosa = (x) => !x.fecha_leida || Math.abs(Date.now() - Date.parse(x.fecha)) > 366 * 864e5;
 
-function cerrarRevision() { conciliacion = null; $("#guardar-lote").textContent = "Guardar"; $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
+function cerrarRevision() { ultimaLectura = null; $("#agregar-foto").hidden = true; conciliacion = null; $("#guardar-lote").textContent = "Guardar"; $("#revision").hidden = true; $("#cargar-botones").hidden = false; filasRevision = []; }
 
 // Foja quirúrgica al Drive («Liquidaciones/Fojas»), ligada a la prestación
 async function subirFojas(p, archivos) {
@@ -1369,6 +1375,12 @@ async function arrancar() {
     } catch (e) { aviso(e.message); }
   });
   Almacen.planilla = construirExcel; // se actualiza en el Drive en cada sincronización
+  // Sumar otra foto o página al documento que se está revisando: se vuelve a leer todo junto
+  $("#agregar-foto-input").addEventListener("change", (ev) => {
+    const nuevas = [...ev.target.files];
+    ev.target.value = "";
+    if (nuevas.length && ultimaLectura) leer(ultimaLectura.tipo, [...ultimaLectura.archivos, ...nuevas]);
+  });
   $$("[data-liq]").forEach((i) => i.addEventListener("change", () => { leerLiquidacion([...i.files]); i.value = ""; }));
   $("#revision-filas").addEventListener("change", (ev) => {
     const c = ev.target.closest("[data-liq-incluir]");
@@ -1506,7 +1518,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "35"; // igual que VERSION en sw.js
+const VERSION_APP = "36"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
