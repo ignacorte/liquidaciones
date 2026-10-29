@@ -101,3 +101,15 @@ dialog.camara video.flash { opacity: .3; }
 .camara-botones { justify-content: space-between; align-items: center; padding: 6px 16px 14px; margin: 0; flex-wrap: nowrap; }
 .disparo { width: 68px; height: 68px; border-radius: 50%; border: 5px solid #fff; background: #ddd; flex: none; }
 .disparo:active { background: #fff; transform: scale(.94); }
+
+/* Computadora: más ancho, Inicio en dos columnas, menú abajo centrado y fichas más anchas */
+@media (min-width: 1100px) {
+  main { max-width: 1280px; }
+  #v-inicio:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; align-items: start; }
+  #v-inicio > .kpis, #v-inicio > .alerta { grid-column: 1 / -1; }
+  #v-inicio > .card { margin-top: 0; }
+  .kpis { grid-template-columns: repeat(5, 1fr); }
+  nav.abajo { left: 50%; right: auto; transform: translateX(-50%); width: 640px; border: 1px solid var(--borde); border-bottom: 0; border-radius: 12px 12px 0 0; }
+  dialog { width: min(900px, calc(100% - 32px)); }
+  #revision-filas .revision, .item { font-size: 15px; }
+}

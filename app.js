@@ -431,7 +431,7 @@ function camposAnestesia(p) {
     <label>Edad del paciente${sel("edad_grupo", EDADES, p.edad_grupo || "")}</label>
     <label>Institución / lugar<input name="institucion" value="${esc(p.institucion)}"></label>
     <label>N° de circuito<input name="nro_circuito" value="${esc(p.nro_circuito)}" inputmode="numeric" placeholder="el de la asociación"></label>
-    ${p.nro_ref ? `<p class="ancho ayuda" style="margin:0">Referencia: <b>Ref. ${refTexto(p)}</b> (va en el nombre de sus PDF en el Drive)</p>` : ""}
+    ${p.nro_ref ? `<p class="ancho ayuda" style="margin:0">Referencia: <b>Ref. ${refTexto(p)}</b> (va en el nombre de sus PDF en el Drive)${p.carpeta_docs?.link ? ` · <a href="${esc(p.carpeta_docs.link)}" target="_blank" rel="noopener">📁 Abrir la carpeta del paciente</a>` : ""}</p>` : ""}
     ${marca("feriado", "Feriado (+50 %)" + (Motor.feriadoNacional(p.fecha) ? " · es feriado nacional" : ""))}
     ${marca("obesidad", "Obesidad mórbida (+2 complejidades)")}
     ${marca("suspendida", "Operación suspendida (complejidad 1)")}
@@ -1006,7 +1006,7 @@ function verPrestaciones() {
         (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + codigosDe(p, "codigo_aac") : ""));
       return `<div class="item" data-id="${p.id}"><input type="checkbox" data-sel="${p.id}" class="economia">
         <div class="cuerpo"><div class="titulo">${esc(p.paciente)}</div>
-        <div class="sub">${esAnestesia() && p.nro_ref ? `Ref. ${refTexto(p)} · ` : ""}${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
+        <div class="sub">${esAnestesia() && p.nro_ref ? `Ref. ${refTexto(p)} · ` : ""}${esAnestesia() && p.carpeta_docs?.link ? `<a href="${esc(p.carpeta_docs.link)}" target="_blank" rel="noopener">📁 documentos</a> · ` : ""}${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
         <div class="monto economia">${pesos(p.monto_cobrado ?? p.valor_estimado)}<br>${chip}</div></div>`;
     }).join("") : '<p class="ayuda">Nada para mostrar con estos filtros.</p>';
 }
@@ -1651,6 +1651,7 @@ async function arrancar() {
   const abrir = (ev) => {
     const sel = ev.target.closest("[data-sel]");
     if (sel) { sel.checked ? estado.seleccion.add(sel.dataset.sel) : estado.seleccion.delete(sel.dataset.sel); actualizarSeleccion(); return; }
+    if (ev.target.closest("a")) return; // enlace a la carpeta del Drive: se abre sin abrir la ficha
     const item = ev.target.closest(".item");
     if (item) editar(datos().prestaciones.find((p) => p.id === item.dataset.id));
   };
@@ -1830,7 +1831,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "44"; // igual que VERSION en sw.js
+const VERSION_APP = "45"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1946,6 +1947,29 @@ function configurarSeguridad() {
 
 // Se recarga la página: no queda en memoria ni en pantalla ningún dato de pacientes
 // ⚙️ Configuración (arriba a la derecha): rama del administrador, cerrar sesión, cerrar la cuenta en este celular…
+// Guía corta, según la rama (para que cada colega empiece solo)
+function verGuia() {
+  const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
+  cuerpo._actual = null;
+  const pasos = esAnestesia() ? [
+    ["📷 Cargar", "En <b>Cargar → Parte quirúrgico</b> elegí todas las fotos o PDF del acto juntos (o «Sacar varias fotos seguidas»): protocolo quirúrgico, registro de anestesia, autorización y hojas de la historia clínica. La app lee los datos del paciente y elige la mejor foto para cada documento."],
+    ["✅ Revisar", "Revisá paciente, fecha, obra social y <b>complejidad</b> (la app sugiere la del nomenclador de anestesiólogos). En «Fotos cargadas» podés corregir qué es cada foto. Tocá <b>Guardar</b>."],
+    ["📁 Drive", "Los documentos se guardan en PDF en <b>Liquidaciones › Anestesiología › Documentos</b>, una carpeta por paciente («Ref 0001 – APELLIDO – fecha»). Esperá el aviso «✓ Documentos subidos»."],
+    ["🔁 Circuito", "En <b>Inicio</b>: «Falta documentación» → «Listas para cargar» → «Cargadas» → «Liquidadas». Cuando cargás en la asociación, poné el <b>N° de circuito</b> y marcala como cargada; cuando liquidan, anotá el monto."],
+    ["💲 Valores", "En <b>Valores → Aranceles por complejidad</b> cargá lo que paga cada obra social y el % que retiene la asociación."],
+  ] : [
+    ["📷 Cargar", "En <b>Cargar</b>: foto o PDF del <b>listado diario</b> (consultas) o del <b>parte quirúrgico</b>. La app reconoce paciente, obra social y procedimiento, y sugiere código y valor."],
+    ["✅ Revisar", "Revisá los datos, el código y el % (ayudante, operación múltiple, módulo). Tocá <b>Guardar</b>."],
+    ["📤 Presentar y cobrar", "En <b>Prestaciones</b> tildá varias y marcalas presentadas o cobradas. Con el PDF de la liquidación del sanatorio («Cargar la liquidación»), se marcan solas con el monto real."],
+    ["💲 Valores", "En <b>Valores</b> importá listas de valores (Excel, PDF, Word o foto). Lo que te pagan de verdad corrige las estimaciones siguientes."],
+  ];
+  cuerpo.innerHTML = `<h2>Cómo se usa</h2>` + pasos.map(([t, d]) => `<p><b>${t}</b><br><span class="ayuda" style="margin:0">${d}</span></p>`).join("") +
+    `<p class="ayuda"><b>Tus datos</b> quedan cifrados en el celular y en <b>tu</b> Google Drive (respaldo diario automático). Nadie más los ve.
+     Arriba, «Drive: al día» indica que todo está guardado.</p><div class="fila"><button class="boton" data-cerrar>Listo</button></div>`;
+  cuerpo.onclick = (ev) => { if (ev.target.matches("[data-cerrar]")) dlg.close(); };
+  dlg.showModal();
+}
+
 async function menuConfiguracion() {
   const admin = await esAdmin(), dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
   if (dlg.open) return;
@@ -1955,6 +1979,7 @@ async function menuConfiguracion() {
     <p class="ayuda">${cuenta ? "Cuenta: " + esc(cuenta) : "Sin Google Drive: los datos están solo en este celular."} · ${ESPECIALIDADES[esAnestesia() ? "anestesia" : "cirugia"]}</p>
     <div style="display:grid;gap:8px">
       ${admin ? `<button class="boton secundario" data-menu="rama">⇄ Pasar a ${esAnestesia() ? "Cirugía" : "Anestesiología"}</button>` : ""}
+      <button class="boton secundario" data-menu="guia">📖 Cómo se usa</button>
       <button class="boton secundario" data-menu="valores">⚙️ Valores y mi cuenta</button>
       <button class="boton secundario" data-menu="actualizar">⟳ Buscar actualización</button>
       ${Almacen.tienePin() ? '<button class="boton secundario" data-menu="sesion">🔒 Cerrar sesión <small>(pide el PIN para volver)</small></button>' : ""}
@@ -1969,6 +1994,7 @@ async function menuConfiguracion() {
     const accion = b.dataset.menu;
     if (accion === "rama") await cambiarRama(esAnestesia() ? "cirugia" : "anestesia");
     else if (accion === "valores") ir("valores");
+    else if (accion === "guia") verGuia();
     else if (accion === "actualizar") { aviso("Buscando la versión nueva…"); actualizarAhora(); }
     else if (accion === "sesion") await bloquearYa();
     else if (accion === "cuenta") await cerrarCuenta();
