@@ -66,6 +66,8 @@ const Motor = (() => {
   function sugerir(nombre, procedimiento, limite = 3) {
     const data = catalogos[nombre];
     if (!data || !(procedimiento || "").trim()) return [];
+    // «VIDEOCOLECISTECTOMIA», «videolaparoscópica»: el prefijo pegado se separa
+    procedimiento = procedimiento.replace(/\b(video)(?=[a-záéíóúñ]{6,})/gi, "$1 ");
     const pesos = idf(nombre), wanted = palabras(procedimiento);
     let plain = plano(procedimiento);
     if (wanted.has("antirr")) plain += " diafragm"; // la cirugía antirreflujo lleva plástica diafragmática
@@ -230,6 +232,13 @@ const Motor = (() => {
     return vp && vp.modulo ? vp : null;
   }
 
+  // Parte del módulo para el cirujano: la de la obra social o, si no tiene, lo que no retiene la institución (ajuste general)
+  function pctModulo(datos, o) {
+    if (o && o.pct_modulo) return { pct: o.pct_modulo, nota: "" };
+    const inst = datos.pct_institucion;
+    return inst > 0 && inst < 100 ? { pct: 100 - inst, nota: ` (la institución retiene ${inst} %)` } : null;
+  }
+
   function valor(datos, p, os, codigoAAC, codigoOS) {
     if (p.valor_manual) return [Number(p.valor_manual), "Cargado a mano"];
     const rol = p.rol || "cirujano", pct = pctDe(p.pct), reglas = catalogos.AAC.rules;
@@ -251,13 +260,15 @@ const Motor = (() => {
     }
     if (vp && vp.modulo && !(fila && fila.tipo === "modulo")) {
       const o = datos.obras.find((x) => x.nombre === os);
-      if (o && o.pct_modulo) return [Math.round(vp.monto * o.pct_modulo / 100 * factor), `Módulo PAMI ${vp.codigo} ${pesos(vp.monto)} × ${o.pct_modulo} %${extra}`];
+      const pm = pctModulo(datos, o);
+      if (pm) return [Math.round(vp.monto * pm.pct / 100 * factor), `Módulo PAMI ${vp.codigo} ${pesos(vp.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo PAMI ${vp.codigo}: ${vp.unidades} u. × ${pesosDec(vp.valorUnidad)} = ${pesos(vp.monto)} (total a la institución)`;
     }
     if (vp && vp.sinValor) modulo = ` · PAMI ${vp.codigo}: ${vp.unidades} u. ${vp.tipo} (falta el valor de esa unidad)`;
     if (fila && fila.tipo === "modulo") {
       const o = datos.obras.find((x) => x.nombre === os);
-      if (o && o.pct_modulo) return [Math.round(fila.monto * o.pct_modulo / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${o.pct_modulo} %${extra}`];
+      const pm = pctModulo(datos, o);
+      if (pm) return [Math.round(fila.monto * pm.pct / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo ${os} ${fila.codigo}: ${pesos(fila.monto)} (total a la institución)`;
     }
     const uq = valorUQ(datos, p.fecha);

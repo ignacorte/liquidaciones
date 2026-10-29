@@ -80,7 +80,8 @@ function datos() {
   const valoresPropios = vivos(d.valores);
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
-  return { obras, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
+  const inst = Number(ajuste("pct_institucion_modulo", 35));
+  return { obras, pct_institucion: inst > 0 && inst < 100 ? inst : null, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -380,7 +381,9 @@ async function leer(tipo, archivos, textoPegado) {
       // Un mismo acto: una sola prestación; el procedimiento de mayor valor es el principal (100 %), los demás van como
       // «otros procedimientos del mismo acto» (al % de operación múltiple)
       const lleno = (f) => Motor.estimar(d, { ...f, pct: 100, fecha: f.fecha || hoy() }).valor_estimado || 0;
-      filas.sort((a, b) => lleno(b) - lleno(a));
+      // Empate (p. ej. el mismo módulo para los dos): decide el valor de referencia de la AAC de cada procedimiento
+      const referencia = (f) => Motor.estimar(d, { ...f, pct: 100, codigo_os: null, obra_social: null, obra_social_texto: "", fecha: f.fecha || hoy() }).valor_estimado || 0;
+      filas.sort((a, b) => lleno(b) - lleno(a) || referencia(b) - referencia(a));
       const [principal, ...resto] = filas;
       principal.pct = 100;
       principal.extras = [...(principal.extras || []), ...resto.map((f) => ({ procedimiento: f.procedimiento, codigo_aac: null, codigo_os: f.codigo_os || null }))];
@@ -564,6 +567,7 @@ function verValores() {
   $("#uq-valor").value = uq[0]?.valor ?? "";
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
+  $("#pct-institucion").value = ajuste("pct_institucion_modulo", 35);
   $("#apellido").value = ajuste("apellido", "");
   $("#min-bloqueo").value = String(minutosBloqueo());
   $("#uq-hist").textContent = "Historia UQ AAC: " + uq.map((u) => `${u.vigencia.slice(0, 7)} ${pesos(u.valor)}`).join(" · ");
@@ -576,7 +580,7 @@ function verValores() {
   for (const v of d.valores) { conteo[v.obra_social] = (conteo[v.obra_social] || 0) + 1; if (!ultima[v.obra_social] || ultima[v.obra_social] < v.vigencia) ultima[v.obra_social] = v.vigencia; }
   $("#tabla-os").innerHTML = `<table><tr><th>Obra social</th><th class="n">Presenta día</th><th class="n">Paga a (días)</th><th class="n">% módulo</th><th class="n">Valores</th></tr>` +
     d.obras.map((o) => `<tr data-os="${esc(o.nombre)}" style="${o.activa ? "" : "opacity:.5"}"><td>${esc(o.nombre)}${o.notas ? `<div class="ayuda" style="margin:0">${esc(o.notas)}</div>` : ""}</td>
-      <td class="n">${o.dia_presentacion || "—"}</td><td class="n">${o.dias_pago}</td><td class="n">${o.pct_modulo ?? "—"}</td>
+      <td class="n">${o.dia_presentacion || "—"}</td><td class="n">${o.dias_pago}</td><td class="n">${o.pct_modulo ?? (o.paga_modulo && d.pct_institucion ? `${100 - d.pct_institucion}<br><small>general</small>` : "—")}</td>
       <td class="n">${conteo[o.nombre] || 0}${ultima[o.nombre] ? "<br><small>" + ultima[o.nombre].slice(0, 7) + "</small>" : ""}</td></tr>`).join("") + "</table>";
   const elegida = $("#v-os").value;
   const nombres = [...new Set(d.obras.map((o) => o.nombre).concat("MÍNIMO ÉTICO CMPC"))];
@@ -619,7 +623,8 @@ function editarObraSocial(o) {
     <label class="ancho">Cómo aparece escrita (separado por comas)<input name="alias" value="${esc(o.alias)}"></label>
     <label>Día de presentación<input type="number" name="dia_presentacion" value="${o.dia_presentacion ?? 18}" min="0" max="28"></label>
     <label>Paga a (días)<input type="number" name="dias_pago" value="${o.dias_pago ?? 60}" min="0"></label>
-    <label>% del módulo para el cirujano<input type="number" name="pct_modulo" value="${o.pct_modulo ?? ""}" step="0.1"></label>
+    <label>% del módulo para el cirujano<input type="number" name="pct_modulo" value="${o.pct_modulo ?? ""}" step="0.1" placeholder="vacío = el general"></label>
+    <label class="check ancho"><input type="checkbox" name="paga_modulo" ${o.paga_modulo ? "checked" : ""}> Paga por módulo (el valor de la lista es el total; la institución retiene su %)</label>
     <label>Categoría<input name="categoria" value="${esc(o.categoria)}"></label>
     <label class="ancho">Notas<textarea name="notas" rows="2">${esc(o.notas)}</textarea></label>
     <label class="check"><input type="checkbox" name="activa" ${o.activa === false ? "" : "checked"}> Activa</label></div>
@@ -654,97 +659,142 @@ function nuevoValor() {
 
 // ---------- Importar lista de valores (Excel, Word, PDF, foto) ----------
 
-async function importarValores(archivo) {
-  aviso("Leyendo «" + archivo.name + "»…");
-  let lectura;
-  try { lectura = await Importador.leer(archivo, (t) => aviso(t)); } catch (e) { return aviso(e.message); }
+const NOMENCLADORES = { aac: "de la AAC", pami: "del nomenclador PAMI", propio: "propios de la obra social o del sanatorio" };
+const sinSeparadores = (c) => String(c).replace(/[.\-\s]/g, "");
+const tipoDeOS = (d, os) => (d.obras.find((o) => o.nombre === os)?.paga_modulo ? "modulo" : "honorario");
+const opcionesTipo = (elegido) => `<option value="honorario">Honorario del médico</option><option value="modulo" ${elegido === "modulo" ? "selected" : ""}>Módulo (total; la institución retiene su %)</option>`;
+
+// Varios archivos de una vez (p. ej. uno por cirugía): los del sistema del sanatorio se revisan juntos; los demás, de a uno
+async function importarValores(archivos) {
   const d = datos(), osDe = (t) => Motor.obraSocialCanonica(d, t);
-  const interpretado = Importador.interpretar(lectura, osDe);
-  const { columnas, items } = interpretado;
-  if (!items.length || !columnas.length)
-    return aviso("No encontré renglones con código y monto en «" + archivo.name + "». La lista tiene que tener una columna de códigos y una de montos.");
-  if (interpretado.largo) return importarLargo(archivo, lectura, interpretado, osDe);
+  const largos = [], otros = [];
+  for (const archivo of archivos) {
+    aviso("Leyendo «" + archivo.name + "»…");
+    let lectura;
+    try { lectura = await Importador.leer(archivo, (t) => aviso(t)); } catch (e) { aviso(`«${archivo.name}»: ${e.message}`); continue; }
+    const interpretado = Importador.interpretar(lectura, osDe);
+    if (!interpretado.items.length || !interpretado.columnas.length) {
+      aviso("No encontré renglones con código y monto en «" + archivo.name + "». La lista tiene que tener una columna de códigos y una de montos.");
+      continue;
+    }
+    (interpretado.largo ? largos : otros).push({ archivo, lectura, interpretado });
+  }
+  const pasos = [...(largos.length ? [() => importarLargo(largos, osDe)] : []), ...otros.map((x) => () => importarAncho(x, osDe))];
+  const siguiente = () => {
+    const paso = pasos.shift();
+    if (!paso) return;
+    paso();
+    if (pasos.length) $("#dlg").addEventListener("close", () => setTimeout(siguiente, 50), { once: true });
+  };
+  siguiente();
+}
+
+// Lista con una o varias columnas de montos (una por obra social, o honorario / gastos…)
+function importarAncho({ archivo, lectura, interpretado: { columnas, items } }, osDe) {
+  const d = datos();
   const osArchivo = Importador.obraSocial(d, archivo.name, lectura.texto) || $("#v-os").value;
   const nombres = [...new Set(d.obras.map((o) => o.nombre).concat("MÍNIMO ÉTICO CMPC"))];
   // Cada columna de montos: de qué obra social es (por su encabezado) o, la primera útil, de la obra social del archivo
   let usada = false;
   for (const c of columnas) {
-    const deEncabezado = Motor.obraSocialCanonica(d, c.nombre);
+    const deEncabezado = osDe(c.nombre);
     c.os = deEncabezado || (!c.ignorar && !usada ? osArchivo : "");
     if (c.os && !deEncabezado) usada = true;
   }
+  const nom = Importador.nomenclador(items);
   const opciones = (elegida) => '<option value="">— no usar —</option>' + nombres.map((n) => `<option ${n === elegida ? "selected" : ""}>${esc(n)}</option>`).join("");
   const muestra = items.slice(0, 40);
   dialogo(`<h2>Importar valores</h2>
     <p class="ayuda">«${esc(archivo.name)}» · <b>${items.length} códigos</b> con monto. Revisá a qué obra social va cada columna y desde cuándo rigen.</p>
     <div class="grid">
       <label>Vigentes desde<input type="month" name="vigencia" value="${Importador.vigencia(lectura.texto + "\n" + archivo.name) || mes()}"></label>
-      <label>Los códigos son<select name="clase"><option value="os">De la obra social</option><option value="aac">De la AAC (nomenclador)</option></select></label>
+      <label>Los códigos son<select name="clase">${Object.entries(NOMENCLADORES).map(([k, t]) => `<option value="${k}" ${k === nom.sistema ? "selected" : ""}>${t[0].toUpperCase() + t.slice(1)}</option>`).join("")}</select></label>
       ${columnas.map((c) => `<label class="ancho">Columna «${esc(c.nombre)}» (ej. ${pesos(c.ejemplo)})<select name="col_${c.j}">${opciones(c.os)}</select></label>
-        <label>Tipo<select name="tipo_${c.j}"><option value="honorario">Honorario del médico</option><option value="modulo" ${c.modulo ? "selected" : ""}>Módulo (total institución)</option></select></label>`).join("")}
+        <label>Tipo<select name="tipo_${c.j}">${opcionesTipo(c.modulo ? "modulo" : tipoDeOS(d, c.os))}</select></label>`).join("")}
+      <label class="check ancho"><input type="checkbox" name="equivalencias" checked> Usar las equivalencias AAC sugeridas (columna «AAC»)</label>
     </div>
-    <div class="tabla"><table><tr><th>Código</th><th>Descripción</th>${columnas.map((c) => `<th class="n">${esc(c.nombre)}</th>`).join("")}</tr>
-      ${muestra.map((it) => `<tr><td>${esc(it.codigo)}</td><td>${esc(it.descripcion)}</td>${columnas.map((c) => `<td class="n">${it.montos[c.j] ? pesos(it.montos[c.j]) : ""}</td>`).join("")}</tr>`).join("")}
+    <p class="ayuda">${nom.conDesc ? `Por las descripciones, los códigos parecen ${NOMENCLADORES[nom.sistema]} (${nom.sistema === "aac" ? nom.nAAC : nom.sistema === "pami" ? nom.nPAMI : nom.conDesc - nom.nAAC - nom.nPAMI} de ${nom.conDesc}).` : ""}
+      Con la equivalencia AAC el valor se usa en tus cirugías aunque no tengan cargado el código de la obra social.</p>
+    <div class="tabla"><table><tr><th>Código</th><th>Descripción</th><th>AAC</th>${columnas.map((c) => `<th class="n">${esc(c.nombre)}</th>`).join("")}</tr>
+      ${muestra.map((it) => { const e = nom.porCodigo.get(it.codigo) || {}; return `<tr><td>${esc(it.codigo)}</td><td>${esc(it.descripcion)}</td>
+        <td><small>${esc(e.aac || "")}${e.nombre ? " · " + esc(e.nombre.slice(0, 40)) : ""}</small></td>${columnas.map((c) => `<td class="n">${it.montos[c.j] ? pesos(it.montos[c.j]) : ""}</td>`).join("")}</tr>`; }).join("")}
     </table></div>${items.length > muestra.length ? `<p class="ayuda">… y ${items.length - muestra.length} códigos más.</p>` : ""}`, async (f) => {
     if (!f.vigencia) { aviso("Falta desde cuándo rigen los valores."); return false; }
     const elegidas = columnas.filter((c) => f["col_" + c.j]);
     if (!elegidas.length) { aviso("Elegí la obra social de al menos una columna."); return false; }
-    const vigencia = f.vigencia.slice(0, 7) + "-01", lote = "lote-" + Date.now(), sin = (c) => String(c).replace(/[.\-\s]/g, "");
+    const vigencia = f.vigencia.slice(0, 7) + "-01", lote = "lote-" + Date.now();
     const propios = Almacen.doc.valores.filter((v) => !v.borrada);
     const registros = [];
     for (const c of elegidas) {
       const os = f["col_" + c.j];
       for (const it of items) {
         if (!it.montos[c.j]) continue;
-        const previo = propios.find((v) => v.obra_social === os && sin(v.codigo) === sin(it.codigo) && v.vigencia === vigencia);
-        registros.push({ id: previo?.id, obra_social: os, codigo: f.clase === "aac" ? it.codigo : sin(it.codigo), codigo_aac: f.clase === "aac" ? it.codigo : null,
+        const e = nom.porCodigo.get(it.codigo) || {};
+        const previo = propios.find((v) => v.obra_social === os && sinSeparadores(v.codigo) === sinSeparadores(it.codigo) && v.vigencia === vigencia);
+        registros.push({ id: previo?.id, obra_social: os, codigo: f.clase === "aac" ? it.codigo : sinSeparadores(it.codigo),
+          codigo_aac: f.clase === "aac" ? (e.es === "aac" ? e.aac : it.codigo) : f.equivalencias ? e.aac || null : null, nomenclador: f.clase,
           descripcion: it.descripcion, monto: Math.round(it.montos[c.j] * 100) / 100, vigencia, tipo: f["tipo_" + c.j] || "honorario",
           fuente: `Importado de «${archivo.name}»`, confianza: "importado", lote, archivo: archivo.name });
       }
     }
     await Almacen.guardarVarios("valores", registros);
     const n = await recalcularPendientes();
-    $("#v-os").value = elegidas[0] && f["col_" + elegidas[0].j];
+    $("#v-os").value = f["col_" + elegidas[0].j];
     aviso(`${registros.length} valores guardados (${[...new Set(elegidas.map((c) => f["col_" + c.j]))].join(", ")}); ${n} pendientes recalculados.`);
   });
 }
 
-// Listado del sistema del sanatorio: un renglón por práctica, obra social y plan
-function importarLargo(archivo, lectura, { columnas, items, columnaOS }, osDe) {
-  const col = columnas.find((c) => !c.ignorar) || columnas[0];
-  const { valores, sinReconocer } = Importador.porObraSocial(items, col.j, osDe);
-  if (!valores.length) return aviso(`«${archivo.name}»: ninguna obra social del archivo coincide con las tuyas (Valores → Obras sociales).`);
+// Listados del sistema del sanatorio: un renglón por práctica, obra social y plan (uno o varios archivos)
+function importarLargo(lista, osDe) {
+  const d = datos();
+  let valores = [], items = [];
+  const sinReconocer = new Set(), columnasUsadas = new Set();
+  for (const { archivo, interpretado: { columnas, items: its } } of lista) {
+    const col = columnas.find((c) => !c.ignorar) || columnas[0];
+    columnasUsadas.add(col.nombre);
+    const r = Importador.porObraSocial(its, col.j, osDe);
+    valores = valores.concat(r.valores.map((g) => ({ ...g, archivo: archivo.name }))); r.sinReconocer.forEach((x) => sinReconocer.add(x)); items = items.concat(its);
+  }
+  const nombresArchivos = lista.map((x) => x.archivo.name);
+  if (!valores.length) return aviso(`${nombresArchivos.join(", ")}: ninguna obra social del archivo coincide con las tuyas (Valores → Obras sociales).`);
   const practicas = [...new Map(valores.map((g) => [g.codigo, g.descripcion])).entries()];
+  const nom = Importador.nomenclador(practicas.map(([codigo, descripcion]) => ({ codigo, descripcion })));
   const totalOS = new Set(items.map((it) => it.os_texto)).size;
-  const sugerencias = practicas.slice(0, 30).map(([, desc]) => Motor.sugerir("AAC", desc).slice(0, 3));
   valores.sort((a, b) => a.codigo.localeCompare(b.codigo) || a.os.localeCompare(b.os));
+  const vig = lista.map((x) => Importador.vigencia(x.lectura.texto + "\n" + x.archivo.name)).find(Boolean) || mes();
   dialogo(`<h2>Importar valores</h2>
-    <p class="ayuda">«${esc(archivo.name)}»: ${practicas.length === 1 ? "1 práctica" : practicas.length + " prácticas"} con valores para ${totalOS} obras sociales
-      y planes (columna «${esc(columnaOS)}»; valor de la columna «${esc(col.nombre)}»). Se cargan <b>${valores.length} valores</b> para tus obras sociales.</p>
+    <p class="ayuda">${nombresArchivos.map((n) => "«" + esc(n) + "»").join(", ")}: ${practicas.length === 1 ? "1 práctica" : practicas.length + " prácticas"}
+      con valores para ${totalOS} obras sociales y planes (valor de la columna «${esc([...columnasUsadas].join(", "))}»).
+      Se cargan <b>${valores.length} valores</b> para tus obras sociales. Los códigos parecen ${NOMENCLADORES[nom.sistema]}.</p>
     <div class="grid">
-      <label>Vigentes desde<input type="month" name="vigencia" value="${Importador.vigencia(lectura.texto + "\\n" + archivo.name) || mes()}"></label>
-      <label>Tipo<select name="tipo"><option value="honorario">Honorario del médico</option><option value="modulo">Módulo (total institución)</option></select></label>
-      ${practicas.slice(0, 30).map(([cod, desc], i) => `<label class="ancho">${esc(cod)} · ${esc(desc)} equivale en la AAC a<select name="aac_${i}">
-        ${sugerencias[i].map((c, k) => `<option value="${esc(c.code)}" ${k === 0 ? "selected" : ""}>${esc(c.code)} · ${esc(c.name.slice(0, 70))}</option>`).join("")}
-        <option value="">— ninguna (solo por el código ${esc(cod)}) —</option></select></label>`).join("")}
+      <label>Vigentes desde<input type="month" name="vigencia" value="${vig}"></label>
+      ${practicas.map(([cod, desc], i) => {
+        const e = nom.porCodigo.get(cod) || {}, sug = Motor.sugerir("AAC", desc).slice(0, 3);
+        if (e.aac && !sug.some((c) => c.code === e.aac)) sug.unshift({ code: e.aac, name: e.nombre });
+        return `<label class="ancho">${esc(cod)} · ${esc(desc)} equivale en la AAC a<select name="aac_${i}">
+          ${sug.map((c) => `<option value="${esc(c.code)}" ${c.code === e.aac ? "selected" : ""}>${esc(c.code)} · ${esc((c.name || "").slice(0, 70))}</option>`).join("")}
+          <option value="" ${e.aac ? "" : "selected"}>— ninguna (solo por el código ${esc(cod)}) —</option></select></label>`; }).join("")}
     </div>
-    <p class="ayuda">Con la equivalencia AAC el valor se usa en tus cirugías aunque no tengan cargado el código del sanatorio.</p>
-    <div class="tabla"><table><tr><th>Código</th><th>Obra social</th><th>En el archivo</th><th class="n">Valor</th></tr>
-      ${valores.map((g) => `<tr><td>${esc(g.codigo)}</td><td>${esc(g.os)}</td><td><small>${esc(g.os_texto)}</small></td>
-        <td class="n">${pesos(g.monto)}${g.min !== g.max ? `<br><small>según plan ${pesos(g.min)} a ${pesos(g.max)}</small>` : ""}</td></tr>`).join("")}
+    <p class="ayuda">Con la equivalencia AAC el valor se usa en tus cirugías aunque no tengan cargado el código del sanatorio.
+      «Módulo»: el valor es el total y te toca lo que no retiene la institución (Valores → Referencias, o el % de cada obra social).</p>
+    <div class="tabla"><table><tr><th>Código</th><th>Obra social</th><th class="n">Valor</th><th>Tipo</th></tr>
+      ${valores.map((g, k) => `<tr><td>${esc(g.codigo)}</td><td>${esc(g.os)}<br><small>${esc(g.os_texto)}</small></td>
+        <td class="n">${pesos(g.monto)}${g.min !== g.max ? `<br><small>según plan ${pesos(g.min)} a ${pesos(g.max)}</small>` : ""}</td>
+        <td><select name="tipo_${k}">${opcionesTipo(tipoDeOS(d, g.os))}</select></td></tr>`).join("")}
     </table></div>
-    ${sinReconocer.length ? `<details><summary class="ayuda">${sinReconocer.length} obras sociales del archivo que no tenés cargadas (no se importan)</summary>
-      <p class="ayuda">${sinReconocer.map(esc).join(" · ")}</p><p class="ayuda">Para importarlas, agregalas en Valores → Obras sociales y volvé a importar el archivo.</p></details>` : ""}`,
+    ${sinReconocer.size ? `<details><summary class="ayuda">${sinReconocer.size} obras sociales del archivo que no tenés cargadas (no se importan)</summary>
+      <p class="ayuda">${[...sinReconocer].map(esc).join(" · ")}</p><p class="ayuda">Para importarlas, agregalas en Valores → Obras sociales y volvé a importar el archivo.</p></details>` : ""}`,
   async (f) => {
     if (!f.vigencia) { aviso("Falta desde cuándo rigen los valores."); return false; }
-    const vigencia = f.vigencia.slice(0, 7) + "-01", lote = "lote-" + Date.now(), sin = (c) => String(c).replace(/[.\-\s]/g, "");
-    const aac = new Map(practicas.slice(0, 30).map(([cod], i) => [cod, f["aac_" + i] || null]));
+    const vigencia = f.vigencia.slice(0, 7) + "-01", lote = "lote-" + Date.now();
+    const aac = new Map(practicas.map(([cod], i) => [cod, f["aac_" + i] || null]));
     const propios = Almacen.doc.valores.filter((v) => !v.borrada);
-    const registros = valores.map((g) => {
-      const previo = propios.find((v) => v.obra_social === g.os && sin(v.codigo) === sin(g.codigo) && v.vigencia === vigencia);
-      return { id: previo?.id, obra_social: g.os, codigo: sin(g.codigo), codigo_aac: aac.get(g.codigo) || null,
+    const registros = valores.map((g, k) => {
+      const previo = propios.find((v) => v.obra_social === g.os && sinSeparadores(v.codigo) === sinSeparadores(g.codigo) && v.vigencia === vigencia);
+      return { id: previo?.id, obra_social: g.os, codigo: sinSeparadores(g.codigo), codigo_aac: aac.get(g.codigo) || null, nomenclador: nom.sistema,
         descripcion: g.descripcion + (g.min !== g.max ? ` (según plan ${pesos(g.min)} a ${pesos(g.max)})` : ""), monto: g.monto, vigencia,
-        tipo: f.tipo || "honorario", fuente: `Importado de «${archivo.name}» (${g.os_texto})`, confianza: "importado", lote, archivo: archivo.name };
+        tipo: f["tipo_" + k] || "honorario", fuente: `Importado de «${g.archivo || nombresArchivos[0]}» (${g.os_texto})`, confianza: "importado", lote,
+        archivo: nombresArchivos.length === 1 ? nombresArchivos[0] : `${nombresArchivos.length} archivos` };
     });
     await Almacen.guardarVarios("valores", registros);
     const n = await recalcularPendientes();
@@ -1005,6 +1055,7 @@ async function arrancar() {
       }
     }
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
+    await Almacen.ajuste("pct_institucion_modulo", $("#pct-institucion").value === "" ? 0 : Number($("#pct-institucion").value));
     const n = await recalcularPendientes();
     aviso(`Guardado; ${n} pendientes recalculadas.`);
     verValores();
@@ -1086,7 +1137,7 @@ async function arrancar() {
   $("#nueva-os").addEventListener("click", () => editarObraSocial({}));
   $("#v-os").addEventListener("change", verTablaValores);
   $("#nuevo-valor").addEventListener("click", nuevoValor);
-  $("#importar-valores").addEventListener("change", (ev) => { const a = ev.target.files[0]; ev.target.value = ""; if (a) importarValores(a); });
+  $("#importar-valores").addEventListener("change", (ev) => { const a = [...ev.target.files]; ev.target.value = ""; if (a.length) importarValores(a); });
   $("#lotes-valores").addEventListener("click", (ev) => { const b = ev.target.closest("[data-borrar-lote]"); if (b) borrarLote(b.dataset.borrarLote); });
   $("#tabla-valores").addEventListener("click", async (ev) => {
     const b = ev.target.closest("[data-borrar-valor]");
@@ -1137,7 +1188,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "21"; // igual que VERSION en sw.js
+const VERSION_APP = "22"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

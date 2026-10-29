@@ -169,6 +169,7 @@
         <label>Valor UQ AAC ($)<input id="uq-valor" type="number" step="0.01"></label>
         <label>Vigencia UQ<input id="uq-vigencia" type="month"></label>
         <label>Inflación mensual (%)<input id="inflacion" type="number" step="0.1"></label>
+        <label>% del módulo que retiene la institución<input id="pct-institucion" type="number" step="0.1" min="0" max="99"></label>
       </div>
       <p class="ayuda" id="uq-hist"></p>
       <div class="fila">
@@ -179,7 +180,8 @@
     </div>
     <div class="card economia">
       <h2>Obras sociales</h2>
-      <p class="ayuda">Plazos para calcular cuándo cobrar. «% módulo» = parte del módulo que le toca al cirujano (si la obra social paga por módulo).</p>
+      <p class="ayuda">Plazos para calcular cuándo cobrar. «% módulo» = parte del módulo que le toca al cirujano (si la obra social paga por módulo).
+        Si una obra social no tiene su propio %, se usa el general: lo que no retiene la institución (Referencias).</p>
       <div class="tabla" id="tabla-os"></div>
       <button class="boton chico secundario" id="nueva-os">+ Obra social</button>
     </div>
@@ -189,10 +191,10 @@
       <div class="tabla" id="tabla-valores"></div>
       <div class="fila" id="lotes-valores"></div>
       <div class="fila"><button class="boton chico secundario" id="nuevo-valor">+ Cargar valor</button>
-        <label class="boton chico">📎 Importar lista de valores<input type="file" id="importar-valores" hidden
+        <label class="boton chico">📎 Importar lista de valores<input type="file" id="importar-valores" multiple hidden
           accept=".xlsx,.xls,.xlsm,.ods,.csv,.docx,.doc,.pdf,.txt,image/*,application/pdf"></label></div>
       <p class="ayuda">Importar: Excel, Word (.docx), PDF o foto de la circular de aranceles. La app busca código, descripción y monto,
-        propone obra social y vigencia, y te muestra todo para revisar antes de guardar. Si trae una columna por obra social, las carga todas.</p>
+        propone obra social y vigencia, reconoce si los códigos son de la AAC, de PAMI o propios y te muestra todo para revisar antes de guardar. Podés elegir varios archivos a la vez (por ejemplo, uno por cirugía).</p>
     </div>
     <p class="ayuda" style="text-align:center"><b id="version-app"></b> · <a href="#" id="actualizar-app">Buscar actualización</a></p>
     <p class="ayuda" style="text-align:center">Liquidaciones · <a href="ayuda.html">Cómo usarla</a> · <a href="privacidad.html">Privacidad</a> · <a href="#" id="salir">Desconectar cuenta de este celular</a></p>

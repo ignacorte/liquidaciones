@@ -237,5 +237,42 @@ const Importador = (() => {
     return "";
   }
 
-  return { leer, interpretar, porObraSocial, vigencia, obraSocial, monto, filasTexto };
+  // ¿De qué nomenclador son los códigos? No alcanza con el número (el 08.07.16 del sanatorio es una colecistectomía y en la AAC
+  // es una reparación de la vía biliar): se compara la descripción del archivo con la del código en la AAC y en PAMI.
+  const VACIAS = new Set(["para", "otra", "otras", "otro", "otros", "tipo", "segun", "incluye", "cada", "mismo", "misma", "desde", "hasta", "solo"]);
+  const raices = (t) => new Set((plano(t).match(/[a-z]{4,}/g) || []).filter((w) => !VACIAS.has(w)).map((w) => w.slice(0, 6)));
+  function coincidencia(desc, nombre) {
+    const a = raices(desc), b = raices(nombre);
+    return a.size ? [...a].filter((w) => b.has(w)).length / a.size : 0;
+  }
+  const formasAAC = (c) => {
+    const d = String(c).replace(/\D/g, "");
+    const f = /^\d{2}\.\d{2}\.\d{2}$/.test(String(c).trim()) ? [String(c).trim()] : [];
+    if (d.length === 6 || (d.length === 8 && d.endsWith("00"))) f.push(`${d.slice(0, 2)}.${d.slice(2, 4)}.${d.slice(4, 6)}`);
+    return f;
+  };
+  function nomenclador(items) {
+    const aac = new Map(Motor.catalogos.AAC.codes.map((c) => [c.code, c]));
+    const pami = new Map(((Motor.catalogos.PAMI_TODO || Motor.catalogos.PAMI || {}).codes || []).map((c) => [c.code, c]));
+    const texto = (c) => c.name + " " + (c.items || []).join(" ");
+    const porCodigo = new Map();
+    let nAAC = 0, nPAMI = 0, conDesc = 0;
+    for (const it of items) {
+      if (porCodigo.has(it.codigo)) continue;
+      const r = { aac: "", nombre: "", es: "" };
+      if (it.descripcion) {
+        conDesc++;
+        const propio = formasAAC(it.codigo).find((k) => aac.has(k) && coincidencia(it.descripcion, texto(aac.get(k))) >= 0.5);
+        const dePami = pami.get(String(it.codigo).replace(/\D/g, ""));
+        if (propio) { r.es = "aac"; r.aac = propio; r.nombre = aac.get(propio).name; nAAC++; }
+        else if (dePami && coincidencia(it.descripcion, texto(dePami)) >= 0.5) { r.es = "pami"; nPAMI++; }
+        if (!r.aac) { const s = Motor.sugerir("AAC", it.descripcion)[0]; if (s) { r.aac = s.code; r.nombre = s.name; } }
+      }
+      porCodigo.set(it.codigo, r);
+    }
+    const sistema = conDesc && nAAC >= conDesc * 0.6 ? "aac" : conDesc && nPAMI >= conDesc * 0.6 ? "pami" : "propio";
+    return { sistema, porCodigo, nAAC, nPAMI, conDesc };
+  }
+
+  return { leer, interpretar, porObraSocial, nomenclador, vigencia, obraSocial, monto, filasTexto };
 })();
