@@ -51,7 +51,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -117,8 +117,25 @@ async function guardarPrestacion(p) {
   for (const k of CAMPOS) limpio[k] = p[k] ?? null;
   limpio.extras = limpio.tipo === "consulta" ? [] : (p.extras || []).filter((x) => (x.procedimiento || "").trim()).map(({ sugerencias, valor, ...x }) => x);
   limpio.especialidad ||= ajuste("especialidad", "cirugia"); // cada prestación queda en su especialidad
+  if (limpio.especialidad === "anestesia" && !limpio.nro_ref) limpio.nro_ref = proximaRef();
   limpio.estado ||= "pendiente"; limpio.tipo ||= "consulta"; limpio.rol ||= "cirujano"; if (limpio.pct == null || limpio.pct === "") limpio.pct = 100; limpio.origen ||= "manual";
   return Almacen.guardar("prestaciones", Motor.completar(datos(), limpio));
+}
+
+// N° de referencia de cada anestesia (0001, 0002…): va en el nombre de sus documentos para encontrarlos rápido
+const proximaRef = () => Math.max(0, ...Almacen.doc.prestaciones.map((p) => Number(p.nro_ref) || 0)) + 1;
+const refTexto = (p) => (p.nro_ref ? String(p.nro_ref).padStart(4, "0") : "");
+// Las anestesias cargadas antes de tener número reciben el suyo (por fecha), una vez
+let numeradas = false;
+async function numerarAnestesias() {
+  if (numeradas) return;
+  numeradas = true;
+  const sin = Almacen.doc.prestaciones.filter((p) => p.especialidad === "anestesia" && !p.nro_ref && !p.borrada)
+    .sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+  if (!sin.length) return;
+  let n = proximaRef();
+  await Almacen.guardarVarios("prestaciones", sin.map((p) => ({ ...p, nro_ref: n++ })));
+  refrescar();
 }
 
 // ---------- Navegación ----------
@@ -137,7 +154,7 @@ function ir(vista) {
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
   ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, valores: verValores }[vista] || (() => {}))();
 }
-const refrescar = () => ir(estado.vista);
+const refrescar = () => { if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().catch(() => {}); ir(estado.vista); };
 
 // ---------- Inicio ----------
 
@@ -362,6 +379,7 @@ function camposAnestesia(p) {
     <label>Edad del paciente${sel("edad_grupo", EDADES, p.edad_grupo || "")}</label>
     <label>Institución / lugar<input name="institucion" value="${esc(p.institucion)}"></label>
     <label>N° de circuito<input name="nro_circuito" value="${esc(p.nro_circuito)}" inputmode="numeric" placeholder="el de la asociación"></label>
+    ${p.nro_ref ? `<p class="ancho ayuda" style="margin:0">Referencia: <b>Ref. ${refTexto(p)}</b> (va en el nombre de sus PDF en el Drive)</p>` : ""}
     ${marca("feriado", "Feriado (+50 %)" + (Motor.feriadoNacional(p.fecha) ? " · es feriado nacional" : ""))}
     ${marca("obesidad", "Obesidad mórbida (+2 complejidades)")}
     ${marca("suspendida", "Operación suspendida (complejidad 1)")}
@@ -375,7 +393,7 @@ function documento(p, clase, x, marca) {
   const nuevos = documentosDe(p)[clase] || [], enDrive = p[x.lista] || [];
   return `${marca(x.campo, x.nombre)}
     <div class="ancho" data-doc="${clase}">
-      ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._fotos || []).some((f) => f.clase === clase && f.reconocida) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length} ${nuevos.length === 1 ? "archivo" : "archivos"}): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")}.</p>` : ""}
+      ${nuevos.length ? `<p class="ayuda" style="margin:0">📄 ${(p._fotos || []).some((f) => f.clase === clase && f.reconocida) ? `Reconocida: es la ${x.corto}` : x.nombre} (${nuevos.length === 1 ? "1 foto" : nuevos.length + " fotos o páginas"} → un PDF): al guardar va a tu Drive › Liquidaciones › ${x.ruta.join(" › ")}${enDrive.length ? " y reemplaza al anterior" : ""}.</p>` : ""}
       ${enDrive.length ? `<p class="ayuda" style="margin:0">En tu Drive: ${enDrive.map((a, i) => `<a href="${esc(a.link)}" target="_blank" rel="noopener">ver${enDrive.length > 1 ? " " + (i + 1) : ""}</a>`).join(" · ")}</p>` : ""}
       <label class="boton chico secundario" style="margin:2px 0 6px">📎 ${nuevos.length || enDrive.length ? "Agregar otra foto" : "Adjuntar (foto o PDF)"}<input type="file" accept="image/*,application/pdf" multiple hidden data-adjuntar-doc="${clase}"></label>
       <button type="button" class="boton chico secundario" style="margin:2px 0 6px" data-camara="[data-adjuntar-doc=${clase}]">📷 Varias seguidas</button>
@@ -580,15 +598,17 @@ async function leer(tipo, archivos, textoPegado) {
     // Lo que no se reconoce queda para elegir en la revisión («¿Qué es esta foto?»): nada se guarda sin que se sepa qué es.
     if (tipo === "parte" && esAnestesia() && archivos?.length && filas.length === 1) {
       const f = filas[0];
-      f._fotos = archivos.map((a, i) => {
-        const clase = Lector.tipoDocumento(partes[i] ?? (archivos.length === 1 ? texto : ""), f) || "";
-        if (clase) f[DOCS[clase].campo] = true;
-        return { archivo: a, clase, reconocida: !!clase };
-      });
-      const rec = [...new Set(f._fotos.map((x) => x.clase).filter(Boolean))];
-      const sinSaber = f._fotos.filter((x) => !x.clase).length;
-      aviso((rec.length ? "Reconocí: " + rec.map((c) => DOCS[c].corto).join(", ") + ". " : "") +
-        (sinSaber ? `Elegí qué es ${sinSaber === 1 ? "la foto" : sinSaber + " fotos"} sin reconocer (abajo, «Fotos cargadas»).` : "Se guarda en tu Drive."));
+      // Puntaje de cada foto para cada documento; se asigna de mayor a menor: cada documento a su mejor foto y cada foto
+      // a un solo documento. Las demás quedan como «solo datos del paciente» (se leyeron, pero no se guardan).
+      const pares = archivos.flatMap((a, i) => Object.entries(Lector.puntajeDocumento(partes[i] ?? (archivos.length === 1 ? texto : ""), f))
+        .filter(([, n]) => n > 0).map(([clase, n]) => ({ i, clase, n }))).sort((a, b) => b.n - a.n);
+      const clases = archivos.map(() => "");
+      for (const x of pares) if (!clases[x.i] && !clases.includes(x.clase)) clases[x.i] = x.clase;
+      f._fotos = archivos.map((a, i) => ({ archivo: a, clase: clases[i], reconocida: !!clases[i] }));
+      for (const c of clases) if (c) f[DOCS[c].campo] = true;
+      const rec = clases.filter(Boolean), datosSolo = clases.filter((c) => !c).length;
+      aviso((rec.length ? "Reconocí: " + rec.map((c) => DOCS[c].corto).join(", ") + "." : "No reconocí fojas ni autorización: elegilas abajo en «Fotos cargadas».") +
+        (datosSolo && rec.length ? ` ${datosSolo === 1 ? "Otra foto quedó" : datosSolo + " fotos quedaron"} solo para datos del paciente.` : ""));
     }
     mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
@@ -623,9 +643,11 @@ function mostrarRevision(filas, titulo) {
     div.addEventListener("change", (ev) => {
       if (ev.target.matches("[data-incluir]")) { filasRevision[i].incluir = ev.target.checked; div.classList.toggle("apagada", !ev.target.checked); }
       else if (ev.target.matches("[data-foto-clase]")) {
-        const x = leerCampos(div, filasRevision[i]), clase = ev.target.value;
-        x._fotos = x._fotos.map((y, k) => (k === +ev.target.dataset.fotoClase ? { ...y, clase, reconocida: false } : y));
+        // Un solo archivo por documento: si otra foto era ese documento, pasa a «solo datos»
+        const x = leerCampos(div, filasRevision[i]), clase = ev.target.value, k = +ev.target.dataset.fotoClase, antes = x._fotos[k].clase;
+        x._fotos = x._fotos.map((y, j) => (j === k ? { ...y, clase, reconocida: false } : clase && y.clase === clase ? { ...y, clase: "", reconocida: false } : y));
         if (clase) x[DOCS[clase].campo] = true;
+        if (antes && !documentosDe(x)[antes]) x[DOCS[antes].campo] = false;
         filasRevision[i] = x; pintar();
       } else {
         filasRevision[i] = leerCampos(div, filasRevision[i]);
@@ -639,11 +661,11 @@ function mostrarRevision(filas, titulo) {
 
 // Anestesiología: cada foto leída con lo que es (reconocido o elegido); se guarda en su carpeta del Drive al tocar Guardar
 function fotosCargadas(x) {
-  const opciones = { "": "— ¿Qué es? (no se guarda) —", ...Object.fromEntries(Object.entries(DOCS).map(([k, d]) => [k, d.nombre])) };
-  return `<div class="ancho" style="margin-bottom:8px"><div class="ayuda" style="margin:0 0 4px"><b>Fotos cargadas</b> · cada una va a tu Drive según lo que sea</div>
+  const opciones = { "": "Solo datos del paciente (no se guarda)", ...Object.fromEntries(Object.entries(DOCS).map(([k, d]) => [k, d.nombre])) };
+  return `<div class="ancho" style="margin-bottom:8px"><div class="ayuda" style="margin:0 0 4px"><b>Fotos cargadas</b> · la mejor para cada documento se guarda en PDF en tu Drive (una sola por documento)</div>
     ${x._fotos.map((f, k) => `<div class="fila" style="margin:0 0 4px;flex-wrap:nowrap;align-items:center">
       ${f.archivo.type?.startsWith("image/") ? `<img src="${URL.createObjectURL(f.archivo)}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:6px">` : "<span>📄</span>"}
-      <select data-foto-clase="${k}" ${f.clase ? "" : 'style="border-color:var(--rojo, #c00)"'}>${Object.entries(opciones).map(([v, t]) => `<option value="${v}" ${v === f.clase ? "selected" : ""}>${t}</option>`).join("")}</select>
+      <select data-foto-clase="${k}">${Object.entries(opciones).map(([v, t]) => `<option value="${v}" ${v === f.clase ? "selected" : ""}>${t}</option>`).join("")}</select>
       ${f.reconocida ? '<span class="ayuda" style="margin:0">reconocida</span>' : ""}</div>`).join("")}</div>`;
 }
 // Archivos por guardar de una prestación: los adjuntados con el botón de cada documento y las fotos leídas con su clase
@@ -661,11 +683,11 @@ function cerrarRevision() { ultimaLectura = null; $("#agregar-foto").hidden = tr
 // Documentos de la anestesia → Drive («Liquidaciones/Anestesiología/Fojas» y «…/Autorizaciones»), ligados a la prestación.
 // Quedan cifrados en el celular y se suben en la sincronización (también si al guardar no había señal o el acceso de Google
 // estaba vencido). Devuelve cuántos archivos quedaron por subir.
-// «GOMEZ, ANA MARIA – Circuito 1234 – Foja quirúrgica – 2026-10-21 (2).jpg» (sin número de circuito, sin esa parte)
+// «Ref 0012 – GOMEZ, ANA MARIA – 2026-10-21 – Circuito 4521 – Foja quirúrgica.pdf» (sin n° de circuito, sin esa parte)
 function nombreDocumento(p, x, n, ext) {
   const limpio = (t) => String(t || "").replace(/[\\/:*?"<>|]/g, " ").trim();
-  return [limpio(p.paciente) || "paciente", p.nro_circuito && "Circuito " + limpio(p.nro_circuito), x.archivo, p.fecha].filter(Boolean).join(" – ") +
-    (n ? ` (${n})` : "") + ext;
+  return [p.nro_ref && "Ref " + refTexto(p), limpio(p.paciente) || "paciente", p.fecha, p.nro_circuito && "Circuito " + limpio(p.nro_circuito), x.archivo]
+    .filter(Boolean).join(" – ") + (n ? ` (${n})` : "") + ext;
 }
 // Si cambian el paciente, la fecha o el n° de circuito, los documentos ya subidos se renombran en el Drive
 async function renombrarDocumentos(p) {
@@ -684,16 +706,64 @@ async function guardarDocumentos(p, docs) {
   let n = 0;
   for (const [clase, archivos] of Object.entries(docs || {})) {
     const x = DOCS[clase];
-    for (const [i, a] of [...archivos].entries()) {
-      const ext = (a.name.match(/\.[a-z0-9]+$/i) || [a.type === "application/pdf" ? ".pdf" : ".jpg"])[0];
-      const nombre = nombreDocumento(p, x, archivos.length > 1 ? i + 1 : 0, ext);
-      await Almacen.encolarAdjunto(p.id, nombre, a, x.ruta, { campo: x.campo, lista: x.lista });
-      n++;
-    }
+    if (!archivos.length) continue;
+    // Siempre un solo PDF por documento (las fotos y páginas juntas); reemplaza al que hubiera en el Drive
+    const pdf = await aPDF(archivos);
+    const ext = pdf.type === "application/pdf" ? ".pdf" : (pdf.name.match(/\.[a-z0-9]+$/i) || [".jpg"])[0];
+    await Almacen.encolarAdjunto(p.id, nombreDocumento(p, x, 0, ext), pdf, x.ruta, { campo: x.campo, lista: x.lista, reemplaza: true });
+    n++;
   }
   if (n) informarSubida();
   return n;
 }
+// ---------- PDF ----------
+// Fotos (y páginas de PDF) → un PDF con una página por imagen (JPEG dentro del PDF, sin librerías). Un único PDF se deja
+// como está. Si una foto no se puede abrir (formato raro), se guarda el archivo original para no perderlo.
+async function aPDF(archivos) {
+  if (archivos.length === 1 && archivos[0].type === "application/pdf") return archivos[0];
+  const imagenes = [];
+  try {
+    for (const a of archivos) {
+      const lienzos = a.type === "application/pdf" ? await Lector.lienzosPDF(a) : [await lienzoDeImagen(a)];
+      for (const c of lienzos) {
+        const blob = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.85));
+        imagenes.push({ ancho: c.width, alto: c.height, datos: new Uint8Array(await blob.arrayBuffer()) });
+      }
+    }
+  } catch { return archivos[0]; }
+  return new File([pdfDeImagenes(imagenes)], "documento.pdf", { type: "application/pdf" });
+}
+async function lienzoDeImagen(archivo, maximo = 2400) {
+  const img = await createImageBitmap(archivo, { imageOrientation: "from-image" });
+  const k = Math.min(1, maximo / Math.max(img.width, img.height)), c = document.createElement("canvas");
+  c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+function pdfDeImagenes(imagenes) {
+  const enc = new TextEncoder(), partes = [], desde = [];
+  let largo = 0;
+  const poner = (x) => { const b = typeof x === "string" ? enc.encode(x) : x; partes.push(b); largo += b.length; };
+  const objeto = (n, ...cuerpo) => { desde[n] = largo; poner(`${n} 0 obj\n`); cuerpo.forEach(poner); poner("\nendobj\n"); };
+  const total = 2 + 3 * imagenes.length;
+  poner("%PDF-1.4\n");
+  objeto(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  objeto(2, `<< /Type /Pages /Count ${imagenes.length} /Kids [${imagenes.map((_, i) => `${3 + 3 * i} 0 R`).join(" ")}] >>`);
+  imagenes.forEach((im, i) => {
+    const pag = 3 + 3 * i, ancho = 595, alto = Math.round(595 * im.alto / im.ancho), dibujo = `q ${ancho} 0 0 ${alto} 0 0 cm /Im0 Do Q`;
+    objeto(pag, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${ancho} ${alto}] /Resources << /XObject << /Im0 ${pag + 2} 0 R >> >> /Contents ${pag + 1} 0 R >>`);
+    objeto(pag + 1, `<< /Length ${dibujo.length} >>\nstream\n${dibujo}\nendstream`);
+    objeto(pag + 2, `<< /Type /XObject /Subtype /Image /Width ${im.ancho} /Height ${im.alto} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.datos.length} >>\nstream\n`,
+      im.datos, "\nendstream");
+  });
+  const xref = largo;
+  poner(`xref\n0 ${total + 1}\n0000000000 65535 f \n` + desde.slice(1).map((d) => String(d).padStart(10, "0") + " 00000 n \n").join(""));
+  poner(`trailer\n<< /Size ${total + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(partes, { type: "application/pdf" });
+}
+
 // Después de guardar documentos: sube y dice claramente si llegaron al Drive o por qué no (quedan en el celular)
 async function informarSubida() {
   if (!Almacen.tieneToken()) return setTimeout(() => aviso("Los documentos quedaron guardados en el celular. Para subirlos al Drive, tocá «Subir a Drive» arriba (se venció el acceso de Google)."), 3600);
@@ -855,7 +925,7 @@ function verPrestaciones() {
   else if (est === "falta_doc") lista = lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length);
   else if (est === "para_cargar") lista = lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length);
   else if (est) lista = lista.filter((p) => p.estado === est);
-  if (q) lista = lista.filter((p) => Motor.plano([p.paciente, p.dni, p.procedimiento].join(" ")).includes(q));
+  if (q) lista = lista.filter((p) => Motor.plano([p.paciente, p.dni, p.procedimiento, refTexto(p), p.nro_ref, p.nro_circuito].join(" ")).includes(q));
   lista.sort((a, b) => (b.fecha + (b.hora || "")).localeCompare(a.fecha + (a.hora || "")));
   estado.seleccion.clear(); actualizarSeleccion();
   const total = lista.reduce((s, p) => s + (p.valor_estimado || 0), 0);
@@ -867,7 +937,7 @@ function verPrestaciones() {
         (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + codigosDe(p, "codigo_aac") : ""));
       return `<div class="item" data-id="${p.id}"><input type="checkbox" data-sel="${p.id}" class="economia">
         <div class="cuerpo"><div class="titulo">${esc(p.paciente)}</div>
-        <div class="sub">${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
+        <div class="sub">${esAnestesia() && p.nro_ref ? `Ref. ${refTexto(p)} · ` : ""}${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
         <div class="monto economia">${pesos(p.monto_cobrado ?? p.valor_estimado)}<br>${chip}</div></div>`;
     }).join("") : '<p class="ayuda">Nada para mostrar con estos filtros.</p>';
 }
@@ -1383,7 +1453,7 @@ async function construirExcel(rama = esAnestesia() ? "anestesia" : "cirugia") {
     : /^Módulo|^Sin honorario conocido · Módulo/.test(p.valor_origen || "") ? "Módulo" : p.valor_estimado != null ? "Honorario directo" : "";
   // Anestesiología: como la planilla de control (situación, documentación faltante, cargado en la asociación, liquidado neto)
   const anestesias = deAnestesia.map((p, i) => ({
-    "N°": i + 1, "Fecha": fechaX(p.fecha), "Hora": p.hora || "", "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "",
+    "N°": i + 1, "Ref.": refTexto(p), "Fecha": fechaX(p.fecha), "Hora": p.hora || "", "Paciente": p.paciente, "DNI": p.dni || "", "Afiliado": p.afiliado || "",
     "Obra social": p.obra_social || p.obra_social_texto || "", "Lugar": p.institucion || "", "Tipo": etiquetas(p).tipos[p.tipo], "Procedimiento": procedimientosDe(p),
     "Complejidad": Motor.complejidadEfectiva(p) ?? "", "Recargos": Motor.recargosAnestesia(p).map(([n, x]) => `${n} +${x} %`).join(", "),
     "Monto cargado (bruto)": p.valor_bruto ?? null, "Neto estimado": p.valor_estimado ?? null, "Situación": est(p),
@@ -1688,7 +1758,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "41"; // igual que VERSION en sw.js
+const VERSION_APP = "42"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

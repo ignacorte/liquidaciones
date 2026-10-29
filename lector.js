@@ -754,6 +754,34 @@ const Lector = (() => {
     return null;
   }
 
+  // Puntaje de cada documento para una foto o PDF (0 = no es ese documento): sirve para elegir, entre varias fotos, la mejor
+  // de cada clase (la más completa: más datos típicos y más texto legible)
+  function puntajeDocumento(texto, f) {
+    const t = plano(texto), largo = Math.min(texto.length / 300, 6);
+    const cuenta = (rs) => rs.filter((r) => r.test(t)).length;
+    return {
+      quirurgica: esFojaCompleta(texto, f) ? 10 + largo + cuenta([/cirujano/, /ayudante/, /anestesi/, /instrumentador/, /diagnostico/, /descripcion|tecnica|procedimiento/,
+        /hallazgo/, /hora\s+(de\s+)?(inicio|comienzo|fin|finalizacion)/, /firma|sello|matricula|m\.?p\.?\s*\d/]) : 0,
+      anestesia: esFojaAnestesia(texto) ? 10 + largo + cuenta([/\basa\b/, /induccion/, /intubacion|mascara laringea/, /flurano/, /propofol|fentanil|midazolam/,
+        /rocuronio|atracurio|succinilcolina/, /spo2|saturacion/, /aldrete|recuperacion/, /firma|sello|matricula/]) : 0,
+      autorizacion: esAutorizacion(texto) ? 10 + largo + cuenta([/(n|nro|numero|cod|codigo)\.?\s*(de\s+)?autoriz/, /afiliado/, /vencimiento|validez/, /prestador/]) : 0,
+    };
+  }
+
+  // Páginas de un PDF como imágenes (para armar un PDF único con fotos y PDF juntos)
+  async function lienzosPDF(archivo, maxPaginas = 10) {
+    await script(PDFJS);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+    const pdf = await pdfjsLib.getDocument({ data: await archivo.arrayBuffer() }).promise, lienzos = [];
+    for (let i = 1; i <= Math.min(pdf.numPages, maxPaginas); i++) {
+      const pag = await pdf.getPage(i), vista = pag.getViewport({ scale: 2 }), c = document.createElement("canvas");
+      c.width = vista.width; c.height = vista.height;
+      await pag.render({ canvasContext: c.getContext("2d"), viewport: vista }).promise;
+      lienzos.push(c);
+    }
+    return lienzos;
+  }
+
   // Captura de pantalla de esta misma app (no es un parte ni un listado)
   const esCapturaDeLaApp = (texto) => /revisa los datos leidos|buscar otro codigo|agregar otro procedimiento \(mismo acto\)|buscar codigo pami/.test(plano(texto));
 
@@ -787,5 +815,5 @@ const Lector = (() => {
     }));
   }
 
-  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento };
+  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento, puntajeDocumento, lienzosPDF };
 })();

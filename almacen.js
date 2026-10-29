@@ -440,9 +440,11 @@ const Almacen = (() => {
   const guardarAdjuntos = async () => idbEscribir({ adjuntos: await cifrar(adjuntos) });
   const aBase64 = (archivo) => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = mal; r.readAsDataURL(archivo); });
   // campo / lista: la casilla que se tilda y la lista de enlaces de la prestación (por defecto, la foja quirúrgica)
-  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos" } = {}) {
+  // reemplaza: un solo archivo por documento (el nuevo reemplaza al que estaba por subir y, al subirse, al que estaba en el Drive)
+  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos", reemplaza = false } = {}) {
     await leerAdjuntos();
-    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista });
+    if (reemplaza) adjuntos = adjuntos.filter((a) => a.renombrar || a.prestacionId !== prestacionId || a.lista !== lista);
+    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista, reemplaza });
     await guardarAdjuntos();
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
@@ -483,12 +485,19 @@ const Almacen = (() => {
       return;
     }
     const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
-    const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), await carpetaRuta(a.ruta));
+    const carpetaDoc = await carpetaRuta(a.ruta);
+    const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), carpetaDoc);
     const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
     if (i >= 0) {
       const p = doc.prestaciones[i], campo = a.campo || "doc_foja", lista = a.lista || "foja_archivos";
-      doc.prestaciones[i] = { ...p, [campo]: true, actualizado: Date.now(),
-        [lista]: [...(p[lista] || []), { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre }] };
+      const nuevo = { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre };
+      // El anterior no se borra: pasa a la carpeta «Reemplazados» (al lado), por si hiciera falta
+      if (a.reemplaza && (p[lista] || []).length) {
+        const viejos = await carpetaRuta([...a.ruta.slice(0, -1), "Reemplazados"]);
+        for (const v of p[lista]) await drive(`${API}/${v.id}?addParents=${viejos}&removeParents=${carpetaDoc}`, { method: "PATCH",
+          headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+      }
+      doc.prestaciones[i] = { ...p, [campo]: true, actualizado: Date.now(), [lista]: a.reemplaza ? [nuevo] : [...(p[lista] || []), nuevo] };
       cambios++;
     }
     await quitar(a);
