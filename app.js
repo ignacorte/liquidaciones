@@ -44,7 +44,7 @@ const ESTADOS = { pendiente: "Sin presentar", presentada: "Presentada", cobrada:
 const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliado", "obra_social", "obra_social_texto", "institucion", "procedimiento",
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
-  "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion"];
+  "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -93,8 +93,9 @@ function datos() {
   const valoresPropios = vivos(d.valores);
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
-  return { obras, especialidad: ajuste("especialidad", "cirugia"), pct_darc: Number(ajuste("pct_darc", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
-           uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones) };
+  const esp = ajuste("especialidad", "cirugia");
+  return { obras, especialidad: esp, pct_darc: Number(ajuste("pct_darc", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios),
+           uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
 
@@ -107,6 +108,7 @@ async function guardarPrestacion(p) {
   const limpio = { id: p.id };
   for (const k of CAMPOS) limpio[k] = p[k] ?? null;
   limpio.extras = limpio.tipo === "consulta" ? [] : (p.extras || []).filter((x) => (x.procedimiento || "").trim()).map(({ sugerencias, valor, ...x }) => x);
+  limpio.especialidad ||= ajuste("especialidad", "cirugia"); // cada prestación queda en su especialidad
   limpio.estado ||= "pendiente"; limpio.tipo ||= "consulta"; limpio.rol ||= "cirujano"; if (limpio.pct == null || limpio.pct === "") limpio.pct = 100; limpio.origen ||= "manual";
   return Almacen.guardar("prestaciones", Motor.completar(datos(), limpio));
 }
@@ -196,6 +198,7 @@ function aplicarModo() {
   document.body.classList.toggle("modo-anestesia", anest);
   Object.assign(TIPOS, et.tipos); Object.assign(ESTADOS, et.estados);
   $("#especialidad").value = anest ? "anestesia" : "cirugia";
+  $("#especialidad-texto").textContent = "Especialidad: " + ESPECIALIDADES[anest ? "anestesia" : "cirugia"];
   $("[data-marcar=presentada]").textContent = anest ? "Cargadas en DARC" : "Presentadas";
   $("[data-marcar=cobrada]").textContent = anest ? "Liquidadas" : "Cobradas";
   $("#titulo-presentar").textContent = anest ? "Para cargar en DARC" : "Para presentar";
@@ -206,19 +209,43 @@ function aplicarModo() {
   $("#f-estado").value = [...$("#f-estado").options].some((o) => o.value === elegido) ? elegido : "";
 }
 
-// La primera vez: ¿qué especialidad? (se puede cambiar en Valores → Mi cuenta)
-function preguntarEspecialidad() {
-  if (Almacen.doc.ajustes.especialidad || $("#dlg").open) return;
+// Administrador: su cuenta de Google figura (como huella SHA-256) en CONFIG.ADMINS_SHA256
+async function esAdmin() {
+  const cuenta = (Almacen.doc.cuenta || "").trim().toLowerCase();
+  if (!cuenta || !crypto.subtle) return false;
+  if (estado.admin?.cuenta === cuenta) return estado.admin.es;
+  const huella = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cuenta)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  estado.admin = { cuenta, es: (CONFIG.ADMINS_SHA256 || []).includes(huella) };
+  return estado.admin.es;
+}
+
+// Especialidad. Administrador: elige el camino cada vez que entra. Colegas: una sola vez, la primera (después ven solo ese)
+async function preguntarEspecialidad() {
+  const admin = await esAdmin();
+  document.body.classList.toggle("admin", admin);
+  if ((!admin && Almacen.doc.ajustes.especialidad) || $("#dlg").open || estado.caminoElegido) return;
   const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
   cuerpo._actual = null;
-  cuerpo.innerHTML = `<h2>¿Cuál es tu especialidad?</h2>
+  cuerpo.innerHTML = admin ? `<h2>¿Qué camino seguís?</h2>
+    <p class="ayuda">Sos administrador: podés entrar como cirujano o como anestesiólogo. Cada camino tiene sus propias prestaciones.</p>
+    <div class="fila"><button class="boton" data-especialidad="cirugia">Cirugía</button><button class="boton" data-especialidad="anestesia">Anestesiología</button></div>`
+    : `<h2>¿Cuál es tu especialidad?</h2>
     <p class="ayuda">La app se adapta a cómo se liquida cada una. En anestesiología: complejidad del nomenclador de anestesiólogos,
-      documentación (foja y autorización) y carga en la asociación (DARC). Podés cambiarla después en Valores → Mi cuenta.</p>
+      documentación (foja y autorización) y carga en la asociación (DARC). <b>Se elige una sola vez.</b></p>
     <div class="fila"><button class="boton" data-especialidad="cirugia">Cirugía</button><button class="boton" data-especialidad="anestesia">Anestesiología</button></div>`;
   cuerpo.onclick = async (ev) => {
-    const b = ev.target.closest("[data-especialidad]");
+    if (ev.target.closest("[data-volver]")) { estado.caminoElegido = false; dlg.close(); return preguntarEspecialidad(); }
+    const b = ev.target.closest("[data-especialidad], [data-confirmar-especialidad]");
     if (!b) return;
-    await Almacen.ajuste("especialidad", b.dataset.especialidad);
+    // Colegas: se confirma (no se puede cambiar después)
+    if (!admin && b.dataset.especialidad) {
+      cuerpo.innerHTML = `<h2>${ESPECIALIDADES[b.dataset.especialidad]}</h2><p class="ayuda">¿Confirmás tu especialidad? No se puede cambiar después.</p>
+        <div class="fila"><button class="boton" data-confirmar-especialidad="${b.dataset.especialidad}">Sí, confirmar</button>
+        <button class="boton secundario" data-volver>Volver</button></div>`;
+      return;
+    }
+    estado.caminoElegido = true;
+    await Almacen.ajuste("especialidad", b.dataset.especialidad || b.dataset.confirmarEspecialidad);
     dlg.close();
     aplicarModo();
     await recalcularPendientes();
@@ -1396,7 +1423,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "29"; // igual que VERSION en sw.js
+const VERSION_APP = "30"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1430,6 +1457,7 @@ function bienvenida(mensaje) {
 // Ya desbloqueada (o con el PIN recién creado)
 function entrar() {
   $("#pin").value = $("#pin2").value = "";
+  estado.caminoElegido = false; // el administrador elige el camino cada vez que entra
   Almacen.minutosBloqueo = minutosBloqueo();
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
