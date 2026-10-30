@@ -138,7 +138,7 @@
         <label>Estado<select id="f-estado">
           <option value="">Todos</option><option value="a_cobrar">A cobrar</option><option value="vencida">Vencidas</option>
           <option value="pendiente">Sin presentar</option><option value="presentada">Presentadas</option>
-          <option value="cobrada">Cobradas</option><option value="debitada">Debitadas</option></select></label>
+          <option value="cobrada">Cobradas</option><option value="debitada">Debitadas</option><option value="revisar">Cobros para revisar</option></select></label>
         <label class="ancho">Buscar<input id="f-q" type="search" placeholder="Paciente, DNI o procedimiento"></label>
       </div>
       <div class="grid">
@@ -163,7 +163,9 @@
     <div class="card"><h2 id="titulo-presentar">Para presentar</h2><div id="a-presentar"></div></div>
     <div class="card"><h2>Vencidas</h2><p class="ayuda">Ya pasó la fecha estimada de cobro: reclamar o revisar débitos.</p><div id="vencidas"></div></div>
     <div class="card"><h2>Liquidaciones cobradas</h2><p class="ayuda">Historial de lo cobrado, agrupado por liquidación. Tocá una para ver sus pacientes.</p>
-      <label>Año<select id="liq-anio"></select></label><div id="historial-liq"></div></div>
+      <div class="grid"><label>Año<select id="liq-anio"></select></label>
+        <label>Ver<select id="liq-vista"><option value="liq">Por liquidación</option><option value="mes">Por mes</option></select></label></div>
+      <div id="historial-liq"></div></div>
     <div class="card"><h2>Cuánto tarda cada una (real)</h2><p class="ayuda">Promedio entre la prestación y el cobro, según lo que marcaste como cobrado.</p><div id="plazos-reales"></div></div>
   </section>
 

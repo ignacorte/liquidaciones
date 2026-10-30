@@ -64,7 +64,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
   "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas", "solo_registro", "liquidacion",
-  "doc_parte", "parte_archivos", "doc_datos", "datos_archivos", "procedimiento_estimado"];
+  "doc_parte", "parte_archivos", "doc_datos", "datos_archivos", "procedimiento_estimado", "revisar_cobro"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -239,6 +239,7 @@ function verParaHacer() {
       : [["pendiente", "", "Sin presentar hace más de 30 días", lista.filter(viejas)]]),
     ["", "-", "Obra social sin reconocer", lista.filter((p) => !p.obra_social && p.tipo !== "consulta")],
     ["debitada", "", "Debitadas sin motivo anotado", lista.filter((p) => p.estado === "debitada" && !p.motivo_debito)],
+    ["revisar", "", "Cobros para revisar (no figuran en su liquidación)", lista.filter((p) => p.revisar_cobro)],
   ].filter((x) => x[3].length);
   $("#para-hacer-card").hidden = modoRegistro();
   $("#para-hacer").innerHTML = !items.length ? `<p class="ayuda">✓ Nada pendiente: no hay cobros vencidos, documentación faltante ni débitos sin motivo.</p>` : `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
@@ -744,9 +745,11 @@ function procedimientoDeCodigo(codigo, descripcion, paciente = "", fecha = "") {
   // El mismo paciente en la lista propia (planilla, partes, cargas a mano): su cirugía más cercana (hasta 90 días), compatible
   // con las del módulo si el código es de un módulo
   if (paciente && fecha) {
+    // Con tantos días de margen, los errores de tipeo se toleran solo si la liquidación trae nombre y apellido
+    const conNombre = !!claveNombre(paciente).nom;
     const delModulo = new Set(items.flatMap((it) => [...palabras(nombreItem(it))]));
     const suya = datos().prestaciones.filter((p) => p.tipo !== "consulta" && p.origen !== "liquidacion" && p.procedimiento && !procedimientoCortado(p) &&
-      mismoPaciente(p.paciente, paciente, true) && diasEntre(p.fecha, fecha) <= 90 && (!items.length || [...palabras(p.procedimiento)].some((w) => delModulo.has(w))))
+      mismoPaciente(p.paciente, paciente, conNombre) && diasEntre(p.fecha, fecha) <= 90 && (!items.length || [...palabras(p.procedimiento)].some((w) => delModulo.has(w))))
       .sort((a, b) => diasEntre(a.fecha, fecha) - diasEntre(b.fecha, fecha))[0];
     if (suya) return { procedimiento: suya.procedimiento, estimado: true, segun: suya.fecha };
   }
@@ -1260,6 +1263,7 @@ function verPrestaciones() {
   if (os === "-") lista = lista.filter((p) => !p.obra_social); else if (os) lista = lista.filter((p) => p.obra_social === os);
   if (est === "vencida") lista = lista.filter((p) => Motor.vencida(p, h));
   else if (est === "a_cobrar") lista = lista.filter((p) => ["pendiente", "presentada"].includes(p.estado));
+  else if (est === "revisar") lista = lista.filter((p) => p.revisar_cobro);
   else if (est === "falta_doc") lista = lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length);
   else if (est === "para_cargar") lista = lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length);
   else if (est) lista = lista.filter((p) => p.estado === est);
@@ -1269,7 +1273,7 @@ function verPrestaciones() {
   const total = lista.reduce((s, p) => s + (p.valor_estimado || 0), 0);
   $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} ${tipo === "consulta" ? "consultas" : tipo ? "procedimientos" : "prestaciones"}<span class="economia"> · ${pesos(total)} estimado · tildá para marcar varias</span></p>` +
     lista.map((p) => {
-      const chip = (p.solo_registro && !["cobrada", "debitada"].includes(p.estado) ? '<span class="chip">registro</span>' :
+      const chip = (p.revisar_cobro ? '<span class="chip vencida">revisar</span><br>' : "") + (p.solo_registro && !["cobrada", "debitada"].includes(p.estado) ? '<span class="chip">registro</span>' :
         Motor.vencida(p, h) ? '<span class="chip vencida">vencida</span>' : `<span class="chip ${p.estado}">${ESTADOS[p.estado]}</span>`) +
         (esAnestesia() && p.estado === "pendiente" && docFaltante(p).length ? `<br><span class="chip vencida">falta ${docFaltante(p).join(", ")}</span>` : "");
       const detalle = p.tipo === "consulta" ? TIPOS.consulta : procedimientosDe(p) + (esAnestesia() ? (p.complejidad ? ` · compl. ${p.complejidad}` : "") :
@@ -1339,6 +1343,7 @@ function verHistorialLiquidaciones() {
   sel.innerHTML = anios.map((a) => `<option>${a}</option>`).join("") + (anios.length > 1 ? '<option value="">Todos</option>' : "");
   if (antes !== undefined && [...sel.options].some((o) => o.value === antes)) sel.value = antes;
   const anio = sel.value, lista = todas.filter((p) => !anio || p.fecha_cobro.startsWith(anio));
+  if ($("#liq-vista").value === "mes") return verCobradoPorMes(lista);
   const grupos = {};
   for (const p of lista) {
     const n = numeroLiquidacion(p), k = n ? "L" + n : "M" + p.fecha_cobro.slice(0, 7);
@@ -1359,6 +1364,21 @@ function verHistorialLiquidaciones() {
         <td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "")} · ${esc(p.tipo === "consulta" ? "Consulta" : procedimientosDe(p))}${p.estado === "debitada" ? " · <b>debitada</b>" : ""}</div></td>
         <td class="n">${pesos(p.monto_cobrado)}</td><td class="n">${pesos(p.valor_estimado)}</td></tr>`).join("")}</table></details>`;
   }).join("") : '<p class="ayuda">Todavía no hay cobros registrados. Cargá el PDF de la liquidación desde «Cargar».</p>';
+}
+
+// Lo cobrado por mes (por la fecha de cobro): total del mes y, adentro, cada liquidación con sus pacientes
+function verCobradoPorMes(lista) {
+  const meses = {};
+  for (const p of lista) (meses[p.fecha_cobro.slice(0, 7)] ||= []).push(p);
+  const suma = (ps) => ps.reduce((s, p) => s + (p.monto_cobrado || 0), 0);
+  $("#historial-liq").innerHTML = `<p class="ayuda">${lista.length} cobradas · ${pesos(suma(lista))}</p>` + Object.entries(meses).sort((a, b) => b[0].localeCompare(a[0])).map(([m, ps]) => {
+    const liqs = {};
+    for (const p of ps) (liqs[numeroLiquidacion(p) || "Cobradas a mano"] ||= []).push(p);
+    return `<details class="liq"><summary><div><b>${nombreMes(m)}</b><div class="ayuda" style="margin:0">${ps.length} ${ps.length === 1 ? "prestación" : "prestaciones"} · ${Object.keys(liqs).length} ${Object.keys(liqs).length === 1 ? "liquidación" : "liquidaciones"}</div></div>
+      <div class="monto"><b>${pesos(suma(ps))}</b></div></summary>
+      <table><tr><th>Liquidación</th><th class="n">#</th><th class="n">Cobrado</th></tr>${Object.entries(liqs).sort((a, b) => suma(b[1]) - suma(a[1])).map(([n, l]) =>
+        `<tr><td>${esc(n)}<div class="ayuda" style="margin:0">${[...new Set(l.map((p) => p.paciente))].slice(0, 4).map(esc).join(" · ")}${l.length > 4 ? "…" : ""}</div></td><td class="n">${l.length}</td><td class="n">${pesos(suma(l))}</td></tr>`).join("")}</table></details>`;
+  }).join("");
 }
 
 // ---------- Análisis: estadística y economía del año ----------
@@ -1397,7 +1417,8 @@ function verAnalisis() {
   $("#an-kpis").innerHTML = kpi(nombreQ, cx.length, variacion(cx.length, cxPrev.length)) +
     kpi(anest ? "Consultas preanestésicas" : "Consultas", ps.length - cx.length) +
     `<div class="economia" style="display:contents">` +
-    kpi("Cobrado en el año", pesos(cobrado), variacion(cobrado, suma(cobPrev, "monto_cobrado")), "verde") +
+    kpi("Cobrado en el año", pesos(cobrado), [variacion(cobrado, suma(cobPrev, "monto_cobrado")),
+      cobradasAnio.some((p) => p.revisar_cobro) ? `incluye ${pesos(suma(cobradasAnio.filter((p) => p.revisar_cobro), "monto_cobrado"))} para revisar` : ""].filter(Boolean).join(" · "), "verde") +
     kpi("Facturado estimado", pesos(estimado)) +
     kpi("Promedio cobrado por " + (anest ? "anestesia" : "cirugía"), pesos(cobradasAnio.filter(quir).length ? suma(cobradasAnio.filter(quir), "monto_cobrado") / cobradasAnio.filter(quir).length : null)) +
     kpi("Cobrado / estimado", efectividad != null ? efectividad + " %" : "—", "de lo ya cobrado") +
@@ -1799,12 +1820,29 @@ const claveNombre = (n) => {
   const [ap, nom = ""] = Motor.plano(n).replace(/[^a-z, ]/g, "").split(",");
   return { ap: ap.trim().replace(/\s+/g, " "), nom: nom.trim().split(/\s+/)[0] || "" };
 };
-// flojo (solo para emparejar liquidaciones): errores de tipeo («Jennifer» / «Jenifer»), alcanza con las 3 primeras letras
+// flojo (solo para relacionar liquidaciones con la lista propia): errores de tipeo en el nombre («Jennifer» / «Jenifer») o en
+// el apellido («ALBERTRNGO» / «ALBERTENGO») y nombre y apellido invertidos («NELVY, RAMSEYER» / «RAMSEYER, NELVI»)
+function distancia(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  let previa = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const fila = [i];
+    for (let j = 1; j <= b.length; j++) fila[j] = Math.min(previa[j] + 1, fila[j - 1] + 1, previa[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    previa = fila;
+  }
+  return previa[b.length];
+}
+const parecidas = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && distancia(a, b) <= (Math.min(a.length, b.length) >= 8 ? 2 : 1));
 function mismoPaciente(a, b, flojo = false) {
   const x = claveNombre(a), y = claveNombre(b);
-  if (!x.ap || x.ap !== y.ap) return false;
-  return !x.nom || !y.nom || x.nom.startsWith(y.nom) || y.nom.startsWith(x.nom) || // la liquidación corta los nombres
-    (flojo && x.nom.length >= 3 && y.nom.length >= 3 && x.nom.slice(0, 3) === y.nom.slice(0, 3));
+  if (x.ap && x.ap === y.ap && (!x.nom || !y.nom || x.nom.startsWith(y.nom) || y.nom.startsWith(x.nom) || // la liquidación corta los nombres
+    (flojo && x.nom.length >= 3 && y.nom.length >= 3 && x.nom.slice(0, 3) === y.nom.slice(0, 3)))) return true;
+  if (!flojo) return false;
+  const fichas = (n) => Motor.plano(n || "").replace(/[^a-z ]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
+  const fa = fichas(a), fb = fichas(b);
+  if (!fa.length || !fb.length) return false;
+  const iguales = fa.filter((w) => fb.some((v) => parecidas(w, v))).length;
+  return iguales >= Math.min(2, fa.length, fb.length);
 }
 const mismoApellido = (a, b) => { const x = claveNombre(a).ap, y = claveNombre(b).ap; return !!x && x === y; };
 const diasEntre = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 864e5;
@@ -1873,7 +1911,8 @@ async function leerLiquidacion(archivos) {
     // Cada archivo por separado (así cada PDF se guarda en el Drive con su número), después todo junto
     const textos = [];
     for (const [i, a] of archivos.entries())
-      textos.push(await Lector.textoDe([a], (t) => ($("#leyendo-texto").textContent = (archivos.length > 1 ? `Archivo ${i + 1} de ${archivos.length}: ` : "") + t)));
+      // Todas las páginas (las órdenes de pago traen el detalle al final, después de la página 6)
+      textos.push(await Lector.textoDe([a], (t) => ($("#leyendo-texto").textContent = (archivos.length > 1 ? `Archivo ${i + 1} de ${archivos.length}: ` : "") + t), { paginas: 300 }));
     const texto = textos.join("\n");
     const porArchivo = archivos.map((a, i) => ({ archivo: a, liq: Lector.liquidacion(textos[i]) }));
     const liq = Lector.liquidacion(texto);
@@ -1921,7 +1960,8 @@ async function aplicarLiquidacion() {
     grupos.get(clave).lineas.push(f.linea);
   }
   let marcadas = 0, nuevas = 0, corregidas = 0, hechas = 0;
-  const errores = [];
+  const errores = [], tocadas = new Set();
+  let huerfanas = 0;
   await guardarEnLote(async () => { for (const { p, lineas, f } of grupos.values()) try {
     if (++hechas % 25 === 0) { aviso(`Aplicando la liquidación… ${hechas} de ${grupos.size}`); await new Promise((ok) => setTimeout(ok)); }
     const l = lineas[0], total = lineas.reduce((s, x) => s + x.monto, 0), { numero, fecha } = deLinea(l), nota = `Liq. ${numero}`;
@@ -1931,40 +1971,56 @@ async function aplicarLiquidacion() {
     if (p && f.debito && !f.ya) {
       // Débito de algo cobrado antes: se descuenta y queda anotado
       const neto = (p.monto_cobrado || 0) + total;
+      tocadas.add(p.id);
       await guardarPrestacion({ ...p, monto_cobrado: neto, cobro_lineas: [...(p.cobro_lineas || []), ...cobro_lineas], estado: neto <= 0 ? "debitada" : p.estado,
         motivo_debito: p.motivo_debito || `Descontado en la liquidación ${numero} (${pesos(-total)})`, notas: [p.notas, nota + " (débito)"].filter(Boolean).join(" · ") });
       corregidas++;
     } else if (p && f.ya) {
       // Ya cobrada: número, fecha y monto de esta liquidación (las notas viejas «Liq. …» se reemplazan)
       const notas = [(p.notas || "").replace(/\s*·?\s*Liq\. [^·]*/g, "").trim(), nota + detalle].filter(Boolean).join(" · ");
-      await guardarPrestacion({ ...p, fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, liquidacion: numero || null, solo_registro: false, notas });
+      tocadas.add(p.id);
+      await guardarPrestacion({ ...p, fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, liquidacion: numero || null, solo_registro: false, revisar_cobro: false, notas });
       corregidas++;
     } else if (p) {
       // Los códigos de las otras líneas que no estaban en la prestación se agregan como procedimientos del mismo acto
       const conocidos = new Set([p.codigo_os, ...(p.extras || []).map((x) => x.codigo_os)].filter(Boolean));
       const extras = [...(p.extras || [])];
       for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: procedimientoDeCodigo(x.codigo, x.descripcion).procedimiento, codigo_os: x.codigo }); conocidos.add(x.codigo); }
-      await guardarPrestacion({ ...p, extras, estado: total <= 0 ? "debitada" : "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: numero || null, codigo_os: p.codigo_os || l.codigo,
+      tocadas.add(p.id);
+      await guardarPrestacion({ ...p, extras, revisar_cobro: false, estado: total <= 0 ? "debitada" : "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: numero || null, codigo_os: p.codigo_os || l.codigo,
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
     } else {
       // Nunca la misma cirugía dos veces: si ya está cargada (mismo paciente y día) sin cobrar, se marca esa
       const ya = cirugiaRepetida({ fecha: l.fecha, paciente: l.paciente, tipo: f.esConsulta ? "consulta" : "cirugia" });
       if (ya && !["cobrada", "debitada"].includes(ya.estado)) {
-        await guardarPrestacion({ ...ya, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: numero || null,
+        tocadas.add(ya.id);
+        await guardarPrestacion({ ...ya, revisar_cobro: false, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: numero || null,
           codigo_os: ya.codigo_os || l.codigo, atencion: ya.atencion || l.atencion, notas: [ya.notas, nota + detalle].filter(Boolean).join(" · ") });
         marcadas++;
         continue;
       }
       const aac = Motor.equivalenteAAC(f.os, l.codigo), cx = procedimientoDeCodigo(l.codigo, l.descripcion, l.paciente, l.fecha);
-      await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
+      const nueva = await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
         tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : cx.procedimiento, procedimiento_estimado: !f.esConsulta && cx.estimado, codigo_os: l.codigo,
         extras: f.esConsulta ? [] : [...new Map(lineas.slice(1).filter((x) => x.codigo !== l.codigo).map((x) => [x.codigo, { procedimiento: procedimientoDeCodigo(x.codigo, x.descripcion).procedimiento, codigo_os: x.codigo }])).values()],
         codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: total <= 0 ? "debitada" : "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, liquidacion: numero || null, origen: "liquidacion",
         notas: nota + detalle });
+      tocadas.add(nueva.id);
       nuevas++;
     }
-  } catch (e) { errores.push(`${lineas[0].paciente} (${fechaCorta(lineas[0].fecha)}): ${e.message}`); } });
+  } catch (e) { errores.push(`${lineas[0].paciente} (${fechaCorta(lineas[0].fecha)}): ${e.message}`); }
+    // Lo que dice ser de una de estas liquidaciones pero no figura en su detalle (cargas viejas con el número cambiado): deja de
+    // contarse en ella y queda para revisar (no se borra)
+    const cargadas = new Set(liq.lineas.map((l) => Lector.numeroLiq(l.numero) || l.numero).filter(Boolean));
+    for (const p of datos().prestaciones.filter((p) => ["cobrada", "debitada"].includes(p.estado) && !tocadas.has(p.id) && cargadas.has(numeroLiquidacion(p)))) {
+      const n = numeroLiquidacion(p);
+      await guardarPrestacion({ ...p, liquidacion: null, revisar_cobro: true,
+        notas: [(p.notas || "").replace(/\s*·?\s*Liq\. [^·]*/g, "").trim(), `Revisar: figuraba en la liquidación ${n}, pero no está en su detalle`].filter(Boolean).join(" · ") });
+      huerfanas++;
+    }
+  });
+  const unidas = await unirRepetidas();
   await Almacen.ajuste("liquidaciones", [...new Set([...ajuste("liquidaciones", []), ...((liq.liquidaciones || []).length ? liq.liquidaciones.map((x) => x.numero) : [liq.numero]).filter(Boolean)])]);
   // Autoactualizar: las pendientes sin valor de referencia toman lo último cobrado por la misma práctica
   const antes = new Map(datos().prestaciones.map((p) => [p.id, p.valor_estimado]));
@@ -1974,6 +2030,7 @@ async function aplicarLiquidacion() {
   $("#guardar-lote").disabled = false;
   cerrarRevision();
   aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas` + (corregidas ? `, ${corregidas} ya estaban (corregidas)` : "") + (actualizadas ? `; ${actualizadas} pendientes con el valor actualizado.` : ".") +
+    (unidas ? ` Se unieron ${unidas} repetidas.` : "") + (huerfanas ? ` ${huerfanas} cobros no figuran en su liquidación: quedaron para revisar (Inicio → Para hacer).` : "") +
     (errores.length ? ` No se pudieron aplicar ${errores.length}: ${errores.slice(0, 3).join(" · ")}${errores.length > 3 ? "…" : ""}` : ""));
   // Los PDF van al Drive después (cada uno como está, con su número), sin trabar
   guardarPDFsLiquidacion(liq, porArchivo).catch((e) => aviso("Los PDF de la liquidación no se pudieron guardar en el Drive: " + e.message));
@@ -2169,6 +2226,7 @@ async function arrancar() {
   $("#recalcular").addEventListener("click", async () => aviso(`${await recalcularPendientes()} prestaciones recalculadas`));
   $("#an-anio").addEventListener("change", verAnalisis);
   $("#liq-anio").addEventListener("change", verHistorialLiquidaciones);
+  $("#liq-vista").addEventListener("change", verHistorialLiquidaciones);
   $("#historial-liq").addEventListener("click", async (ev) => {
     const b = ev.target.closest("[data-cambiar-cobro]");
     if (!b) return;
@@ -2401,7 +2459,7 @@ async function unirRepetidas() {
   const tomadas = new Set();
   for (const l of vivas.filter((q) => !borrar.has(q.id) && q.origen === "liquidacion" && ["cobrada", "debitada"].includes(q.estado))) {
     const q = libres.filter((x) => !tomadas.has(x.id) && rama(x) === rama(l) && diasEntre(x.fecha, l.fecha) <= 7 && x.fecha <= (l.fecha_cobro || "9999") &&
-      mismaCirugia({ ...x, fecha: l.fecha, dni: "" }, { ...l, dni: "" })).sort((a, b) => diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha))[0];
+      x.tipo !== "consulta" && l.tipo !== "consulta" && mismoPaciente(x.paciente, l.paciente, true)).sort((a, b) => diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha))[0];
     if (!q) continue;
     tomadas.add(q.id); borrar.add(l.id);
     const base = cambios.get(q.id) || q;
@@ -2459,7 +2517,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "62"; // igual que VERSION en sw.js
+const VERSION_APP = "63"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
