@@ -215,7 +215,7 @@ const Motor = (() => {
   }
 
   // Lo cobrado la última vez por la misma práctica (mismo código AAC, o mismo código de la obra social)
-  // Hasta liq_anterior.hasta la institución liquidaba solo un % (30 %) de la parte del módulo; desde entonces, el 100 %.
+  // Hasta liq_anterior.hasta la institución liquidaba solo un % (70 % por defecto) de la parte del módulo; desde entonces, el 100 %.
   // p: si se pasa, solo cuenta si lo cobrado vino de una liquidación de la institución.
   function regimenAnterior(datos, fecha, p) {
     const r = datos.liq_anterior;
@@ -290,7 +290,12 @@ const Motor = (() => {
     const factor = (rol === "ayudante" ? reglas.assistant_pct / 100 : 1) * pct / 100;
     const extra = (rol === "ayudante" ? ` × ${reglas.assistant_pct} % (ayudante)` : "") + (pct !== 100 ? ` × ${pct} % (operación múltiple)` : "");
     const tabla = os === "PARTICULAR" ? PARTICULAR_TABLA : os;
-    const fila = valorOS(datos, tabla, codigoAAC, codigoOS, p.fecha, p.abordaje || "");
+    let fila = valorOS(datos, tabla, codigoAAC, codigoOS, p.fecha, p.abordaje || "");
+    // Un valor cargado para un módulo PAMI (pago total a la institución) del tamaño del módulo es el módulo, no tu honorario
+    if (fila && fila.tipo === "honorario" && os === "PAMI" && codigoOS) {
+      const m = valorPami(codigoOS, p.fecha);
+      if (m && m.modulo && fila.monto >= m.monto * 0.8) fila = { ...fila, tipo: "modulo" };
+    }
     // Un valor de referencia cargado (lista de la obra social, PAMI, % del módulo) no se modifica: lo último cobrado en las
     // liquidaciones se usa solo si no hay referencia, antes que la referencia general de la AAC
     if (fila && fila.tipo === "honorario") {

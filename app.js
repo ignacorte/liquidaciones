@@ -128,7 +128,7 @@ function datos(rama) {
   const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
   return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 0)) || 0,
-           liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: Number(ajuste("liq_anterior_pct", 30)) || 0 }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
+           liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: Number(ajuste("liq_anterior_pct", 70)) || 0 }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -1497,7 +1497,7 @@ function verValores() {
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
   $("#pct-modulo-general").value = ajuste("pct_modulo_general", 0) || "";
-  $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 30);
+  $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 70);
   $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
   const rama = RAMA_DRIVE();
@@ -2569,7 +2569,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "65"; // igual que VERSION en sw.js
+const VERSION_APP = "66"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2606,7 +2606,10 @@ function entrar() {
   // v52: las pendientes se recalculan una vez (sin % general del módulo; la referencia cargada no la pisa un cobro) (el valor a mano no se toca)
   // Los arreglos de una vez corren con los datos al día (después de traer lo del Drive): así un celular con datos viejos
   // no los aplica sobre lo viejo y pisa lo hecho en otro
-  const arreglos = () => (ajuste("recalculo_v65", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v65", true)))
+  // v66: lo cobrado hasta 2025 era ~65–70 % de tu parte, no 30 % (dividir por 0,30 daba más que el módulo entero)
+  const liq70 = () => (ajuste("liq_anterior_70_v66", false) ? Promise.resolve() : (Number(ajuste("liq_anterior_pct", 70)) === 30 ? Almacen.ajuste("liq_anterior_pct", 70) : Promise.resolve())
+    .then(() => Almacen.ajuste("liq_anterior_70_v66", true)));
+  const arreglos = () => liq70().then(() => ajuste("recalculo_v66", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v66", true)))
     .then(arreglarPlanillas).then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(nombrarCirugiasDeLiquidacion).then(ordenarDrive)
     .then(() => refrescar()).catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();
