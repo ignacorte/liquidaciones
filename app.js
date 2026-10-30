@@ -67,12 +67,13 @@ function faltantes(p) {
   if (p.tipo === "consulta" || p.origen === "liquidacion" || (p.origen === "planilla" && p.estado === "cobrada")) return [];
   const f = [];
   if (!(p.paciente || "").trim()) f.push("nombre y apellido");
-  // Planilla vieja (cargada desde Excel): se guarda sin DNI ni n.º de afiliado (se completan después si hace falta presentarla)
+  // Planilla vieja (cargada desde Excel): se guarda aunque falten DNI, afiliado u obra social reconocida (se completan después;
+  // la obra social sin reconocer queda en «Para hacer»)
   const vieja = p.origen === "planilla";
   if (!(p.dni || "").trim() && !vieja) f.push("DNI");
-  if (!p.obra_social) f.push("obra social");
+  if (!p.obra_social && !vieja) f.push("obra social");
   if (!(p.afiliado || "").trim() && p.obra_social !== "PARTICULAR" && !vieja) f.push("n.º de afiliado");
-  if (p.tipo === "endoscopia" && !p.endoscopia) f.push("tipo de endoscopía");
+  if (p.tipo === "endoscopia" && !p.endoscopia && !vieja) f.push("tipo de endoscopía");
   return f;
 }
 const modoRegistro = () => ajuste("modo", "completo") === "registro";
@@ -683,7 +684,7 @@ async function leer(tipo, archivos, textoPegado) {
 }
 
 // Planilla de Excel/CSV con cirugías o anestesias previas (de cada rama): una fila por prestación; las columnas se reconocen por el encabezado
-// (sirve la planilla exportada por la app). Pasa por la misma revisión que las fotos.
+// (sirve la planilla exportada por la app). Solo paciente, datos y cirugía: los montos no se usan. Pasa por la misma revisión que las fotos.
 const COLUMNAS_PLANILLA = [
   ["fecha_cobro", /fecha.*(cobr|pag|liquid)|(cobrad|liquidad|pagad)[ao] el/], ["fecha", /^(fecha|dia)\b/],
   ["monto_cobrado", /^(monto |importe )?(cobrado|liquidado|pagado|percibido)/], ["complejidad", /complejidad/], ["nro_circuito", /circuito/],
@@ -711,13 +712,24 @@ function marcarRepetidas(filas) {
   return n;
 }
 
+const MESES_PLANILLA = { ene: 1, jan: 1, feb: 2, mar: 3, abr: 4, apr: 4, may: 5, jun: 6, jul: 7, ago: 8, aug: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12, dec: 12 };
 function fechaPlanilla(v) {
+  if (typeof v === "string" && /^\s*\d{5}(\.\d+)?\s*$/.test(v)) v = Number(v); // número de serie de Excel guardado como texto
   if (typeof v === "number" && v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30) + v * 864e5).toISOString().slice(0, 10);
-  const t = String(v ?? "").trim();
-  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  const t = Motor.plano(String(v ?? "")).trim();
+  // Solo fechas que existen; si el mes pasa de 12 y el día no, estaba escrita mes/día (Excel en inglés)
+  const armar = (y, mo, d) => {
+    y = +y < 100 ? 2000 + +y : +y; mo = +mo; d = +d;
+    if (mo > 12 && d <= 12) [mo, d] = [d, mo];
+    const f = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    return y > 1990 && y < 2100 && !isNaN(Date.parse(f)) && new Date(f).toISOString().slice(0, 10) === f ? f : "";
+  };
+  let m = t.match(/^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})/);
+  if (m) return armar(m[1], m[2], m[3]);
   m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);
-  if (m) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  if (m) return armar(m[3], m[2], m[1]);
+  m = t.match(/^(\d{1,2})[\s\/.-]*(?:de\s+)?([a-z]{3})[a-z]*\.?[\s\/.-]*(?:de\s+)?(\d{2,4})/); // «12-mar-25», «3 de marzo de 2025»
+  if (m && MESES_PLANILLA[m[2]]) return armar(m[3], MESES_PLANILLA[m[2]], m[1]);
   return "";
 }
 
@@ -745,14 +757,11 @@ async function leerPlanilla(archivos) {
         if (!paciente && !v("procedimiento")) continue;
         const tipoT = Motor.plano(v("tipo"));
         const tipo = /consulta/.test(tipoT) ? "consulta" : /endoscop|fuera de quirofano/.test(tipoT) ? "endoscopia" : /practica|dolor/.test(tipoT) ? "practica" : "cirugia";
-        const cobrado = Importador.monto(col.monto_cobrado != null ? fila[col.monto_cobrado] : ""), cobro = col.fecha_cobro != null ? fechaPlanilla(fila[col.fecha_cobro]) : "";
         const f = { fecha: fechaPlanilla(col.fecha != null ? fila[col.fecha] : "") || hoy(), tipo, paciente, dni: v("dni").replace(/\D/g, ""),
           afiliado: v("afiliado"), obra_social_texto: v("obra_social_texto") || osCelda(), obra_social: Motor.obraSocialCanonica(d, v("obra_social_texto") || osCelda()),
           procedimiento: v("procedimiento"), institucion: v("institucion"), codigo_os: v("codigo_os").split(/[\s,]+/)[0] || null,
           rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true,
-          complejidad: parseInt(v("complejidad"), 10) || null, nro_circuito: v("nro_circuito") || null,
-          // Ya cobrada en la planilla: queda cobrada (y su monto sirve para estimar lo nuevo)
-          ...(cobrado > 0 ? { monto_cobrado: cobrado, fecha_cobro: cobro || null, estado: "cobrada" } : cobro ? { fecha_cobro: cobro, estado: "cobrada" } : {}) };
+          complejidad: parseInt(v("complejidad"), 10) || null, nro_circuito: v("nro_circuito") || null }; // De la planilla se toman solo el paciente, sus datos y la cirugía: los montos y cobros no (regla del usuario)
         f.fecha_leida = col.fecha != null && !!fechaPlanilla(fila[col.fecha]);
         filas.push(f);
       }
@@ -951,13 +960,14 @@ async function guardarLote() {
   if (conciliacion) return aplicarLiquidacion().catch((e) => aviso(e.message));
   const elegidas = filasRevision.filter((f) => f.incluir);
   if (!elegidas.length) return aviso("No hay nada tildado.");
-  const incompleta = elegidas.find((f) => faltantes(f).length);
+  const incompleta = elegidas.find((f) => faltantes(f).length && f.origen !== "planilla");
   if (incompleta) return aviso(`${incompleta.paciente || "Un paciente"}: falta ${faltantes(incompleta).join(", ")}`);
+  const errores = [], fallidas = [];
   const existentes = datos().prestaciones;
   const repetidas = [], completadas = [], guardadas = [];
   let n = 0, fojas = 0;
   try {
-    for (const f of elegidas) {
+    for (const f of elegidas) try {
       const mismo = (p) => p.fecha === f.fecha && (p.paciente || "").trim().toLowerCase() === (f.paciente || "").trim().toLowerCase();
       const ya = existentes.find((p) => mismo(p) && p.tipo === f.tipo && (p.procedimiento || "") === (f.procedimiento || "")) ||
         cirugiaRepetida(f, guardadas);
@@ -978,9 +988,19 @@ async function guardarLote() {
       guardadas.push(guardada);
       fojas += await guardarDocumentos(guardada, documentosDe(f));
       n++;
+    } catch (e) {
+      if (f.origen !== "planilla") throw e;
+      errores.push(`${f.paciente || "Sin nombre"}: ${e.message}`); fallidas.push(f);
     }
     const mesGuardado = elegidas[0].fecha.slice(0, 7);
-    aviso(`Guardadas ${n} en ${nombreMes(mesGuardado)}` + (repetidas.length ? ` · ya estaban: ${repetidas.join(", ")}` : "") +
+    if (errores.length) {
+      // Nada se pierde: lo que no se pudo guardar queda en la revisión para corregirlo
+      mostrarRevision(fallidas, "No se guardaron");
+      return aviso(`Guardadas ${n}${repetidas.length ? ` · ya estaban ${repetidas.length}` : ""}. No se guardaron ${errores.length}: ${errores.slice(0, 3).join(" · ")}` +
+        (errores.length > 3 ? "…" : "") + " Corregilas abajo y tocá Guardar.");
+    }
+    const lista = (l) => (l.length > 5 ? `${l.slice(0, 5).join(", ")} y ${l.length - 5} más` : l.join(", "));
+    aviso(`Guardadas ${n} en ${nombreMes(mesGuardado)}` + (repetidas.length ? ` · ya estaban: ${lista(repetidas)}` : "") +
       (completadas.length ? ` · documentos agregados a ${completadas.join(", ")}` : "") +
       (fojas ? ` · ${fojas} ${fojas === 1 ? "documento" : "documentos"} subiendo a tu Drive…` : ""));
     cerrarRevision();
@@ -1963,7 +1983,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "53"; // igual que VERSION en sw.js
+const VERSION_APP = "54"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
