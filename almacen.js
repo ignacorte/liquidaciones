@@ -117,6 +117,9 @@ const Almacen = (() => {
   // Olvidó el PIN: se borra lo de este celular (cifrado, irrecuperable); la copia de Drive queda
   async function olvidePin() {
     await bloquear();
+    // Se guarda aparte una copia de lo cifrado (no se destruye; si aparece el PIN, se puede recuperar)
+    const viejo = await idbLeer(CLAVE);
+    if (viejo) await idbEscribir({ ["olvidado_" + Date.now()]: viejo });
     meta = null;
     await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined, pendiente: undefined });
   }

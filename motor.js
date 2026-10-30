@@ -248,8 +248,9 @@ const Motor = (() => {
 
   function fechasCobro(datos, os, fecha, presentada) {
     const o = datos.obras.find((x) => x.nombre === os);
-    const diasPago = o ? o.dias_pago : 60, diaPres = o ? o.dia_presentacion : 10;
-    if (!diaPres) return { fecha_presentacion: null, fecha_cobro_estimada: fecha };
+    // Día de presentación 0 = se cobra en el acto; vacío (no cargado) = el habitual, no «en el acto»
+    const diasPago = o?.dias_pago ?? 60, diaPres = o?.dia_presentacion ?? 10;
+    if (Number(diaPres) === 0 && diaPres !== "" && diaPres !== null) return { fecha_presentacion: null, fecha_cobro_estimada: fecha };
     let pres = presentada;
     if (!pres) {
       let y = +fecha.slice(0, 4), m = +fecha.slice(5, 7) + 1;
@@ -486,7 +487,7 @@ const Motor = (() => {
   // Al guardar: estado coherente con las fechas; particular = cobrada en el acto
   function completar(datos, p) {
     const q = { ...p };
-    if (q.monto_cobrado && !q.fecha_cobro) q.fecha_cobro = new Date().toISOString().slice(0, 10);
+    if (q.monto_cobrado && !q.fecha_cobro) q.fecha_cobro = new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10); // fecha local
     if (q.fecha_cobro && ["pendiente", "presentada"].includes(q.estado)) q.estado = "cobrada";
     if (q.estado === "pendiente") q.fecha_presentacion = null; // la guardada es la estimada: se recalcula
     const e = estimar(datos, q);
@@ -513,11 +514,12 @@ const Motor = (() => {
       const cob = ["cobrada", "debitada"].includes(p.estado) ? p.monto_cobrado || 0 : 0;
       const pend = aCobrar(p) ? est : 0;
       const cuando = p.fecha_cobro || p.fecha_cobro_estimada || hoy;
-      const real = (cob || est) / Math.pow(1 + inflacion / 100, meses(p.fecha, cuando > p.fecha ? cuando : p.fecha));
+      const real = (["cobrada", "debitada"].includes(p.estado) ? cob : est) / Math.pow(1 + inflacion / 100, meses(p.fecha, cuando > p.fecha ? cuando : p.fecha));
       const kOS = p.obra_social || p.obra_social_texto || "Sin obra social", kP = p.paciente + "|" + (p.obra_social || "");
       for (const d of [tot, porOS[kOS] ||= nuevo(), porPac[kP] ||= nuevo()]) {
         d.n++; d.consultas += p.tipo === "consulta"; d.cirugias += p.tipo === "cirugia";
-        d.estimado += est; d.cobrado += cob; d.pendiente += pend; d.real += real; d.nominal += cob || est;
+        // Lo cobrado o debitado vale lo que se cobró (aunque sea 0); lo demás, lo estimado
+        d.estimado += est; d.cobrado += cob; d.pendiente += pend; d.real += real; d.nominal += ["cobrada", "debitada"].includes(p.estado) ? cob : est;
         if (vencida(p, hoy)) d.vencido += est;
       }
     }
