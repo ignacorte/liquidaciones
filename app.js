@@ -53,7 +53,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -104,7 +104,7 @@ function datos(rama) {
   const tapados = new Set(valoresPropios.map(clave));
   const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
-  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
+  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 15)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -1123,6 +1123,7 @@ function verValores() {
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
+  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 15);
   // Dónde está cada cosa en el Drive
   $("#donde-drive").innerHTML = esAnestesia()
     ? "En tu Google Drive: carpeta <b>Liquidaciones › Anestesiología</b>, con la planilla <b>«Anestesiología – planilla»</b> y la carpeta <b>Documentos</b>, con una carpeta por paciente («Ref 0001 – APELLIDO – fecha») que tiene su foja quirúrgica, foja de anestesia y autorización en PDF. En <b>Liquidaciones</b> quedan los datos y los respaldos diarios."
@@ -1529,12 +1530,14 @@ async function aplicarLiquidacion() {
   for (const { p, lineas, f } of grupos.values()) {
     const l = lineas[0], total = lineas.reduce((s, x) => s + x.monto, 0);
     const detalle = lineas.length > 1 ? ` (${lineas.length} ítems)` : "";
+    // Lo liquidado por cada código: así el valor de cada práctica se actualiza con lo último cobrado
+    const cobro_lineas = lineas.map((x) => ({ codigo: x.codigo, monto: x.monto }));
     if (p) {
       // Los códigos de las otras líneas que no estaban en la prestación se agregan como procedimientos del mismo acto
       const conocidos = new Set([p.codigo_os, ...(p.extras || []).map((x) => x.codigo_os)].filter(Boolean));
       const extras = [...(p.extras || [])];
       for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: x.descripcion, codigo_os: x.codigo }); conocidos.add(x.codigo); }
-      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, codigo_os: p.codigo_os || l.codigo,
+      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, codigo_os: p.codigo_os || l.codigo,
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
     } else {
@@ -1542,15 +1545,19 @@ async function aplicarLiquidacion() {
       await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
         tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : l.descripcion, codigo_os: l.codigo,
         extras: f.esConsulta ? [] : [...new Map(lineas.slice(1).filter((x) => x.codigo !== l.codigo).map((x) => [x.codigo, { procedimiento: x.descripcion, codigo_os: x.codigo }])).values()],
-        codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, origen: "liquidacion",
+        codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, origen: "liquidacion",
         notas: nota + detalle });
       nuevas++;
     }
   }
   if (liq.numero) await Almacen.ajuste("liquidaciones", [...new Set([...ajuste("liquidaciones", []), liq.numero])]);
+  // Autoactualizar: las pendientes toman lo último cobrado por la misma práctica (si no hay una lista de valores más nueva)
+  const antes = new Map(datos().prestaciones.map((p) => [p.id, p.valor_estimado]));
+  await recalcularPendientes();
+  const actualizadas = datos().prestaciones.filter((p) => ["pendiente", "presentada"].includes(p.estado) && antes.get(p.id) !== p.valor_estimado).length;
   conciliacion = null;
   cerrarRevision();
-  aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas.`);
+  aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas` + (actualizadas ? `; ${actualizadas} pendientes con el valor actualizado.` : "."));
   $("#f-periodo").value = "todos"; $("#f-estado").value = "cobrada";
   ir("prestaciones");
 }
@@ -1729,6 +1736,7 @@ async function arrancar() {
       }
     }
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
+    if (!esAnestesia() && $("#pct-modulo-general").value !== "") await Almacen.ajuste("pct_modulo_general", Number($("#pct-modulo-general").value));
     if (esAnestesia()) await Almacen.ajuste("pct_asociacion", $("#pct-asociacion").value === "" ? 0 : Number($("#pct-asociacion").value));
     const n = await recalcularPendientes();
     aviso(`Guardado; ${n} pendientes recalculadas.`);
@@ -1894,7 +1902,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "47"; // igual que VERSION en sw.js
+const VERSION_APP = "48"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

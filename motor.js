@@ -213,12 +213,20 @@ const Motor = (() => {
   }
 
   // Lo cobrado la última vez por la misma práctica (mismo código AAC, o mismo código de la obra social)
+  // Con varias líneas liquidadas (otros procedimientos del mismo acto) vale lo de la línea de ese código, no el total.
   function ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, id, abordaje = "") {
     if (!os || !(codigoAAC || codigoOS)) return null;
-    return datos.prestaciones.filter((p) => !p.borrada && p.obra_social === os && ((codigoAAC && p.codigo_aac === codigoAAC) ||
-      (codigoOS && p.codigo_os === codigoOS)) && (p.rol || "cirujano") === rol &&
-      !(abordaje && p.abordaje && !viaParecida(p.abordaje, abordaje)) &&
-      (p.pct || 100) === pct && p.monto_cobrado > 0 && p.id !== id).sort((a, b) => (b.fecha_cobro || "").localeCompare(a.fecha_cobro || ""))[0] || null;
+    const cod = (c) => String(c || "").replace(/[.\-\s]/g, "");
+    const monto = (p) => {
+      const linea = codigoOS && (p.cobro_lineas || []).find((l) => cod(l.codigo) === cod(codigoOS));
+      if (linea) return linea.monto;
+      if ((p.extras || []).length) return null; // el total incluye otros procedimientos
+      return ((codigoAAC && p.codigo_aac === codigoAAC) || (codigoOS && cod(p.codigo_os) === cod(codigoOS))) ? p.monto_cobrado : null;
+    };
+    return datos.prestaciones.filter((p) => !p.borrada && p.obra_social === os && (p.rol || "cirujano") === rol &&
+      !(abordaje && p.abordaje && !viaParecida(p.abordaje, abordaje)) && (p.pct || 100) === pct && p.monto_cobrado > 0 && p.id !== id)
+      .map((p) => ({ ...p, monto_cobrado: monto(p) })).filter((p) => p.monto_cobrado > 0)
+      .sort((a, b) => (b.fecha_cobro || "").localeCompare(a.fecha_cobro || ""))[0] || null;
   }
 
   function sugerencias(p) {
@@ -250,10 +258,11 @@ const Motor = (() => {
     return vp && vp.modulo ? vp : null;
   }
 
-  // Parte del módulo para el cirujano: la cargada en la cirugía o, si no, la de la obra social
-  function pctModulo(p, o) {
+  // Parte del módulo para el cirujano: la cargada en la cirugía, la de la obra social o la general (Valores → Referencias)
+  function pctModulo(p, o, general) {
     if (p.pct_modulo > 0) return { pct: Number(p.pct_modulo), nota: " (cargado en la cirugía)" };
     if (o && o.pct_modulo) return { pct: o.pct_modulo, nota: "" };
+    if (general > 0) return { pct: general, nota: general === 15 ? " (lo que liquida la institución: 30 % del 50 % del módulo)" : " (parte general que liquida la institución)" };
     return null;
   }
 
@@ -279,14 +288,14 @@ const Motor = (() => {
     }
     if (vp && vp.modulo && !(fila && fila.tipo === "modulo")) {
       const o = datos.obras.find((x) => x.nombre === os);
-      const pm = pctModulo(p, o);
+      const pm = pctModulo(p, o, datos.pct_modulo_general);
       if (pm) return [Math.round(vp.monto * pm.pct / 100 * factor), `Módulo PAMI ${vp.codigo} ${pesos(vp.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo PAMI ${vp.codigo}: ${vp.unidades} u. × ${pesosDec(vp.valorUnidad)} = ${pesos(vp.monto)} (total a la institución)`;
     }
     if (vp && vp.sinValor) modulo = ` · PAMI ${vp.codigo}: ${vp.unidades} u. ${vp.tipo} (falta el valor de esa unidad)`;
     if (fila && fila.tipo === "modulo") {
       const o = datos.obras.find((x) => x.nombre === os);
-      const pm = pctModulo(p, o);
+      const pm = pctModulo(p, o, datos.pct_modulo_general);
       if (pm) return [Math.round(fila.monto * pm.pct / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo ${os} ${fila.codigo}: ${pesos(fila.monto)} (total a la institución)`;
     }
