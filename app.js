@@ -188,7 +188,7 @@ function verInicio() {
     kpi(`Pérdida por demora (${inflacion} %/mes)`, pesos(t.perdida_inflacion), t.perdida_inflacion ? "rojo" : "");
   const debitado = datos().prestaciones.filter((p) => p.fecha.slice(0, 7) === mes() && p.estado === "debitada")
     .reduce((s, p) => s + Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)), 0);
-  if (debitado) $("#kpis").innerHTML += kpi("Debitado", pesos(debitado), "rojo");
+  $("#kpis").innerHTML += kpi("Debitado", pesos(debitado), debitado ? "rojo" : "");
   verParaHacer();
   verEvolucion();
   // Días reales de cobro por obra social (de lo ya cobrado, todos los meses)
@@ -215,8 +215,8 @@ function verParaHacer() {
     ["", "-", "Obra social sin reconocer", lista.filter((p) => !p.obra_social && p.tipo !== "consulta")],
     ["debitada", "", "Debitadas sin motivo anotado", lista.filter((p) => p.estado === "debitada" && !p.motivo_debito)],
   ].filter((x) => x[3].length);
-  $("#para-hacer-card").hidden = !items.length || modoRegistro();
-  $("#para-hacer").innerHTML = `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
+  $("#para-hacer-card").hidden = modoRegistro();
+  $("#para-hacer").innerHTML = !items.length ? `<p class="ayuda">✓ Nada pendiente: no hay cobros vencidos, documentación faltante ni débitos sin motivo.</p>` : `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
     <td class="n economia">${pesos(l.reduce((s, p) => s + (p.valor_estimado || 0), 0))}</td></tr>`).join("")}</table>`;
   $$("#para-hacer tr[data-hacer]").forEach((tr) => tr.addEventListener("click", () => {
     const [est, os] = items[+tr.dataset.hacer];
@@ -1831,7 +1831,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "45"; // igual que VERSION en sw.js
+const VERSION_APP = "46"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
