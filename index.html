@@ -77,6 +77,11 @@
         <label class="boton grande"><span>🩺</span> Parte quirúrgico
           <input type="file" accept="image/*,application/pdf" multiple hidden data-leer="parte"></label>
         <button type="button" class="boton chico secundario varias" data-camara="[data-leer=parte]">📷 Sacar varias fotos seguidas</button>
+        <div class="solo-cirugia" style="margin-top:10px">
+          <label class="boton grande secundario"><span>📊</span> Planilla de cirugías (Excel)
+            <input type="file" accept=".xlsx,.xls,.xlsm,.ods,.csv" multiple hidden id="leer-planilla"></label>
+          <p class="ayuda" style="margin-top:6px">Una fila por cirugía, con encabezados como Fecha, Paciente, DNI, Obra social, Afiliado, Procedimiento (sirve también la planilla que exporta esta app). Revisás antes de guardar; las que ya estaban cargadas no se duplican.</p>
+        </div>
         <p class="ayuda" style="margin-top:6px">Para elegir <b>varias de la galería</b> a la vez: mantené apretada la primera y tocá las demás.</p>
         <p class="ayuda" style="margin-top:10px">Para que se lea bien: captura de pantalla, o foto <b>de frente y de cerca</b> (sin ángulo ni reflejos). Lo más exacto: «Imprimir» → guardar como PDF.</p>
         <details style="margin-top:10px"><summary class="ayuda">Pegar texto copiado de la historia clínica</summary>
@@ -134,7 +139,12 @@
           <option value="cobrada">Cobradas</option><option value="debitada">Debitadas</option></select></label>
         <label class="ancho">Buscar<input id="f-q" type="search" placeholder="Paciente, DNI o procedimiento"></label>
       </div>
-      <label class="check"><input type="checkbox" id="f-todos-meses"> Todos los meses</label>
+      <div class="grid">
+        <label>Período<select id="f-periodo"><option value="mes">El mes elegido arriba</option><option value="dia">Un día</option>
+          <option value="rango">Entre dos fechas</option><option value="todos">Todas las fechas</option></select></label>
+        <label id="f-desde-l" hidden><span id="f-desde-t">Desde</span><input type="date" id="f-desde"></label>
+        <label id="f-hasta-l" hidden>Hasta<input type="date" id="f-hasta"></label>
+      </div>
     </div>
     <div class="card"><div id="lista"></div></div>
     <div class="acciones-sel" id="acciones-sel" hidden>

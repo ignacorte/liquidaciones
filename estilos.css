@@ -113,3 +113,4 @@ dialog.camara video.flash { opacity: .3; }
   dialog { width: min(900px, calc(100% - 32px)); }
   #revision-filas .revision, .item { font-size: 15px; }
 }
+#mes.apagado { opacity: .45; }

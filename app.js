@@ -220,7 +220,7 @@ function verParaHacer() {
     <td class="n economia">${pesos(l.reduce((s, p) => s + (p.valor_estimado || 0), 0))}</td></tr>`).join("")}</table>`;
   $$("#para-hacer tr[data-hacer]").forEach((tr) => tr.addEventListener("click", () => {
     const [est, os] = items[+tr.dataset.hacer];
-    $("#f-estado").value = est; $("#f-os").value = os; $("#f-tipo").value = ""; $("#f-q").value = ""; $("#f-todos-meses").checked = true;
+    $("#f-estado").value = est; $("#f-os").value = os; $("#f-tipo").value = ""; $("#f-q").value = ""; $("#f-periodo").value = "todos";
     ir("prestaciones");
   }));
 }
@@ -674,6 +674,59 @@ async function leer(tipo, archivos, textoPegado) {
   } finally { $("#leyendo").hidden = true; }
 }
 
+// Planilla de Excel/CSV con cirugías: una fila por cirugía; las columnas se reconocen por el encabezado
+// (sirve la planilla exportada por la app). Pasa por la misma revisión que las fotos.
+const COLUMNAS_PLANILLA = [
+  ["fecha", /^(fecha|dia)\b/], ["paciente", /paciente|apellido|nombre/], ["dni", /\bdni\b|documento/],
+  ["afiliado", /afiliado|credencial|carnet|socio/], ["obra_social_texto", /obra social|cobertura|prepaga|financiador|^os$/],
+  ["codigo_os", /codigo (obra social|os)/], ["procedimiento", /procedimiento|cirugia|practica|operacion|intervencion/],
+  ["institucion", /institucion|clinica|sanatorio|lugar|centro/], ["tipo", /^tipo$/], ["rol", /^rol$|funcion/], ["notas", /^notas?$|observ|comentario/]];
+
+function fechaPlanilla(v) {
+  if (typeof v === "number" && v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30) + v * 864e5).toISOString().slice(0, 10);
+  const t = String(v ?? "").trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);
+  if (m) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return "";
+}
+
+async function leerPlanilla(archivos) {
+  if (!archivos.length) return;
+  ultimaLectura = null;
+  $("#cargar-botones").hidden = true; $("#leyendo").hidden = false; $("#leyendo-texto").textContent = "Leyendo la planilla…";
+  try {
+    const d = datos(), filas = [];
+    for (const a of archivos) {
+      let col = null;
+      for (const fila of (await Importador.leer(a, null, { textoCSV: true })).filas) {
+        const enc = fila.map((c) => Motor.plano(String(c ?? "")).trim());
+        // Encabezado (puede haber uno por hoja): la fila con al menos 2 columnas reconocidas, entre ellas el paciente
+        const mapa = {};
+        enc.forEach((h, j) => { const c = h && COLUMNAS_PLANILLA.find(([k, re]) => !(k in mapa) && re.test(h)); if (c) mapa[c[0]] = j; });
+        if ("paciente" in mapa && Object.keys(mapa).length >= 2) { col = mapa; continue; }
+        if (!col) continue;
+        const v = (k) => (k in col ? String(fila[col[k]] ?? "").trim() : "");
+        if (!v("paciente") && !v("procedimiento")) continue;
+        const tipoT = Motor.plano(v("tipo"));
+        const tipo = /consulta/.test(tipoT) ? "consulta" : /endoscop/.test(tipoT) ? "endoscopia" : /practica/.test(tipoT) ? "practica" : "cirugia";
+        const f = { fecha: fechaPlanilla(col.fecha != null ? fila[col.fecha] : "") || hoy(), tipo, paciente: v("paciente"), dni: v("dni").replace(/\D/g, ""),
+          afiliado: v("afiliado"), obra_social_texto: v("obra_social_texto"), obra_social: Motor.obraSocialCanonica(d, v("obra_social_texto")),
+          procedimiento: v("procedimiento"), institucion: v("institucion"), codigo_os: v("codigo_os").split(/[\s,]+/)[0] || null,
+          rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true };
+        f.fecha_leida = col.fecha != null && !!fechaPlanilla(fila[col.fecha]);
+        filas.push(f);
+      }
+    }
+    if (!filas.length) throw new Error("No encontré cirugías en la planilla: tiene que tener una fila de encabezados con «Paciente» (y Fecha, Obra social, Procedimiento…).");
+    $("#texto-leido").textContent = "";
+    mostrarRevision(filas.map((f) => ({ ...f, ...Motor.estimar(d, f) })), "Planilla");
+  } catch (e) {
+    aviso(e.message); $("#cargar-botones").hidden = false;
+  } finally { $("#leyendo").hidden = true; }
+}
+
 function mostrarRevision(filas, titulo) {
   filasRevision = filas;
   $("#revision").hidden = false;
@@ -986,7 +1039,13 @@ function editar(p) {
 function verPrestaciones() {
   const os = $("#f-os").value, est = $("#f-estado").value, tipo = $("#f-tipo").value, q = Motor.plano($("#f-q").value), h = hoy();
   let lista = datos().prestaciones;
-  if (!$("#f-todos-meses").checked) lista = lista.filter((p) => p.fecha.slice(0, 7) === mes());
+  const periodo = $("#f-periodo").value, desde = $("#f-desde").value, hasta = $("#f-hasta").value;
+  $("#f-desde-l").hidden = !["dia", "rango"].includes(periodo); $("#f-hasta-l").hidden = periodo !== "rango";
+  $("#f-desde-t").textContent = periodo === "dia" ? "Día" : "Desde";
+  $("#mes").classList.toggle("apagado", estado.vista === "prestaciones" && periodo !== "mes");
+  if (periodo === "mes") lista = lista.filter((p) => p.fecha.slice(0, 7) === mes());
+  else if (periodo === "dia") lista = desde ? lista.filter((p) => p.fecha === desde) : lista;
+  else if (periodo === "rango") lista = lista.filter((p) => (!desde || p.fecha >= desde) && (!hasta || p.fecha <= hasta));
   if (tipo === "procedimientos") lista = lista.filter((p) => p.tipo !== "consulta"); else if (tipo) lista = lista.filter((p) => p.tipo === tipo);
   if (os === "-") lista = lista.filter((p) => !p.obra_social); else if (os) lista = lista.filter((p) => p.obra_social === os);
   if (est === "vencida") lista = lista.filter((p) => Motor.vencida(p, h));
@@ -1492,7 +1551,7 @@ async function aplicarLiquidacion() {
   conciliacion = null;
   cerrarRevision();
   aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas.`);
-  $("#f-todos-meses").checked = true; $("#f-estado").value = "cobrada";
+  $("#f-periodo").value = "todos"; $("#f-estado").value = "cobrada";
   ir("prestaciones");
 }
 
@@ -1636,7 +1695,8 @@ async function arrancar() {
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
 
   $$("nav.abajo button").forEach((b) => b.addEventListener("click", () => ir(b.dataset.vista)));
-  $("#mes").addEventListener("change", refrescar);
+  $("#mes").addEventListener("change", () => { $("#f-periodo").value = "mes"; refrescar(); });
+  $("#leer-planilla").addEventListener("change", (ev) => { leerPlanilla([...ev.target.files]); ev.target.value = ""; });
   $$("[data-leer]").forEach((i) => i.addEventListener("change", () => { leer(i.dataset.leer, [...i.files]); i.value = ""; }));
   $$("[data-pegado]").forEach((b) => b.addEventListener("click", () => {
     const t = $("#texto-pegado").value.trim();
@@ -1646,7 +1706,10 @@ async function arrancar() {
   $$("[data-nueva]").forEach((b) => b.addEventListener("click", () => editar({ fecha: hoy(), tipo: b.dataset.nueva, paciente: "", rol: "cirujano", pct: 100, estado: "pendiente", origen: "manual" })));
   $("#guardar-lote").addEventListener("click", guardarLote);
   $("#cancelar-lote").addEventListener("click", cerrarRevision);
-  ["#f-tipo", "#f-os", "#f-estado", "#f-todos-meses"].forEach((s) => $(s).addEventListener("change", verPrestaciones));
+  $("#f-periodo").addEventListener("change", () => {
+    if ($("#f-periodo").value !== "mes" && !$("#f-desde").value) $("#f-desde").value = $("#f-periodo").value === "dia" ? hoy() : mes() + "-01";
+  });
+  ["#f-tipo", "#f-os", "#f-estado", "#f-periodo", "#f-desde", "#f-hasta"].forEach((s) => $(s).addEventListener("change", verPrestaciones));
   let tq; $("#f-q").addEventListener("input", () => { clearTimeout(tq); tq = setTimeout(verPrestaciones, 250); });
   const abrir = (ev) => {
     const sel = ev.target.closest("[data-sel]");
@@ -1708,7 +1771,7 @@ async function arrancar() {
   $("#circuito").addEventListener("click", (ev) => {
     const tr = ev.target.closest("tr[data-paso]");
     if (!tr) return;
-    $("#f-todos-meses").checked = true; $("#f-estado").value = tr.dataset.paso; $("#f-tipo").value = "";
+    $("#f-periodo").value = "todos"; $("#f-estado").value = tr.dataset.paso; $("#f-tipo").value = "";
     ir("prestaciones");
   });
   $("#modo").addEventListener("change", async () => { await Almacen.ajuste("modo", $("#modo").value); aplicarModo(); aviso("Guardado"); });
@@ -1831,7 +1894,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "46"; // igual que VERSION en sw.js
+const VERSION_APP = "47"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

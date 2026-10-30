@@ -58,9 +58,9 @@ const Importador = (() => {
     return { filas, texto: lineas.join("\n"), tabla: true };
   }
 
-  async function filasPlanilla(archivo) {
+  async function filasPlanilla(archivo, textoCSV) {
     await script("vendor/xlsx.full.min.js");
-    const libro = XLSX.read(await archivo.arrayBuffer(), { type: "array" });
+    const libro = XLSX.read(await archivo.arrayBuffer(), { type: "array", raw: !!textoCSV && /\.csv$/i.test(archivo.name) });
     const filas = [], lineas = [];
     for (const nombre of libro.SheetNames) {
       lineas.push(nombre);
@@ -86,9 +86,9 @@ const Importador = (() => {
     });
   }
 
-  async function leer(archivo, avance) {
+  async function leer(archivo, avance, { textoCSV = false } = {}) {
     const n = plano(archivo.name);
-    if (/\.(xlsx|xlsm|xls|ods|csv)$/.test(n)) return filasPlanilla(archivo);
+    if (/\.(xlsx|xlsm|xls|ods|csv)$/.test(n)) return filasPlanilla(archivo, textoCSV);
     if (/\.docx$/.test(n)) return filasWord(archivo);
     if (/\.doc$/.test(n)) throw new Error("Los .doc viejos de Word no se pueden leer en el celular: abrilo en Word y guardalo como .docx o PDF.");
     let texto;
