@@ -169,7 +169,9 @@ const Motor = (() => {
   // datos = { obras: [{nombre, alias, dias_pago, dia_presentacion, pct_modulo}], valores: [{obra_social, codigo, monto,
   //   vigencia 'AAAA-MM-01', tipo, codigo_aac, fuente}], uq: [{valor, vigencia}], prestaciones: [...] }
   function obraSocialCanonica(datos, texto) {
-    const pal = (t) => " " + plano(t).replace(/[^a-z0-9]+/g, " ").trim() + " ";
+    // Siglas con puntos o espacios («O.S.D.E.», «I. A. P. O. S.») = «osde», «iapos»
+    const pal = (t) => " " + plano(t).replace(/\b(?:[a-z0-9][.\s]+){2,}[a-z0-9]?\b\.?/g, (m) => m.replace(/[.\s]/g, "") + " ")
+      .replace(/[^a-z0-9]+/g, " ").trim() + " ";
     const escrito = pal((texto || "").replace(/^\s*\d+\s*-\s*/, ""));
     let mejor = null;
     for (const o of datos.obras) {

@@ -64,7 +64,7 @@ const esTextoAutomatico = (t) => !t || /^Videoendoscop|^Videocolonosc/.test(t);
 
 // Procedimientos: datos del paciente obligatorios (para facturar y para el registro)
 function faltantes(p) {
-  if (p.tipo === "consulta" || p.origen === "liquidacion") return [];
+  if (p.tipo === "consulta" || p.origen === "liquidacion" || (p.origen === "planilla" && p.estado === "cobrada")) return [];
   const f = [];
   if (!(p.paciente || "").trim()) f.push("nombre y apellido");
   if (!(p.dni || "").trim()) f.push("DNI");
@@ -663,7 +663,9 @@ async function leer(tipo, archivos, textoPegado) {
       aviso((rec.length ? "Reconocí: " + rec.map((c) => DOCS[c].corto).join(", ") + "." : "No reconocí fojas ni autorización: elegilas abajo en «Fotos cargadas».") +
         (datosSolo && rec.length ? ` ${datosSolo === 1 ? "Otra foto quedó" : datosSolo + " fotos quedaron"} solo para datos del paciente.` : ""));
     }
-    mostrarRevision(filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, ...Motor.estimar(d, { ...f, fecha: f.fecha || hoy() }) })),
+    const conFecha = filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha }));
+    if (marcarRepetidas(conFecha)) aviso("Hay cirugías que ya estaban cargadas (mismo paciente y día): quedaron destildadas.");
+    mostrarRevision(conFecha.map((f) => ({ ...f, ...Motor.estimar(d, f) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
   } catch (e) {
     aviso(e.message);
@@ -675,13 +677,34 @@ async function leer(tipo, archivos, textoPegado) {
   } finally { $("#leyendo").hidden = true; }
 }
 
-// Planilla de Excel/CSV con cirugías: una fila por cirugía; las columnas se reconocen por el encabezado
+// Planilla de Excel/CSV con cirugías o anestesias previas (de cada rama): una fila por prestación; las columnas se reconocen por el encabezado
 // (sirve la planilla exportada por la app). Pasa por la misma revisión que las fotos.
 const COLUMNAS_PLANILLA = [
-  ["fecha", /^(fecha|dia)\b/], ["paciente", /paciente|apellido|nombre/], ["dni", /\bdni\b|documento/],
-  ["afiliado", /afiliado|credencial|carnet|socio/], ["obra_social_texto", /obra social|cobertura|prepaga|financiador|^os$/],
+  ["fecha_cobro", /fecha.*(cobr|pag|liquid)|(cobrad|liquidad|pagad)[ao] el/], ["fecha", /^(fecha|dia)\b/],
+  ["monto_cobrado", /^(monto |importe )?(cobrado|liquidado|pagado|percibido)/], ["complejidad", /complejidad/], ["nro_circuito", /circuito/],
+  ["afiliado", /afiliado|credencial|carnet|socio/],
+  ["obra_social_texto", /obra|soc(ial)?\b|cobertura|prepaga|financ|mutual|^o\.? ?s\.?\b|^os[ _]/],
+  ["paciente", /paciente|apellido|nombre/], ["dni", /\bdni\b|documento/],
   ["codigo_os", /codigo (obra social|os)/], ["procedimiento", /procedimiento|cirugia|practica|operacion|intervencion/],
   ["institucion", /institucion|clinica|sanatorio|lugar|centro/], ["tipo", /^tipo$/], ["rol", /^rol$|funcion/], ["notas", /^notas?$|observ|comentario/]];
+
+// Misma cirugía: mismo día y mismo paciente (por DNI si ambos lo tienen; si no, por apellido y nombre). Una cirugía con
+// varios procedimientos es un solo acto: los demás van como «otros procedimientos» de esa misma cirugía.
+function mismaCirugia(a, b) {
+  if (a.tipo === "consulta" || b.tipo === "consulta" || a.fecha !== b.fecha || (a.id && a.id === b.id)) return false;
+  const dni = (x) => String(x.dni || "").replace(/\D/g, "");
+  if (dni(a) && dni(b)) return dni(a) === dni(b);
+  const fichas = (n) => Motor.plano(n || "").replace(/[^a-z ]/g, " ").split(/\s+/).filter(Boolean).sort().join(" ");
+  return mismoPaciente(a.paciente || "", b.paciente || "") || (!!fichas(a.paciente) && fichas(a.paciente) === fichas(b.paciente)); // «Juan Pérez» = «PÉREZ, JUAN»
+}
+const cirugiaRepetida = (f, otras = []) => [...datos().prestaciones, ...otras].find((p) => p !== f && mismaCirugia(p, f));
+
+// Revisión: las ya cargadas (o repetidas dentro de lo leído) quedan destildadas y marcadas
+function marcarRepetidas(filas) {
+  let n = 0;
+  filas.forEach((f, i) => { if (!f._fotos && cirugiaRepetida(f, filas.slice(0, i))) { f.repetida = true; f.incluir = false; n++; } });
+  return n;
+}
 
 function fechaPlanilla(v) {
   if (typeof v === "number" && v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30) + v * 864e5).toISOString().slice(0, 10);
@@ -709,20 +732,39 @@ async function leerPlanilla(archivos) {
         if ("paciente" in mapa && Object.keys(mapa).length >= 2) { col = mapa; continue; }
         if (!col) continue;
         const v = (k) => (k in col ? String(fila[col[k]] ?? "").trim() : "");
+        // Sin columna de obra social con título reconocible: la celda de la fila que nombra una obra social conocida
+        const osCelda = () => fila.map((c, j) => (Object.values(col).includes(j) ? null : Motor.obraSocialCanonica(d, String(c ?? "")) && String(c).trim())).find(Boolean) || "";
         if (!v("paciente") && !v("procedimiento")) continue;
         const tipoT = Motor.plano(v("tipo"));
-        const tipo = /consulta/.test(tipoT) ? "consulta" : /endoscop/.test(tipoT) ? "endoscopia" : /practica/.test(tipoT) ? "practica" : "cirugia";
+        const tipo = /consulta/.test(tipoT) ? "consulta" : /endoscop|fuera de quirofano/.test(tipoT) ? "endoscopia" : /practica|dolor/.test(tipoT) ? "practica" : "cirugia";
+        const cobrado = Importador.monto(col.monto_cobrado != null ? fila[col.monto_cobrado] : ""), cobro = col.fecha_cobro != null ? fechaPlanilla(fila[col.fecha_cobro]) : "";
         const f = { fecha: fechaPlanilla(col.fecha != null ? fila[col.fecha] : "") || hoy(), tipo, paciente: v("paciente"), dni: v("dni").replace(/\D/g, ""),
-          afiliado: v("afiliado"), obra_social_texto: v("obra_social_texto"), obra_social: Motor.obraSocialCanonica(d, v("obra_social_texto")),
+          afiliado: v("afiliado"), obra_social_texto: v("obra_social_texto") || osCelda(), obra_social: Motor.obraSocialCanonica(d, v("obra_social_texto") || osCelda()),
           procedimiento: v("procedimiento"), institucion: v("institucion"), codigo_os: v("codigo_os").split(/[\s,]+/)[0] || null,
-          rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true };
+          rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true,
+          complejidad: parseInt(v("complejidad"), 10) || null, nro_circuito: v("nro_circuito") || null,
+          // Ya cobrada en la planilla: queda cobrada (y su monto sirve para estimar lo nuevo)
+          ...(cobrado > 0 ? { monto_cobrado: cobrado, fecha_cobro: cobro || null, estado: "cobrada" } : cobro ? { fecha_cobro: cobro, estado: "cobrada" } : {}) };
         f.fecha_leida = col.fecha != null && !!fechaPlanilla(fila[col.fecha]);
         filas.push(f);
       }
     }
-    if (!filas.length) throw new Error("No encontré cirugías en la planilla: tiene que tener una fila de encabezados con «Paciente» (y Fecha, Obra social, Procedimiento…).");
+    if (!filas.length) throw new Error("No encontré cirugías ni anestesias en la planilla: tiene que tener una fila de encabezados con «Paciente» (y Fecha, Obra social, Procedimiento…).");
     $("#texto-leido").textContent = "";
-    mostrarRevision(filas.map((f) => ({ ...f, ...Motor.estimar(d, f) })), "Planilla");
+    // Obras sociales que la app no conoce: se ofrece agregarlas (con el nombre como figura en la planilla)
+    const nuevasOS = [...new Set(filas.filter((f) => !f.obra_social && f.obra_social_texto).map((f) => f.obra_social_texto.replace(/^\s*\d+\s*-\s*/, "").trim().toUpperCase()))];
+    if (nuevasOS.length && confirm(`Estas obras sociales no están en la app:\n\n${nuevasOS.join("\n")}\n\n¿Agregarlas? (después podés completar sus datos en Valores → Obras sociales)`)) {
+      for (const nombre of nuevasOS) await Almacen.guardar("obras", { nombre, alias: "", dia_presentacion: 18, dias_pago: 60, id: "os-" + nombre });
+      const d2 = datos();
+      for (const f of filas) if (!f.obra_social && f.obra_social_texto) f.obra_social = Motor.obraSocialCanonica(d2, f.obra_social_texto);
+      $("#f-os").innerHTML = '<option value="">Todas</option>' + d2.obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
+    }
+    const sinOS = [...new Set(filas.filter((f) => !f.obra_social).map((f) => f.obra_social_texto || "(vacía)"))];
+    const rep = marcarRepetidas(filas);
+    mostrarRevision(filas.map((f) => ({ ...f, ...Motor.estimar(datos(), f) })), "Planilla");
+    aviso([rep ? `${rep} ya ${rep === 1 ? "estaba cargada" : "estaban cargadas"} (mismo paciente y día): quedaron destildadas.` : "",
+      sinOS.length ? `Obras sociales sin reconocer: ${sinOS.slice(0, 6).join(", ")}${sinOS.length > 6 ? "…" : ""}. Elegila en cada fila o agregá ese nombre como alias en Valores → Obras sociales.` : ""]
+      .filter(Boolean).join(" ") || `${filas.length} ${esAnestesia() ? "anestesias" : "cirugías"} leídas.`);
   } catch (e) {
     aviso(e.message); $("#cargar-botones").hidden = false;
   } finally { $("#leyendo").hidden = true; }
@@ -742,7 +784,7 @@ function mostrarRevision(filas, titulo) {
       const x = filasRevision[i];
       div.className = "revision" + (x.incluir ? "" : " apagada");
       div.innerHTML = (x._fotos ? fotosCargadas(x) : "") + `<label class="check"><input type="checkbox" data-incluir ${x.incluir ? "checked" : ""}>
-        <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${x.estudio ? ' <span class="chip vencida">informe de estudio</span>' : ""}${fechaDudosa(x) ? ' <span class="chip vencida">revisá la fecha</span>' : ""}</label>` +
+        <b>${esc(x.paciente || "Paciente " + (i + 1))}</b>${x.ausente ? ' <span class="chip vencida">ausente</span>' : ""}${x.estudio ? ' <span class="chip vencida">informe de estudio</span>' : ""}${x.repetida ? ' <span class="chip vencida">ya cargada</span>' : ""}${fechaDudosa(x) ? ' <span class="chip vencida">revisá la fecha</span>' : ""}</label>` +
         camposPrestacion(x, false);
     };
     pintar();
@@ -904,12 +946,13 @@ async function guardarLote() {
   const incompleta = elegidas.find((f) => faltantes(f).length);
   if (incompleta) return aviso(`${incompleta.paciente || "Un paciente"}: falta ${faltantes(incompleta).join(", ")}`);
   const existentes = datos().prestaciones;
-  const repetidas = [], completadas = [];
+  const repetidas = [], completadas = [], guardadas = [];
   let n = 0, fojas = 0;
   try {
     for (const f of elegidas) {
       const mismo = (p) => p.fecha === f.fecha && (p.paciente || "").trim().toLowerCase() === (f.paciente || "").trim().toLowerCase();
-      const ya = existentes.find((p) => mismo(p) && p.tipo === f.tipo && (p.procedimiento || "") === (f.procedimiento || ""));
+      const ya = existentes.find((p) => mismo(p) && p.tipo === f.tipo && (p.procedimiento || "") === (f.procedimiento || "")) ||
+        cirugiaRepetida(f, guardadas);
       const docs = documentosDe(f);
       if (ya || (Object.keys(docs).length && esAnestesia())) {
         // Ya cargado: no se duplica, pero las fotos de los documentos se agregan a ese paciente (antes se descartaban)
@@ -924,6 +967,7 @@ async function guardarLote() {
         if (ya) { repetidas.push(f.paciente); continue; }
       }
       const guardada = await guardarPrestacion({ ...f, fecha_presentacion: null, id: undefined });
+      guardadas.push(guardada);
       fojas += await guardarDocumentos(guardada, documentosDe(f));
       n++;
     }
@@ -1017,6 +1061,8 @@ function editar(p) {
     if (ev.target.matches("[data-ok]")) {
       const datosForm = leerCampos(cuerpo, actual), f = faltantes(datosForm);
       if (f.length) return aviso("Falta completar: " + f.join(", "));
+      const rep = !p.id && cirugiaRepetida(datosForm); // solo al cargar una nueva (editar una existente no se frena)
+      if (rep) return aviso(`Ya está cargada la cirugía de ${rep.paciente} del ${fechaCorta(rep.fecha)} (${rep.procedimiento || "sin procedimiento"}). Si fue otro procedimiento en el mismo acto, agregalo en esa ficha.`);
       try {
         const guardada = await guardarPrestacion(datosForm);
         if (p.id) await renombrarDocumentos(guardada);
@@ -1909,7 +1955,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "49"; // igual que VERSION en sw.js
+const VERSION_APP = "50"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
