@@ -64,7 +64,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
   "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas", "solo_registro", "liquidacion",
-  "doc_parte", "parte_archivos", "doc_datos", "datos_archivos"];
+  "doc_parte", "parte_archivos", "doc_datos", "datos_archivos", "procedimiento_estimado"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -405,7 +405,9 @@ function camposPrestacion(p, completo) {
     <label>¿Polipectomía?${sel("polipectomia", SI_NO, p.polipectomia || "")}</label>
     <label class="ancho">Observaciones<textarea name="observaciones" rows="2" placeholder="Detalles importantes: várices, úlceras, clips, ligadura, biopsias…">${esc(p.observaciones)}</textarea></label>` : ""}
     ${quir && esAnestesia() ? camposAnestesia(p) : quir ? `
-    <label class="ancho">Procedimiento<input name="procedimiento" value="${esc(p.procedimiento)}"></label>
+    <label class="ancho">Procedimiento${p.procedimiento_estimado ? ' <span class="chip vencida">probable: confirmalo</span>' : ""}<input name="procedimiento" value="${esc(p.procedimiento)}"></label>
+    ${itemsModulo(p.codigo_os).length > 1 ? `<label class="ancho">¿Cuál del módulo PAMI ${esc(p.codigo_os)}?<select data-modulo-item>
+      <option value="">— elegir la cirugía —</option>${itemsModulo(p.codigo_os).map((it) => `<option value="${esc(nombreItem(it))}" ${nombreItem(it) === p.procedimiento ? "selected" : ""}>${esc(nombreItem(it))}</option>`).join("")}</select></label>` : ""}
     <label class="ancho economia">Código AAC<select name="codigo_aac">${opcionesCodigo(p)}</select></label>
     <div class="ancho fila economia" style="margin-top:-4px"><button type="button" class="boton chico secundario" data-buscar-codigo>Buscar otro código</button></div>
     ${camposExtras(p)}
@@ -551,6 +553,7 @@ function enlazarEstimacion(el, obtener, guardar) {
   const recalcular = (cambio) => {
     const p = obtener();
     if (!p) return; // el diálogo muestra otra cosa (obra social, valor)
+    if (cambio === "procedimiento") p.procedimiento_estimado = false; // lo escribió el médico
     if (["procedimiento", "tipo", "abordaje"].includes(cambio)) { p.codigo_aac = null; if (cambio !== "abordaje") p.complejidad = null; }
     if (cambio === "fecha") p.feriado = null; // otra fecha: el feriado vuelve a salir del calendario
     const extra = /^extra_proc_(\d+)$/.exec(cambio || "");
@@ -567,6 +570,9 @@ function enlazarEstimacion(el, obtener, guardar) {
       guardar({ ...p, ...(DOCS[clase] ? { [x.campo]: true } : {}), _docs: { ...(p._docs || {}), [clase]: [...(p._docs?.[clase] || []), ...archivos] } });
       aviso(`${x.nombre}: ${archivos.length === 1 ? "agregada" : archivos.length + " fotos agregadas"}. Se guarda en tu Drive al tocar Guardar.`);
       return;
+    }
+    if (ev.target.matches("[data-modulo-item]") && ev.target.value && obtener()) {
+      const p = obtener(); p.procedimiento = ev.target.value; p.procedimiento_estimado = false; guardar(p); return recalcular("procedimiento");
     }
     if (!ev.target.name || ["notas", "dni", "afiliado", "hora", "institucion", "nro_circuito", "motivo_debito", "estado", "monto_cobrado", "paciente", "ciego", "observaciones"].includes(ev.target.name)) return;
     if (ev.target.name === "codigo_os") { const p = obtener(); if (p) { p.codigo_os_manual = true; guardar(p); } }
@@ -723,6 +729,45 @@ const COLUMNAS_PLANILLA = [
   ["paciente", /paciente|apellido y nombre|nombre y apellido|apellido, nombre/], ["apellido", /apellido/], ["nombres", /nombre/], ["dni", /\bdni\b|documento/],
   ["codigo_os", /codigo (obra social|os)/], ["procedimiento", /procedimiento|cirugia|practica|operacion|intervencion/],
   ["institucion", /institucion|clinica|sanatorio|lugar|centro/], ["tipo", /^tipo$/], ["rol", /^rol$|funcion/], ["notas", /^notas?$|observ|comentario/]];
+
+// ---------- Cirugía de un código de la liquidación ----------
+// La liquidación solo trae el código y una descripción cortada («MODULO 4 DE»). Con el código: si el módulo de PAMI incluye
+// una sola cirugía, es esa; si incluye varias, la más probable según las cirugías que el médico ya hizo (marcada «probable»,
+// se elige en la ficha entre las del módulo); si no hay lista, el nombre completo del nomenclador.
+const itemsModulo = (codigo) => Motor.catalogos.PAMI?.codes?.find((c) => c.code === String(codigo || ""))?.items || [];
+const nombreItem = (t) => { const x = String(t).split(/\.\s|,\s*(?:incluye|como único|para (?:el )?tratamiento)|\s+incluye\s/i)[0].trim(); return x.length > 90 ? x.slice(0, 90).replace(/\s+\S*$/, "") + "…" : x; };
+const capitalizar = (t) => String(t || "").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+function procedimientoDeCodigo(codigo, descripcion, paciente = "", fecha = "") {
+  const items = itemsModulo(codigo);
+  if (items.length === 1) return { procedimiento: nombreItem(items[0]), estimado: false };
+  const palabras = (t) => new Set(Motor.plano(t).split(/[^a-z]+/).filter((w) => w.length >= 6));
+  // El mismo paciente en la lista propia (planilla, partes, cargas a mano): su cirugía más cercana (hasta 90 días), compatible
+  // con las del módulo si el código es de un módulo
+  if (paciente && fecha) {
+    const delModulo = new Set(items.flatMap((it) => [...palabras(nombreItem(it))]));
+    const suya = datos().prestaciones.filter((p) => p.tipo !== "consulta" && p.origen !== "liquidacion" && p.procedimiento && !procedimientoCortado(p) &&
+      mismoPaciente(p.paciente, paciente, true) && diasEntre(p.fecha, fecha) <= 90 && (!items.length || [...palabras(p.procedimiento)].some((w) => delModulo.has(w))))
+      .sort((a, b) => diasEntre(a.fecha, fecha) - diasEntre(b.fecha, fecha))[0];
+    if (suya) return { procedimiento: suya.procedimiento, estimado: true, segun: suya.fecha };
+  }
+  if (items.length > 1) {
+    // La más probable: la del módulo que más se parece a las cirugías propias cargadas (no de liquidaciones)
+    const propias = datos().prestaciones.filter((p) => p.tipo !== "consulta" && p.origen !== "liquidacion" && p.procedimiento).map((p) => palabras(p.procedimiento));
+    // Cuántas palabras comparte cada cirugía del módulo con las propias (así «hernioplastía umbilical» gana a «hernioplastía inguinal»)
+    const puntaje = items.map((it) => { const w = [...palabras(nombreItem(it))]; return propias.reduce((t, pp) => t + w.filter((x) => pp.has(x)).length, 0); });
+    const max = Math.max(...puntaje);
+    if (max > 0 && puntaje.filter((x) => x === max).length === 1) return { procedimiento: nombreItem(items[puntaje.indexOf(max)]), estimado: true };
+  }
+  const nom = Motor.catalogos.PAMI_NOM?.codes?.find((c) => c.code === String(codigo || ""));
+  if (nom) return { procedimiento: capitalizar(nom.name), estimado: false };
+  // Código del nomenclador nacional («13010200» = 13.01.02): el nombre de la AAC, solo si coincide con lo que dice la liquidación
+  const n = String(codigo || "").match(/^(\d{2})(\d{2})(\d{2})(?:\d{2})?$/), aac = n && Motor.catalogos.AAC?.codes?.find((c) => c.code === `${n[1]}.${n[2]}.${n[3]}`);
+  const inicio = Motor.plano(descripcion).split(/[^a-z]+/).filter((w) => w.length >= 4).slice(0, 2);
+  if (aac && inicio.length && inicio.every((w) => Motor.plano(aac.name).includes(w))) return { procedimiento: aac.name, estimado: false };
+  return { procedimiento: descripcion ? `${capitalizar(descripcion.replace(/\s+(de|del|o|y)$/i, ""))}… (código ${codigo})` : `Código ${codigo}`, estimado: false };
+}
+// Lo que quedó con la descripción cortada de la liquidación («MODULO 4 DE», «ESCISION DE», «VIDEOCOLECISTECTO»)
+const procedimientoCortado = (p) => p.origen === "liquidacion" && p.tipo !== "consulta" && !!p.procedimiento && !/[a-zñáéíóú]/.test(p.procedimiento) && p.procedimiento.length <= 20;
 
 // Misma cirugía: mismo día y mismo paciente (por DNI si ambos lo tienen; si no, por apellido y nombre). Una cirugía con
 // varios procedimientos es un solo acto: los demás van como «otros procedimientos» de esa misma cirugía.
@@ -1382,8 +1427,8 @@ function verAnalisis() {
   // Procedimientos (o complejidades en anestesia)
   // Lo que solo dice el módulo de la liquidación («MODULO 4 DE…») no es un procedimiento: va junto como «sin procedimiento»
   const clave = (p) => anest ? (p.complejidad ? "Complejidad " + p.complejidad : "Sin complejidad") :
-    !p.procedimiento || /^modulo\b/i.test(Motor.plano(p.procedimiento).trim()) ? "SIN PROCEDIMIENTO (la liquidación solo dice el módulo)" :
-    p.procedimiento.trim().toUpperCase().replace(/\s+/g, " ").slice(0, 60);
+    !p.procedimiento || procedimientoCortado(p) ? "SIN PROCEDIMIENTO (falta el código de la liquidación)" :
+    p.procedimiento.trim().toUpperCase().replace(/\s+/g, " ").slice(0, 60) + (p.procedimiento_estimado ? " (probable, por el código)" : "");
   // Se agrupan sin acentos ni signos («LÁPAROSCOPICA» = «LAPAROSCOPICA»); se muestra como figura la primera vez
   const proc = {}, comoFigura = {};
   for (const p of cx) {
@@ -1898,7 +1943,7 @@ async function aplicarLiquidacion() {
       // Los códigos de las otras líneas que no estaban en la prestación se agregan como procedimientos del mismo acto
       const conocidos = new Set([p.codigo_os, ...(p.extras || []).map((x) => x.codigo_os)].filter(Boolean));
       const extras = [...(p.extras || [])];
-      for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: x.descripcion, codigo_os: x.codigo }); conocidos.add(x.codigo); }
+      for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: procedimientoDeCodigo(x.codigo, x.descripcion).procedimiento, codigo_os: x.codigo }); conocidos.add(x.codigo); }
       await guardarPrestacion({ ...p, extras, estado: total <= 0 ? "debitada" : "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: numero || null, codigo_os: p.codigo_os || l.codigo,
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
@@ -1911,10 +1956,10 @@ async function aplicarLiquidacion() {
         marcadas++;
         continue;
       }
-      const aac = Motor.equivalenteAAC(f.os, l.codigo);
+      const aac = Motor.equivalenteAAC(f.os, l.codigo), cx = procedimientoDeCodigo(l.codigo, l.descripcion, l.paciente, l.fecha);
       await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
-        tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : l.descripcion, codigo_os: l.codigo,
-        extras: f.esConsulta ? [] : [...new Map(lineas.slice(1).filter((x) => x.codigo !== l.codigo).map((x) => [x.codigo, { procedimiento: x.descripcion, codigo_os: x.codigo }])).values()],
+        tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : cx.procedimiento, procedimiento_estimado: !f.esConsulta && cx.estimado, codigo_os: l.codigo,
+        extras: f.esConsulta ? [] : [...new Map(lineas.slice(1).filter((x) => x.codigo !== l.codigo).map((x) => [x.codigo, { procedimiento: procedimientoDeCodigo(x.codigo, x.descripcion).procedimiento, codigo_os: x.codigo }])).values()],
         codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: total <= 0 ? "debitada" : "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, liquidacion: numero || null, origen: "liquidacion",
         notas: nota + detalle });
       nuevas++;
@@ -2369,6 +2414,19 @@ async function unirRepetidas() {
   return borrar.size;
 }
 
+// v62: lo cargado desde liquidaciones con la descripción cortada («MODULO 4 DE») toma la cirugía por su código
+async function nombrarCirugiasDeLiquidacion() {
+  if (ajuste("cirugias_por_codigo_v62", false) || !Motor.catalogos.PAMI) return;
+  const cambiar = Almacen.doc.prestaciones.filter((p) => !p.borrada && p.codigo_os && procedimientoCortado(p));
+  await guardarEnLote(async () => { for (const p of cambiar) try {
+    const cx = procedimientoDeCodigo(p.codigo_os, p.procedimiento, p.paciente, p.fecha);
+    await guardarPrestacion({ ...p, procedimiento: cx.procedimiento, procedimiento_estimado: cx.estimado,
+      extras: (p.extras || []).map((x) => (x.codigo_os && !/[a-zñáéíóú]/.test(x.procedimiento || "") ? { ...x, procedimiento: procedimientoDeCodigo(x.codigo_os, x.procedimiento).procedimiento } : x)) });
+  } catch {} });
+  await Almacen.ajuste("cirugias_por_codigo_v62", true);
+  if (cambiar.length) { aviso(`${cambiar.length} cirugías de liquidaciones tomaron su nombre por el código (las «probables» se confirman en la ficha).`); refrescar(); }
+}
+
 // v60: los cobros repetidos (la misma liquidación cargada varias veces) se unen
 async function arreglarCobrosRepetidos() {
   if (ajuste("arreglo_cobros_v60", false)) return;
@@ -2401,7 +2459,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "61"; // igual que VERSION en sw.js
+const VERSION_APP = "62"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2437,7 +2495,7 @@ function entrar() {
   $("#pin").value = $("#pin2").value = "";
   // v52: las pendientes se recalculan una vez (sin % general del módulo; la referencia cargada no la pisa un cobro) (el valor a mano no se toca)
   if (!ajuste("recalculo_v52", false)) Almacen.ajuste("recalculo_v52", true).then(recalcularPendientes).then(() => refrescar()).catch(() => {});
-  arreglarPlanillas().then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(ordenarDrive).catch((e) => aviso(e.message));
+  arreglarPlanillas().then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(nombrarCirugiasDeLiquidacion).then(ordenarDrive).catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
