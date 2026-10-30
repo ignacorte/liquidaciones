@@ -104,7 +104,8 @@ function datos(rama) {
   const tapados = new Set(valoresPropios.map(clave));
   const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
-  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 15)) || 0, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
+  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 50)) || 0,
+           liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: Number(ajuste("liq_anterior_pct", 30)) || 0 }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -307,11 +308,11 @@ async function esAdmin() {
   return estado.admin.es;
 }
 
-// Especialidad. Administrador: elige el camino cada vez que entra. Colegas: una sola vez, la primera (después ven solo ese)
+// Especialidad: se elige una sola vez, la primera. El administrador después cambia de camino con «⇄» (entra en el último usado)
 async function preguntarEspecialidad() {
   const admin = await esAdmin();
   document.body.classList.toggle("admin", admin);
-  if ((!admin && Almacen.doc.ajustes.especialidad) || $("#dlg").open || estado.caminoElegido) return;
+  if (Almacen.doc.ajustes.especialidad || $("#dlg").open || estado.caminoElegido) return;
   const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
   cuerpo._actual = null;
   cuerpo.innerHTML = admin ? `<h2>¿Qué camino seguís?</h2>
@@ -1123,7 +1124,9 @@ function verValores() {
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
-  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 15);
+  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 50);
+  $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 30);
+  $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
   $("#donde-drive").innerHTML = esAnestesia()
     ? "En tu Google Drive: carpeta <b>Liquidaciones › Anestesiología</b>, con la planilla <b>«Anestesiología – planilla»</b> y la carpeta <b>Documentos</b>, con una carpeta por paciente («Ref 0001 – APELLIDO – fecha») que tiene su foja quirúrgica, foja de anestesia y autorización en PDF. En <b>Liquidaciones</b> quedan los datos y los respaldos diarios."
@@ -1736,7 +1739,11 @@ async function arrancar() {
       }
     }
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
-    if (!esAnestesia() && $("#pct-modulo-general").value !== "") await Almacen.ajuste("pct_modulo_general", Number($("#pct-modulo-general").value));
+    if (!esAnestesia()) {
+      if ($("#pct-modulo-general").value !== "") await Almacen.ajuste("pct_modulo_general", Number($("#pct-modulo-general").value));
+      if ($("#liq-anterior-pct").value !== "") await Almacen.ajuste("liq_anterior_pct", Number($("#liq-anterior-pct").value));
+      if ($("#liq-anterior-hasta").value) await Almacen.ajuste("liq_anterior_hasta", $("#liq-anterior-hasta").value);
+    }
     if (esAnestesia()) await Almacen.ajuste("pct_asociacion", $("#pct-asociacion").value === "" ? 0 : Number($("#pct-asociacion").value));
     const n = await recalcularPendientes();
     aviso(`Guardado; ${n} pendientes recalculadas.`);
@@ -1902,7 +1909,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "48"; // igual que VERSION en sw.js
+const VERSION_APP = "49"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1936,7 +1943,6 @@ function bienvenida(mensaje) {
 // Ya desbloqueada (o con el PIN recién creado)
 function entrar() {
   $("#pin").value = $("#pin2").value = "";
-  estado.caminoElegido = false; // el administrador elige el camino cada vez que entra
   Almacen.minutosBloqueo = minutosBloqueo();
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
