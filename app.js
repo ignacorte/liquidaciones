@@ -67,9 +67,11 @@ function faltantes(p) {
   if (p.tipo === "consulta" || p.origen === "liquidacion" || (p.origen === "planilla" && p.estado === "cobrada")) return [];
   const f = [];
   if (!(p.paciente || "").trim()) f.push("nombre y apellido");
-  if (!(p.dni || "").trim()) f.push("DNI");
+  // Planilla vieja (cargada desde Excel): se guarda sin DNI ni n.º de afiliado (se completan después si hace falta presentarla)
+  const vieja = p.origen === "planilla";
+  if (!(p.dni || "").trim() && !vieja) f.push("DNI");
   if (!p.obra_social) f.push("obra social");
-  if (!(p.afiliado || "").trim() && p.obra_social !== "PARTICULAR") f.push("n.º de afiliado");
+  if (!(p.afiliado || "").trim() && p.obra_social !== "PARTICULAR" && !vieja) f.push("n.º de afiliado");
   if (p.tipo === "endoscopia" && !p.endoscopia) f.push("tipo de endoscopía");
   return f;
 }
@@ -98,7 +100,10 @@ async function cargarBase() {
 function datos(rama) {
   const d = Almacen.doc, vivos = (l) => l.filter((x) => !x.borrada);
   const propias = new Map(vivos(d.obras).map((o) => [o.nombre, o]));
-  const obras = estado.base.obras.filter((o) => !propias.has(o.nombre)).concat([...propias.values()]).map((o) => ({ activa: true, ...o }));
+  // Una obra social editada por el médico conserva también los alias de la base (los nuevos alias llegan con las actualizaciones)
+  const aliasBase = new Map(estado.base.obras.map((o) => [o.nombre, o.alias || ""]));
+  const obras = estado.base.obras.filter((o) => !propias.has(o.nombre)).concat([...propias.values()])
+    .map((o) => ({ activa: true, ...o, alias: [...new Set([o.alias, aliasBase.get(o.nombre)].join(",").split(",").map((x) => x.trim()).filter(Boolean))].join(", ") }));
   const valoresPropios = vivos(d.valores);
   const clave = (v) => v.obra_social + "|" + String(v.codigo).replace(/[.\-\s]/g, "") + "|" + v.vigencia;
   const tapados = new Set(valoresPropios.map(clave));
@@ -1958,7 +1963,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "52"; // igual que VERSION en sw.js
+const VERSION_APP = "53"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

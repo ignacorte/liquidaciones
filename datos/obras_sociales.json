@@ -12,7 +12,7 @@
     {
       "nombre": "APROSS",
       "categoria": "provincial",
-      "alias": "apross, a.p.r.o.s.s",
+      "alias": "apross, a.p.r.o.s.s, apros",
       "dias_pago": 60,
       "dia_presentacion": 10,
       "notas": "Preliquidación ~día 10 de cada mes. Plazo de pago no publicado."
@@ -28,7 +28,7 @@
     {
       "nombre": "SWISS MEDICAL",
       "categoria": "prepaga",
-      "alias": "swiss, smg",
+      "alias": "swiss, smg, s. medical, s.medical, s medical",
       "dias_pago": 60,
       "dia_presentacion": 18,
       "notas": "Factura por el Colegio Médico RC (cierre ~día 18). Plazo de pago no publicado."
@@ -76,7 +76,7 @@
     {
       "nombre": "JERÁRQUICOS SALUD",
       "categoria": "prepaga",
-      "alias": "jerarquicos, j.s.",
+      "alias": "jerarquicos, j.s., js",
       "dias_pago": 60,
       "dia_presentacion": 18,
       "notas": "Plazo máximo de presentación: 90 días desde la prestación (fuera de plazo no paga)."
