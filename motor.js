@@ -299,7 +299,7 @@ const Motor = (() => {
     const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id, p.abordaje || "", p.fecha);
     const deCobro = () => [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC || codigoOS} (${cobro.fecha_cobro})` +
       (cobro.llevado ? ` llevado al 100 % (entonces la institución liquidaba el ${datos.liq_anterior.pct} %)` : "") + " · no hay valor de referencia cargado"];
-    let modulo = "";
+    let modulo = "", totalModulo = 0;
     const vp = os === "PAMI" && codigoOS ? valorPami(codigoOS, p.fecha) : null;
     if (vp && !vp.modulo && !vp.sinValor) {
       return [Math.round(vp.monto * factor), `PAMI ${vp.codigo}: ${vp.unidades} u. de honorarios ${vp.tipo} × ${pesosDec(vp.valorUnidad)}${extra} · ` +
@@ -310,6 +310,7 @@ const Motor = (() => {
       const pm = pctModulo(datos, p, o, datos.pct_modulo_general);
       if (pm) return [Math.round(vp.monto * pm.pct / 100 * factor), `Módulo PAMI ${vp.codigo} ${pesos(vp.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo PAMI ${vp.codigo}: ${vp.unidades} u. × ${pesosDec(vp.valorUnidad)} = ${pesos(vp.monto)} (total a la institución)`;
+      totalModulo = vp.monto;
     }
     if (vp && vp.sinValor) modulo = ` · PAMI ${vp.codigo}: ${vp.unidades} u. ${vp.tipo} (falta el valor de esa unidad)`;
     if (fila && fila.tipo === "modulo") {
@@ -317,8 +318,16 @@ const Motor = (() => {
       const pm = pctModulo(datos, p, o, datos.pct_modulo_general);
       if (pm) return [Math.round(fila.monto * pm.pct / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo ${os} ${fila.codigo}: ${pesos(fila.monto)} (total a la institución)`;
+      totalModulo = fila.monto;
+    }
+    // Con módulo, tu parte nunca supera el módulo entero que cobra la institución
+    if (cobro && totalModulo && cobro.monto_cobrado > totalModulo) {
+      const [, origen] = deCobro();
+      return [Math.round(totalModulo), `${origen} · tope: el módulo entero${modulo}`];
     }
     if (cobro) return deCobro();
+    // Con módulo no sirve la referencia de la AAC (una colecistectomía PAMI daba $1,8 M, el triple del módulo entero)
+    if (totalModulo) return [null, `Sin honorario conocido${modulo}. Cargá el «% del módulo para vos» en la cirugía, en la obra social o el valor a mano.`];
     const uq = valorUQ(datos, p.fecha);
     if (p.tipo === "consulta") return [Math.round(reglas.consult_uq * uq), `Referencia AAC: consulta ${reglas.consult_uq} UQ × ${pesos(uq)} (sin valor cargado para la obra social)`];
     const hon = honorarioAAC(codigoAAC, uq, p.fecha, p.hora, p.abordaje, p.urgencia);

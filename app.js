@@ -2569,7 +2569,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "64"; // igual que VERSION en sw.js
+const VERSION_APP = "65"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2606,7 +2606,7 @@ function entrar() {
   // v52: las pendientes se recalculan una vez (sin % general del módulo; la referencia cargada no la pisa un cobro) (el valor a mano no se toca)
   // Los arreglos de una vez corren con los datos al día (después de traer lo del Drive): así un celular con datos viejos
   // no los aplica sobre lo viejo y pisa lo hecho en otro
-  const arreglos = () => (ajuste("recalculo_v52", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v52", true)))
+  const arreglos = () => (ajuste("recalculo_v65", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v65", true)))
     .then(arreglarPlanillas).then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(nombrarCirugiasDeLiquidacion).then(ordenarDrive)
     .then(() => refrescar()).catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();
