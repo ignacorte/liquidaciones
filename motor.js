@@ -290,13 +290,14 @@ const Motor = (() => {
     const extra = (rol === "ayudante" ? ` × ${reglas.assistant_pct} % (ayudante)` : "") + (pct !== 100 ? ` × ${pct} % (operación múltiple)` : "");
     const tabla = os === "PARTICULAR" ? PARTICULAR_TABLA : os;
     const fila = valorOS(datos, tabla, codigoAAC, codigoOS, p.fecha, p.abordaje || "");
-    // Lo más nuevo manda: un cobro real posterior a la vigencia de la lista dice cuánto se paga de verdad
-    const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id, p.abordaje || "", p.fecha);
-    if (fila && fila.tipo === "honorario" && !(cobro && (cobro.fecha_cobro || "") >= fila.vigencia)) {
+    // Un valor de referencia cargado (lista de la obra social, PAMI, % del módulo) no se modifica: lo último cobrado en las
+    // liquidaciones se usa solo si no hay referencia, antes que la referencia general de la AAC
+    if (fila && fila.tipo === "honorario") {
       return [Math.round(fila.monto * factor), `${tabla} ${fila.codigo} vigente desde ${fila.vigencia.slice(0, 7)}${extra} · ${fila.fuente || "s/fuente"}`];
     }
-    if (cobro) return [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC || codigoOS} (${cobro.fecha_cobro})` +
-      (cobro.llevado ? ` llevado al 100 % (entonces la institución liquidaba el ${datos.liq_anterior.pct} %)` : "")];
+    const cobro = ultimoCobro(datos, os, codigoAAC, codigoOS, rol, pct, p.id, p.abordaje || "", p.fecha);
+    const deCobro = () => [Math.round(cobro.monto_cobrado), `Último cobro real ${os} ${codigoAAC || codigoOS} (${cobro.fecha_cobro})` +
+      (cobro.llevado ? ` llevado al 100 % (entonces la institución liquidaba el ${datos.liq_anterior.pct} %)` : "") + " · no hay valor de referencia cargado"];
     let modulo = "";
     const vp = os === "PAMI" && codigoOS ? valorPami(codigoOS, p.fecha) : null;
     if (vp && !vp.modulo && !vp.sinValor) {
@@ -316,6 +317,7 @@ const Motor = (() => {
       if (pm) return [Math.round(fila.monto * pm.pct / 100 * factor), `Módulo ${os} ${fila.codigo} ${pesos(fila.monto)} × ${pm.pct} %${pm.nota}${extra}`];
       modulo = ` · Módulo ${os} ${fila.codigo}: ${pesos(fila.monto)} (total a la institución)`;
     }
+    if (cobro) return deCobro();
     const uq = valorUQ(datos, p.fecha);
     if (p.tipo === "consulta") return [Math.round(reglas.consult_uq * uq), `Referencia AAC: consulta ${reglas.consult_uq} UQ × ${pesos(uq)} (sin valor cargado para la obra social)`];
     const hon = honorarioAAC(codigoAAC, uq, p.fecha, p.hora, p.abordaje, p.urgencia);
@@ -391,10 +393,10 @@ const Motor = (() => {
     const c = complejidadEfectiva(p);
     if (!c) return [null, null, "Elegí la complejidad del procedimiento"];
     const a = arancelAnestesia(datos, os, c, p.fecha);
-    // Lo más nuevo manda: un cobro real (neto) posterior a la vigencia de los aranceles
+    // El arancel cargado no se modifica: lo último cobrado (neto) se usa solo si no hay arancel para esa complejidad
     const sinAgregados = !(p.extras || []).some((x) => Number(x.complejidad)) && !recargosAnestesia(p).length;
-    const cobro = sinAgregados ? ultimoCobroAnestesia(datos, os, c, p.id) : null;
-    if (cobro && (!a || (cobro.fecha_cobro || "") >= a.fila.vigencia)) return [Math.round(cobro.monto_cobrado), null, `Último cobro real ${os} complejidad ${c} (${cobro.fecha_cobro})`];
+    const cobro = !a && sinAgregados ? ultimoCobroAnestesia(datos, os, c, p.id) : null;
+    if (cobro) return [Math.round(cobro.monto_cobrado), null, `Último cobro real ${os} complejidad ${c} (${cobro.fecha_cobro}) · no hay arancel cargado`];
     if (!a) return [null, null, sinArancel(c)];
     const rec = recargosAnestesia(p), pctRec = rec.reduce((t, [, x]) => t + x, 0);
     let bruto = a.monto * (1 + pctRec / 100);

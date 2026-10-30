@@ -1603,7 +1603,7 @@ async function aplicarLiquidacion() {
     }
   }
   if (liq.numero) await Almacen.ajuste("liquidaciones", [...new Set([...ajuste("liquidaciones", []), liq.numero])]);
-  // Autoactualizar: las pendientes toman lo último cobrado por la misma práctica (si no hay una lista de valores más nueva)
+  // Autoactualizar: las pendientes sin valor de referencia toman lo último cobrado por la misma práctica
   const antes = new Map(datos().prestaciones.map((p) => [p.id, p.valor_estimado]));
   await recalcularPendientes();
   const actualizadas = datos().prestaciones.filter((p) => ["pendiente", "presentada"].includes(p.estado) && antes.get(p.id) !== p.valor_estimado).length;
@@ -1958,7 +1958,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "51"; // igual que VERSION en sw.js
+const VERSION_APP = "52"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1992,8 +1992,8 @@ function bienvenida(mensaje) {
 // Ya desbloqueada (o con el PIN recién creado)
 function entrar() {
   $("#pin").value = $("#pin2").value = "";
-  // v51: las pendientes se estimaron con un % general del módulo que no corresponde: se recalculan una vez (el valor a mano no se toca)
-  if (!ajuste("recalculo_v51", false)) Almacen.ajuste("recalculo_v51", true).then(recalcularPendientes).then(() => refrescar()).catch(() => {});
+  // v52: las pendientes se recalculan una vez (sin % general del módulo; la referencia cargada no la pisa un cobro) (el valor a mano no se toca)
+  if (!ajuste("recalculo_v52", false)) Almacen.ajuste("recalculo_v52", true).then(recalcularPendientes).then(() => refrescar()).catch(() => {});
   Almacen.minutosBloqueo = minutosBloqueo();
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
