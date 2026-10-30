@@ -439,6 +439,12 @@ const Motor = (() => {
   }
 
   function estimar(datos, p) {
+    // Solo registro (cargada desde una planilla vieja): queda el paciente y la cirugía, sin valor ni cobro esperado
+    if (p.solo_registro && !["cobrada", "debitada"].includes(p.estado)) {
+      const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
+      return { obra_social: os, codigo_aac: p.codigo_aac || null, codigo_os: p.codigo_os || null, sugerencias: null, valor_estimado: null, valor_bruto: null,
+        valor_origen: "Solo registro (cargada desde una planilla): sin valor ni cobro esperado", fecha_presentacion: null, fecha_cobro_estimada: null };
+    }
     // Cada prestación con las reglas de su especialidad (no las del camino abierto)
     if ((p.especialidad || datos.especialidad) === "anestesia") return estimarAnestesia(datos, p);
     const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
@@ -494,7 +500,8 @@ const Motor = (() => {
   }
 
   // ---------- Resúmenes ----------
-  const vencida = (p, hoy) => ["pendiente", "presentada"].includes(p.estado) && p.fecha_cobro_estimada && p.fecha_cobro_estimada < hoy;
+  const aCobrar = (p) => ["pendiente", "presentada"].includes(p.estado) && !p.solo_registro;
+  const vencida = (p, hoy) => aCobrar(p) && p.fecha_cobro_estimada && p.fecha_cobro_estimada < hoy;
   const meses = (desde, hasta) => Math.max(0, (new Date(hasta) - new Date(desde.slice(0, 10))) / 864e5) / 30.4;
 
   function resumen(datos, mes, hoy, inflacion) {
@@ -504,7 +511,7 @@ const Motor = (() => {
     for (const p of filas) {
       const est = p.valor_estimado || 0;
       const cob = ["cobrada", "debitada"].includes(p.estado) ? p.monto_cobrado || 0 : 0;
-      const pend = ["pendiente", "presentada"].includes(p.estado) ? est : 0;
+      const pend = aCobrar(p) ? est : 0;
       const cuando = p.fecha_cobro || p.fecha_cobro_estimada || hoy;
       const real = (cob || est) / Math.pow(1 + inflacion / 100, meses(p.fecha, cuando > p.fecha ? cuando : p.fecha));
       const kOS = p.obra_social || p.obra_social_texto || "Sin obra social", kP = p.paciente + "|" + (p.obra_social || "");
@@ -524,7 +531,7 @@ const Motor = (() => {
 
   function cobros(datos, hoy) {
     const porMes = {}, vencidas = [], aPresentar = {};
-    const pendientes = datos.prestaciones.filter((p) => !p.borrada && ["pendiente", "presentada"].includes(p.estado))
+    const pendientes = datos.prestaciones.filter((p) => !p.borrada && aCobrar(p))
       .sort((a, b) => (a.fecha_cobro_estimada || "").localeCompare(b.fecha_cobro_estimada || ""));
     for (const p of pendientes) {
       const v = p.valor_estimado || 0, os = p.obra_social || "Sin obra social";

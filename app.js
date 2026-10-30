@@ -53,7 +53,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas", "solo_registro"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -212,7 +212,7 @@ function verInicio() {
 
 // Alertas: lo que conviene resolver (de todos los meses). Tocar una lleva a la lista ya filtrada.
 function verParaHacer() {
-  const lista = datos().prestaciones, h = hoy();
+  const lista = datos().prestaciones.filter((p) => !p.solo_registro), h = hoy();
   const viejas = (p) => p.estado === "pendiente" && (Date.parse(h) - Date.parse(p.fecha)) / 864e5 > 30;
   const items = [
     ["vencida", "", `Cobros vencidos (más tiempo del que suele pagar la obra social)`, lista.filter((p) => Motor.vencida(p, h))],
@@ -247,7 +247,7 @@ function verEvolucion() {
 // Anestesiología: en qué paso está cada anestesia (documentación → carga en la asociación → liquidación), de todos los meses
 function verCircuito() {
   if (!esAnestesia()) return;
-  const lista = datos().prestaciones.filter((p) => p.tipo !== "consulta" || p.estado !== "cobrada");
+  const lista = datos().prestaciones.filter((p) => !p.solo_registro && (p.tipo !== "consulta" || p.estado !== "cobrada"));
   const pasos = [
     ["Falta documentación (fojas o autorización)", "falta_doc", lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length)],
     ["Listas para cargar", "para_cargar", lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length)],
@@ -401,6 +401,7 @@ function camposPrestacion(p, completo) {
     ${quir && esAnestesia() ? "" : `<label>Hora<input type="time" name="hora" value="${esc(p.hora)}"></label>`}
     ${quir ? "" : `<label>DNI<input name="dni" value="${esc(p.dni)}" inputmode="numeric"></label>`}
     ${quir && esAnestesia() ? "" : `<label>Institución<input name="institucion" value="${esc(p.institucion)}"></label>`}
+    ${p.solo_registro || p.origen === "planilla" ? `<label class="check economia ancho"><input type="checkbox" name="solo_registro" ${p.solo_registro ? "checked" : ""}> Solo registro (planilla vieja: sin valor ni cobro esperado)</label>` : ""}
     <label class="economia">Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
     <label class="economia">Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
     <label class="economia">${esAnestesia() ? "Cargada el" : "Presentada el"}${campoFecha("fecha_presentacion", p.estado === "pendiente" ? "" : p.fecha_presentacion)}</label>
@@ -763,6 +764,8 @@ async function leerPlanilla(archivos) {
           rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true,
           complejidad: parseInt(v("complejidad"), 10) || null, nro_circuito: v("nro_circuito") || null }; // De la planilla se toman solo el paciente, sus datos y la cirugía: los montos y cobros no (regla del usuario)
         f.fecha_leida = col.fecha != null && !!fechaPlanilla(fila[col.fecha]);
+        f.solo_registro = true; // planilla: solo registro (sin valor ni cobro); se puede destildar en la ficha
+        if (!f.fecha_leida) f.incluir = false; // sin fecha legible no se guarda con la de hoy: se corrige en la revisión
         filas.push(f);
       }
     }
@@ -1134,7 +1137,8 @@ function verPrestaciones() {
   const total = lista.reduce((s, p) => s + (p.valor_estimado || 0), 0);
   $("#lista").innerHTML = lista.length ? `<p class="ayuda">${lista.length} ${tipo === "consulta" ? "consultas" : tipo ? "procedimientos" : "prestaciones"}<span class="economia"> · ${pesos(total)} estimado · tildá para marcar varias</span></p>` +
     lista.map((p) => {
-      const chip = (Motor.vencida(p, h) ? '<span class="chip vencida">vencida</span>' : `<span class="chip ${p.estado}">${ESTADOS[p.estado]}</span>`) +
+      const chip = (p.solo_registro && !["cobrada", "debitada"].includes(p.estado) ? '<span class="chip">registro</span>' :
+        Motor.vencida(p, h) ? '<span class="chip vencida">vencida</span>' : `<span class="chip ${p.estado}">${ESTADOS[p.estado]}</span>`) +
         (esAnestesia() && p.estado === "pendiente" && docFaltante(p).length ? `<br><span class="chip vencida">falta ${docFaltante(p).join(", ")}</span>` : "");
       const detalle = p.tipo === "consulta" ? TIPOS.consulta : procedimientosDe(p) + (esAnestesia() ? (p.complejidad ? ` · compl. ${p.complejidad}` : "") :
         (p.rol === "ayudante" ? " (ayudante)" : "") + (p.codigo_aac ? " · " + codigosDe(p, "codigo_aac") : ""));
@@ -1614,7 +1618,7 @@ async function aplicarLiquidacion() {
       const conocidos = new Set([p.codigo_os, ...(p.extras || []).map((x) => x.codigo_os)].filter(Boolean));
       const extras = [...(p.extras || [])];
       for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: x.descripcion, codigo_os: x.codigo }); conocidos.add(x.codigo); }
-      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, codigo_os: p.codigo_os || l.codigo,
+      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, codigo_os: p.codigo_os || l.codigo,
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
     } else {
@@ -1825,6 +1829,10 @@ async function arrancar() {
   });
   $("#apellido").addEventListener("change", () => Almacen.ajuste("apellido", $("#apellido").value.trim()));
   $("#recalcular").addEventListener("click", async () => aviso(`${await recalcularPendientes()} prestaciones recalculadas`));
+  $("#unir-repetidas").addEventListener("click", async () => {
+    if (!confirm("¿Unir las cirugías repetidas (mismo paciente y mismo día)? Queda la más completa; las otras se pueden recuperar desde un respaldo.")) return;
+    const n = await unirRepetidas(); aviso(n ? `Se unieron ${n} repetidas.` : "No hay cirugías repetidas."); refrescar();
+  });
   $("#exportar").addEventListener("click", async () => {
     try {
       const a = document.createElement("a");
@@ -1982,8 +1990,73 @@ async function unificarActos() {
   if (unidos) { aviso(`${unidos} cirugías con varios procedimientos quedaron agrupadas en un solo acto.`); refrescar(); }
 }
 
+// Cirugías repetidas (mismo paciente y día, de cada rama): queda una sola, la más completa (cobrada > presentada >
+// cargada a mano o por foto > planilla), con los datos que le falten tomados de las otras. Las otras se marcan borradas
+// (se recuperan desde un respaldo). También las de planilla que quedaron con la fecha del día en que se cargaron
+// (versiones anteriores ponían la de hoy si no podían leerla) cuando la misma cirugía está con su fecha real.
+async function unirRepetidas() {
+  const vivas = Almacen.doc.prestaciones.filter((p) => !p.borrada && p.tipo !== "consulta");
+  const rama = (p) => p.especialidad || "cirugia", diaDe = (t) => (t ? new Date(t).toISOString().slice(0, 10) : "");
+  const borrar = new Set(), cambios = new Map();
+  const peso = (p) => (["cobrada", "debitada"].includes(p.estado) ? 100 : p.estado === "presentada" ? 50 : 0) + (p.origen !== "planilla" ? 20 : 0) +
+    ["dni", "afiliado", "obra_social", "institucion", "codigo_aac", "codigo_os", "complejidad", "nro_circuito"].filter((k) => p[k]).length;
+  // 1) Planilla con la fecha del día de carga, repetida con su fecha real
+  const proc = (p) => Motor.plano(p.procedimiento || "").replace(/[^a-z]/g, "");
+  for (const p of vivas) {
+    if (p.origen !== "planilla" || ["cobrada", "debitada"].includes(p.estado)) continue;
+    const dia = diaDe(p.actualizado);
+    if (!dia || Math.abs(Date.parse(p.fecha) - Date.parse(dia)) > 2 * 864e5) continue;
+    const real = vivas.find((q) => q !== p && !borrar.has(q.id) && rama(q) === rama(p) && q.fecha < p.fecha && proc(q) && proc(q) === proc(p) &&
+      mismaCirugia({ ...q, fecha: p.fecha }, p));
+    if (real) borrar.add(p.id);
+  }
+  // 2) Mismo paciente y mismo día
+  const porDia = {};
+  for (const p of vivas) if (!borrar.has(p.id)) (porDia[rama(p) + "|" + p.fecha] ||= []).push(p);
+  for (const lista of Object.values(porDia)) {
+    const usados = new Set();
+    for (const p of lista) {
+      if (usados.has(p.id)) continue;
+      const grupo = lista.filter((q) => !usados.has(q.id) && (q === p || mismaCirugia(q, p)));
+      grupo.forEach((q) => usados.add(q.id));
+      if (grupo.length < 2) continue;
+      // Dos cobros distintos el mismo día son pagos separados: no se tocan
+      if (grupo.filter((q) => ["cobrada", "debitada"].includes(q.estado)).length > 1) continue;
+      grupo.sort((a, b) => peso(b) - peso(a));
+      const [queda, ...resto] = grupo;
+      const nuevo = { ...queda };
+      for (const r of resto) {
+        for (const k of CAMPOS) if ((nuevo[k] == null || nuevo[k] === "" || (Array.isArray(nuevo[k]) && !nuevo[k].length)) && r[k] != null && r[k] !== "" &&
+          !(Array.isArray(r[k]) && !r[k].length) && !["estado", "origen", "solo_registro", "id"].includes(k)) nuevo[k] = r[k];
+        if (r.procedimiento && proc(r) !== proc(nuevo)) nuevo.notas = [nuevo.notas, `También figuraba: ${r.procedimiento}`].filter(Boolean).join(" · ");
+        borrar.add(r.id);
+      }
+      if (queda.origen !== "planilla") nuevo.solo_registro = false;
+      cambios.set(queda.id, nuevo);
+    }
+  }
+  for (const p of cambios.values()) await guardarPrestacion(p);
+  if (borrar.size) await Almacen.guardarVarios("prestaciones", Almacen.doc.prestaciones.filter((p) => borrar.has(p.id)).map((p) => ({ ...p, borrada: true })));
+  return borrar.size;
+}
+
+// v55: lo cargado desde planillas pasa a «solo registro» (no suma a lo que falta cobrar) y se unen las cirugías repetidas
+async function arreglarPlanillas() {
+  if (ajuste("arreglo_planillas_v55", false)) return;
+  const viejas = Almacen.doc.prestaciones.filter((p) => !p.borrada && p.origen === "planilla" && ["pendiente", "presentada"].includes(p.estado) && !p.solo_registro);
+  if (viejas.length) await Almacen.guardarVarios("prestaciones", viejas.map((p) => ({ ...p, solo_registro: true, valor_estimado: null,
+    valor_origen: "Solo registro (cargada desde una planilla): sin valor ni cobro esperado", fecha_presentacion: null, fecha_cobro_estimada: null })));
+  const n = await unirRepetidas();
+  await Almacen.ajuste("arreglo_planillas_v55", true);
+  if (viejas.length || n) {
+    aviso(`Arreglado: ${viejas.length} cirugías de planillas quedaron como solo registro (no suman a lo que falta cobrar)` +
+      (n ? ` y se unieron ${n} repetidas (se recuperan desde un respaldo si hiciera falta).` : "."));
+    refrescar();
+  }
+}
+
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "54"; // igual que VERSION en sw.js
+const VERSION_APP = "55"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2019,6 +2092,7 @@ function entrar() {
   $("#pin").value = $("#pin2").value = "";
   // v52: las pendientes se recalculan una vez (sin % general del módulo; la referencia cargada no la pisa un cobro) (el valor a mano no se toca)
   if (!ajuste("recalculo_v52", false)) Almacen.ajuste("recalculo_v52", true).then(recalcularPendientes).then(() => refrescar()).catch(() => {});
+  arreglarPlanillas().catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
