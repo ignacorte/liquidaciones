@@ -476,19 +476,24 @@ const Almacen = (() => {
   const aBase64 = (archivo) => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = mal; r.readAsDataURL(archivo); });
   // campo / lista: la casilla que se tilda y la lista de enlaces de la prestación (por defecto, la foja quirúrgica)
   // reemplaza: un solo archivo por documento (el nuevo reemplaza al que estaba por subir y, al subirse, al que estaba en el Drive)
-  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos", reemplaza = false, subcarpeta = null } = {}) {
+  // descripcion: texto que el buscador del Drive encuentra (paciente, DNI, obra social…); liquidaciones: números de las
+  // liquidaciones de ese PDF (su enlace queda anotado para abrirlo desde el historial)
+  async function encolarAdjunto(prestacionId, nombre, archivo, ruta, { campo = "doc_foja", lista = "foja_archivos", reemplaza = false, subcarpeta = null,
+    descripcion = "", liquidaciones = null } = {}) {
     await leerAdjuntos();
-    if (reemplaza) adjuntos = adjuntos.filter((a) => a.renombrar || a.mover || a.prestacionId !== prestacionId || a.lista !== lista);
-    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista, reemplaza, subcarpeta });
+    if (reemplaza && prestacionId) adjuntos = adjuntos.filter((a) => a.renombrar || a.mover || a.prestacionId !== prestacionId || a.lista !== lista);
+    adjuntos.push({ prestacionId, nombre, tipo: archivo.type || "application/octet-stream", datos: await aBase64(archivo), ruta, campo, lista, reemplaza, subcarpeta,
+      descripcion, liquidaciones });
     await guardarAdjuntos();
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
   }
   // Pasar un documento ya subido a la carpeta del paciente (los de antes estaban en «Fojas» / «Autorizaciones»)
-  async function encolarMover(prestacionId, id, ruta, subcarpeta) {
+  // aRuta: mover a esa carpeta (p. ej. la carpeta del paciente a «Pacientes/2026»), no a la carpeta del paciente
+  async function encolarMover(prestacionId, id, ruta, subcarpeta, { aRuta = false } = {}) {
     await leerAdjuntos();
     if (adjuntos.some((a) => a.mover === id)) return;
-    adjuntos.push({ prestacionId, mover: id, ruta, subcarpeta });
+    adjuntos.push({ prestacionId, mover: id, ruta, subcarpeta, aRuta });
     await guardarAdjuntos();
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
@@ -514,7 +519,7 @@ const Almacen = (() => {
   const quitar = async (a) => { adjuntos = adjuntos.filter((x) => x !== a); await guardarAdjuntos(); };
   async function subirUno(a) {
     if (a.mover) {
-      const destino = await carpetaDePaciente(a);
+      const destino = a.aRuta ? await carpetaRuta(a.ruta) : await carpetaDePaciente(a);
       const f = await drive(`${API}/${a.mover}?fields=parents`).then((r) => r.json()).catch((e) => { if (e.status === 404) return null; throw e; });
       if (f && !(f.parents || []).includes(destino))
         await drive(`${API}/${a.mover}?addParents=${destino}&removeParents=${(f.parents || []).join(",")}`, { method: "PATCH",
@@ -540,8 +545,14 @@ const Almacen = (() => {
     }
     const bytes = Uint8Array.from(atob(a.datos), (c) => c.charCodeAt(0));
     const carpetaDoc = a.subcarpeta ? await carpetaDePaciente(a) : await carpetaRuta(a.ruta);
-    const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), carpetaDoc);
-    const i = doc.prestaciones.findIndex((p) => p.id === a.prestacionId);
+    const r = await subirArchivo(a.nombre, new Blob([bytes], { type: a.tipo }), carpetaDoc, a.descripcion);
+    if (a.liquidaciones?.length) {
+      const v = { ...(doc.ajustes.liq_archivos?.valor || {}) };
+      for (const n of a.liquidaciones) v[n] = { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre };
+      doc.ajustes.liq_archivos = { valor: v, actualizado: Date.now() };
+      cambios++;
+    }
+    const i = a.prestacionId ? doc.prestaciones.findIndex((p) => p.id === a.prestacionId) : -1;
     if (i >= 0) {
       const p = doc.prestaciones[i], campo = a.campo || "doc_foja", lista = a.lista || "foja_archivos";
       const nuevo = { id: r.id, link: r.webViewLink || `https://drive.google.com/file/d/${r.id}/view`, nombre: a.nombre };
@@ -560,8 +571,8 @@ const Almacen = (() => {
     await quitar(a);
     await escribirLocal();
   }
-  async function subirArchivo(nombre, archivo, padre) {
-    const meta = { name: nombre, parents: [padre] }, limite = "liq" + Date.now();
+  async function subirArchivo(nombre, archivo, padre, descripcion = "") {
+    const meta = { name: nombre, parents: [padre], ...(descripcion ? { description: descripcion } : {}) }, limite = "liq" + Date.now();
     const cuerpo = new Blob([`--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${limite}\r\nContent-Type: ${archivo.type || "application/octet-stream"}\r\n\r\n`,
       archivo, `\r\n--${limite}--`]);
     return (await drive(`${SUBIR}?uploadType=multipart&fields=id,webViewLink`, { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + limite }, body: cuerpo })).json();
