@@ -410,10 +410,21 @@ const Lector = (() => {
       const n = (linea.slice(linea.indexOf(e.dni)).match(/\b0*\d{1,2}\.?\d{3}\.?\d{3}\b/) || [])[0];
       if (n && esDni(n)) e.dni = n;
     }
-    // Geclisa: DNI de 9 cifras con cero adelante (029123278), que no sea el n.º de afiliado
+    // Geclisa: DNI de 9 cifras con cero adelante (029123278; el lector a veces separa el cero: «0 13955212»), que no sea
+    // el n.º de afiliado
     if (!e.dni || !esDni(e.dni)) {
-      const m = [...texto.matchAll(/(^|\s)(0\d{7,8})(?=\s|$)/g)].find((x) => !/afil/i.test(texto.slice(Math.max(0, x.index - 25), x.index)));
-      if (m) e.dni = m[2];
+      const m = [...texto.matchAll(/(^|\s)(0 ?\d{7,8})(?=\s|$)/g)].find((x) => !/afil/i.test(texto.slice(Math.max(0, x.index - 25), x.index)));
+      if (m) e.dni = m[2].replace(" ", "");
+    }
+    const renglones = texto.split(/\r?\n/).map((l) => l.trim());
+    // Sin «:» después de la etiqueta («DIAGNOSTICO COLELITIASIS», «Atendón   6843204» mal leído)
+    if (!e.diagnostico) {
+      const m = renglones.map((l) => l.match(/^diagn[oó]stico(?:\s+(?:pre|post?)[\s-]?operatorio)?\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ ,.()-]{3,80})$/i)).find(Boolean);
+      if (m && !/[.]{3}/.test(m[1])) e.diagnostico = m[1].trim();
+    }
+    if (!e.atencion) {
+      const m = renglones.map((l) => plano(l).match(/^aten[a-z]{2,5}\s+(\d{6,8})$/)).find(Boolean);
+      if (m) e.atencion = m[1];
     }
     const dni = soloDigitos(esDni(e.dni || "") ? e.dni : (plano(texto).match(/\b(?:d\.?n\.?i\.?|documento|n[°o] doc\.?)(?:\s*(?:numero|n°|no doc\.?|nro\.?|dni|d\.?n\.?i\.?))?\s*:?\s*([\d.]{7,11})/) || [])[1]).replace(/^0+/, "");
     // «GASTROSTOMIA (301007)»: código de la obra social entre paréntesis; «1- Videobroncoscopia . 2- Traqueostomia»: lista
@@ -428,8 +439,18 @@ const Lector = (() => {
       if (filas.length) { procs = filas.map((m) => m[2].trim()); codigoPractica = filas[0][1]; }
     }
     const osTexto = e.obra_social || "";
+    const fecha = fechaCercana(fechaISO(e.fecha || "")) || fechaProbable(texto);
+    // Historia clínica con la lista de prácticas («30/10/2026   301017 MODULO 6 DE CIRUGIA…»): los códigos del día de la operación
+    const codigosDelDia = [];
+    if (fecha && !e.codigo_os && !codigoEnProc && !codigoPractica) {
+      const [y, m, d] = fecha.split("-");
+      for (const l of renglones) {
+        const x = l.match(/(?:^|\s)(\d{2})\/(\d{2})\/(\d{4}|\d{2})\s+\|?\s*(\d{6})\s+[A-ZÁÉÍÓÚÑ]/);
+        if (x && x[1] === d && x[2] === m && (x[3] === y || x[3] === y.slice(2)) && !codigosDelDia.includes(x[4])) codigosDelDia.push(x[4]);
+      }
+    }
     return {
-      fecha: fechaCercana(fechaISO(e.fecha || "")) || fechaProbable(texto),
+      fecha,
       hora: ((e.hora || "").match(/\d{1,2}[:.]\d{2}/) || [""])[0].replace(".", ":"),
       paciente: (e.apellidos ? e.apellidos.trim() + (e.nombres ? ", " + e.nombres.trim() : "") : e.paciente || nombreSinEtiqueta(texto))
         .replace(/(?<=[A-ZÁÉÍÓÚÑ])0|0(?=[A-ZÁÉÍÓÚÑ]{2})/g, "O").replace(/^([A-ZÁÉÍÓÚÑ]{2,})\.\s+(?=[A-ZÁÉÍÓÚÑa-z])/, "$1, ").replace(/[|\[\]{}()_*~]/g, " ")
@@ -442,9 +463,10 @@ const Lector = (() => {
       atencion: soloDigitos(e.atencion || ""),
       afiliadoPorForma: (texto.match(/(?:^|\s)(1\d{11}[\/-]?\d{2}|8000\d{15})(?=\s|$)/) || [])[1] || "",
       // «Código Quirúrgico: 180116 310009»: puede traer varios códigos; no pegarlos en un solo número
-      codigos_os: ((e.codigo_os || "").match(/\d{5,8}/g) || []),
-      codigo_os: ((e.codigo_os || "").match(/\d{5,8}/g) || [])[0] || codigoEnProc || codigoPractica,
-      institucion: e.institucion || "",
+      codigos_os: ((e.codigo_os || "").match(/\d{5,8}/g) || []).concat(codigosDelDia),
+      codigo_os: ((e.codigo_os || "").match(/\d{5,8}/g) || [])[0] || codigoEnProc || codigoPractica || codigosDelDia[0] || "",
+      // «Historia Clínica   C)»: basura del lector, no una institución
+      institucion: /[a-záéíóúñ]{3}/i.test(e.institucion || "") ? e.institucion : "",
       diagnostico: e.diagnostico || "",
       conclusion: e.conclusion || "",
       procedimientos: procs.length ? procs : [""],

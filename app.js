@@ -2569,7 +2569,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "66"; // igual que VERSION en sw.js
+const VERSION_APP = "67"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
