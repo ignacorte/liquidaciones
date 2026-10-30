@@ -1270,7 +1270,11 @@ function verAnalisis() {
   const meses = Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, "0")}`);
   $("#an-titulo-n").textContent = nombreQ + " por mes";
   $("#an-n-mes").innerHTML = barrasMes(meses, meses.map((m) => cx.filter((p) => p.fecha.startsWith(m)).length), (n) => String(n));
-  $("#an-cobrado-mes").innerHTML = barrasMes(meses, meses.map((m) => suma(cobradasAnio.filter((p) => p.fecha_cobro.startsWith(m)), "monto_cobrado")), pesos);
+  const liqAnio = [...new Set(cobradasAnio.map(numeroLiquidacion).filter(Boolean))];
+  $("#an-cobrado-mes").innerHTML = barrasMes(meses, meses.map((m) => suma(cobradasAnio.filter((p) => p.fecha_cobro.startsWith(m)), "monto_cobrado")), pesos) +
+    `<p class="ayuda" style="margin-top:6px">${cobradasAnio.length ? `${liqAnio.length} ${liqAnio.length === 1 ? "liquidación cargada" : "liquidaciones cargadas"} con cobro en ${anio}` +
+      (cobradasAnio.some((p) => !numeroLiquidacion(p)) ? " y cobros marcados a mano" : "") + ". El detalle está en Cobros → «Liquidaciones cobradas»."
+      : `No hay cobros con fecha en ${anio}. Para verlos acá, cargá el PDF de cada liquidación («Detalle Liquidación») desde Cargar → «Liquidación (PDF)».`}</p>`;
   // Por obra social
   const os = {};
   for (const p of cx) {
@@ -1659,24 +1663,29 @@ const diasEntre = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 864e5;
 
 // Cada línea → la prestación que le corresponde: mismo n.º de atención, o mismo paciente, ±3 días
 function conciliar(liq) {
-  const d = datos(), usadas = new Map(), out = [];
-  for (const l of liq.lineas) {
+  const d = datos(), usadas = new Set();
+  const out = liq.lineas.map((l) => {
     const os = Motor.obraSocialCanonica(d, l.obra_social_texto);
-    const esConsulta = Motor.equivalenteAAC(os, l.codigo) === "CONSULTA" || /\bcons/i.test(l.descripcion);
-    const candidatas = d.prestaciones.filter((p) => !usadas.has(p.id) && p.estado !== "cobrada" && diasEntre(p.fecha, l.fecha) <= 3 &&
-      ((l.atencion && p.atencion === l.atencion) || mismoPaciente(p.paciente, l.paciente)))
-      .sort((a, b) => (b.atencion === l.atencion) - (a.atencion === l.atencion) || (b.codigo_os === l.codigo) - (a.codigo_os === l.codigo) ||
-        ((b.tipo === "consulta") === esConsulta) - ((a.tipo === "consulta") === esConsulta) || diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha));
-    let p = candidatas[0];
+    return { linea: l, os, esConsulta: Motor.equivalenteAAC(os, l.codigo) === "CONSULTA" || /\bcons/i.test(l.descripcion), p: null, incluir: true, grupo: null };
+  });
+  const mismoActo = (a, b) => (a.atencion && b.atencion === a.atencion) || mismoPaciente(a.paciente, b.paciente);
+  // Primero las fechas exactas y después las cercanas (hasta 3 días): con varias sesiones del mismo paciente (curaciones
+  // seguidas, la misma atención) cada línea va a la de su día y no a la de al lado
+  for (const maxDias of [0, 1, 3]) for (const r of out) {
+    if (r.p) continue;
+    const l = r.linea;
+    const p = d.prestaciones.filter((p) => !usadas.has(p.id) && p.estado !== "cobrada" && diasEntre(p.fecha, l.fecha) <= maxDias && mismoActo(l, p))
+      .sort((a, b) => diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha) || (b.atencion === l.atencion) - (a.atencion === l.atencion) ||
+        (b.codigo_os === l.codigo) - (a.codigo_os === l.codigo) || ((b.tipo === "consulta") === r.esConsulta) - ((a.tipo === "consulta") === r.esConsulta))[0];
     // Varias líneas del mismo acto (mismo paciente y día; p. ej. tres ítems de una escisión): van a la misma prestación
-    if (!p) p = [...usadas.values()].find((u) => u.linea.fecha === l.fecha && u.esConsulta === esConsulta &&
-      ((l.atencion && u.linea.atencion === l.atencion) || mismoPaciente(u.linea.paciente, l.paciente)))?.p;
-    const nueva = !p && out.find((x) => !x.p && x.linea.fecha === l.fecha && x.esConsulta === esConsulta &&
-      ((l.atencion && x.linea.atencion === l.atencion) || mismoPaciente(x.linea.paciente, l.paciente)));
-    const r = { linea: l, os, esConsulta, p: p || null, incluir: true, grupo: nueva ? nueva.grupo : out.length };
-    if (p && !usadas.has(p.id)) usadas.set(p.id, r);
-    out.push(r);
+    if (p) { r.p = p; usadas.add(p.id); }
   }
+  for (const r of out) if (!r.p) r.p = out.find((u) => u.p && u.linea.fecha === r.linea.fecha && u.esConsulta === r.esConsulta && mismoActo(r.linea, u.linea))?.p || null;
+  out.forEach((r, i) => {
+    if (r.p) return;
+    const g = out.slice(0, i).find((x) => !x.p && x.linea.fecha === r.linea.fecha && x.esConsulta === r.esConsulta && mismoActo(r.linea, x.linea));
+    r.grupo = g ? g.grupo : i;
+  });
   return out;
 }
 
@@ -1739,6 +1748,14 @@ async function aplicarLiquidacion() {
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
     } else {
+      // Nunca la misma cirugía dos veces: si ya está cargada (mismo paciente y día) sin cobrar, se marca esa
+      const ya = cirugiaRepetida({ fecha: l.fecha, paciente: l.paciente, tipo: f.esConsulta ? "consulta" : "cirugia" });
+      if (ya && !["cobrada", "debitada"].includes(ya.estado)) {
+        await guardarPrestacion({ ...ya, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: liq.numero || null,
+          codigo_os: ya.codigo_os || l.codigo, atencion: ya.atencion || l.atencion, notas: [ya.notas, nota + detalle].filter(Boolean).join(" · ") });
+        marcadas++;
+        continue;
+      }
       const aac = Motor.equivalenteAAC(f.os, l.codigo);
       await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
         tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : l.descripcion, codigo_os: l.codigo,
@@ -2176,7 +2193,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "56"; // igual que VERSION en sw.js
+const VERSION_APP = "57"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
