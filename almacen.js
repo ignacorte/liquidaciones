@@ -216,6 +216,19 @@ const Almacen = (() => {
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
     programarSync();
   }
+  // Muchos cambios seguidos (aplicar una liquidación, recalcular): se cambian en memoria y se escriben una sola vez al final
+  function guardarEnMemoria(coleccion, registro) {
+    const r = { ...registro, id: registro.id || nuevoId(), actualizado: Date.now() };
+    const i = doc[coleccion].findIndex((x) => x.id === r.id);
+    if (i >= 0) doc[coleccion][i] = r; else doc[coleccion].push(r);
+    cambios++;
+    return r;
+  }
+  async function confirmar() {
+    await escribirLocal();
+    if (doc.cuenta && !pendiente) await marcarPendiente(true);
+    programarSync();
+  }
   const borrar = (coleccion, id) => {
     const r = doc[coleccion].find((x) => x.id === id);
     return r ? guardar(coleccion, { ...r, borrada: true }) : null;
@@ -609,7 +622,7 @@ const Almacen = (() => {
   }
 
   return {
-    iniciar, guardar, guardarVarios, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, encolarMover, enlaceCarpeta, get registro() { return registro; },
+    iniciar, guardar, guardarVarios, guardarEnMemoria, confirmar, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, encolarMover, enlaceCarpeta, get registro() { return registro; },
     venceEn: () => (tokenMem?.vence || venceToken) - Date.now(), get errorAdjuntos() { return errorAdjuntos; },
     adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },

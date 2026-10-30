@@ -142,7 +142,14 @@ async function guardarPrestacion(p) {
   limpio.especialidad ||= ajuste("especialidad", "cirugia"); // cada prestación queda en su especialidad
   if (limpio.especialidad === "anestesia" && !limpio.nro_ref) limpio.nro_ref = proximaRef();
   limpio.estado ||= "pendiente"; limpio.tipo ||= "consulta"; limpio.rol ||= "cirujano"; if (limpio.pct == null || limpio.pct === "") limpio.pct = 100; limpio.origen ||= "manual";
-  return Almacen.guardar("prestaciones", Motor.completar(datos(), limpio));
+  return (enLote ? Almacen.guardarEnMemoria : Almacen.guardar)("prestaciones", Motor.completar(datos(), limpio));
+}
+// Muchas prestaciones de una vez: se guardan en memoria y se escriben (cifradas) una sola vez al final
+let enLote = false;
+async function guardarEnLote(fn) {
+  if (enLote) return fn();
+  enLote = true;
+  try { return await fn(); } finally { enLote = false; await Almacen.confirmar(); }
 }
 
 // N° de referencia de cada anestesia (0001, 0002…): va en el nombre de sus documentos para encontrarlos rápido
@@ -954,16 +961,24 @@ async function guardarArchivosDeCarga(fecha) {
   return n;
 }
 // El PDF de la liquidación: «<Rama>/Liquidaciones cobradas/<año>/2025-08-28 – Liquidación L 0000-00168460 – $2.410.143.pdf»
-async function guardarPDFLiquidacion(liq, archivos) {
-  if (!archivos?.length) return;
-  const lista = (liq.liquidaciones || []).length ? liq.liquidaciones : [{ numero: liq.numero, emision: liq.emision, total: liq.total }];
-  const emision = lista.map((x) => x.emision).filter(Boolean).sort().pop() || hoy();
-  const nums = lista.map((x) => Lector.numeroLiq(x.numero) || x.numero).filter(Boolean);
-  const nombre = `${emision} – ${nums.length > 1 ? "Liquidaciones " : "Liquidación "}${limpioDrive(nums.join(", ") || "sin número")} – ${pesos(lista.reduce((t, x) => t + (x.total || 0), 0))}`;
-  const pdf = await aPDF(archivos);
-  await Almacen.encolarAdjunto(null, nombre + (pdf.type === "application/pdf" ? ".pdf" : ".jpg"), pdf, [RAMA_DRIVE(), "Liquidaciones cobradas", emision.slice(0, 4)],
-    { descripcion: [liq.empresa, ...nums.map((n) => "Liquidación " + n), "emitida " + fechaCorta(emision)].filter(Boolean).join(" · "), liquidaciones: nums });
-  informarSubida();
+async function guardarPDFsLiquidacion(liq, porArchivo = []) {
+  const guardados = ajuste("liq_archivos", {}), hechos = new Set();
+  let n = 0;
+  for (const { archivo, liq: l } of porArchivo) {
+    const lista = (l.liquidaciones || []).filter((x) => x.numero);
+    const nums = lista.map((x) => Lector.numeroLiq(x.numero) || x.numero);
+    const clave = nums.slice().sort().join(",");
+    // Sin número, o el mismo PDF dos veces, o ya guardado antes: no se vuelve a subir
+    if (!nums.length || hechos.has(clave) || nums.every((x) => guardados[x])) continue;
+    hechos.add(clave);
+    const emision = lista.map((x) => x.emision).filter(Boolean).sort().pop() || hoy();
+    const nombre = `${emision} – ${nums.length > 1 ? "Liquidaciones " : "Liquidación "}${limpioDrive(nums.join(", "))} – ${pesos(lista.reduce((t, x) => t + (x.total || 0), 0))}`;
+    const pdf = archivo.type === "application/pdf" ? archivo : await aPDF([archivo]);
+    await Almacen.encolarAdjunto(null, nombre + (pdf.type === "application/pdf" ? ".pdf" : ".jpg"), pdf, [RAMA_DRIVE(), "Liquidaciones cobradas", emision.slice(0, 4)],
+      { descripcion: [liq.empresa, ...nums.map((x) => "Liquidación " + x), "emitida " + fechaCorta(emision)].filter(Boolean).join(" · "), liquidaciones: nums });
+    n++;
+  }
+  if (n) informarSubida();
 }
 
 // ---------- PDF ----------
@@ -1728,7 +1743,8 @@ async function borrarLote(lote) {
 
 async function recalcularPendientes() {
   const pend = datos().prestaciones.filter((p) => ["pendiente", "presentada"].includes(p.estado));
-  for (const p of pend) await guardarPrestacion(p);
+  // Una con un dato raro (fecha mal escrita…) no frena a las demás: queda como estaba
+  await guardarEnLote(async () => { for (const p of pend) try { await guardarPrestacion(p); } catch {} });
   return pend.length;
 }
 
@@ -1809,13 +1825,18 @@ let conciliacion = null;
 async function leerLiquidacion(archivos) {
   $("#cargar-botones").hidden = true; $("#leyendo").hidden = false;
   try {
-    const texto = await Lector.textoDe(archivos, (t) => ($("#leyendo-texto").textContent = t));
+    // Cada archivo por separado (así cada PDF se guarda en el Drive con su número), después todo junto
+    const textos = [];
+    for (const [i, a] of archivos.entries())
+      textos.push(await Lector.textoDe([a], (t) => ($("#leyendo-texto").textContent = (archivos.length > 1 ? `Archivo ${i + 1} de ${archivos.length}: ` : "") + t)));
+    const texto = textos.join("\n");
+    const porArchivo = archivos.map((a, i) => ({ archivo: a, liq: Lector.liquidacion(textos[i]) }));
     const liq = Lector.liquidacion(texto);
     if (!liq.lineas.length) throw new Error("No se reconoció una liquidación («Detalle Liquidación»). Cargá el PDF tal como lo descargás del sistema.");
     const cargadas = ajuste("liquidaciones", []);
     const yaCargadas = (liq.liquidaciones || []).map((x) => x.numero).filter((n) => cargadas.includes(n));
     if (yaCargadas.length && !confirm(`${yaCargadas.length === 1 ? "La liquidación " + yaCargadas[0] + " ya se cargó" : "Ya se cargaron: " + yaCargadas.join(", ")}. ¿Cargar de nuevo?`)) throw new Error("Cancelado");
-    conciliacion = { liq, filas: conciliar(liq), archivos };
+    conciliacion = { liq, filas: conciliar(liq), archivos, porArchivo };
     $("#texto-leido").textContent = texto;
     mostrarConciliacion();
   } catch (e) { aviso(e.message); $("#cargar-botones").hidden = false; }
@@ -1843,7 +1864,8 @@ function mostrarConciliacion() {
 }
 
 async function aplicarLiquidacion() {
-  const { liq, filas, archivos } = conciliacion;
+  const { liq, filas, porArchivo } = conciliacion;
+  $("#guardar-lote").disabled = true;
   const elegida = fechaDeTexto($("#liq-fecha").value);
   // Cada línea con su liquidación: número y fecha de emisión (si el archivo trae una sola, la fecha que se eligió)
   const deLinea = (l) => ({ numero: l.numero || liq.numero, fecha: ((liq.liquidaciones || []).length > 1 ? l.emision : elegida) || l.emision || liq.emision || hoy() });
@@ -1853,8 +1875,10 @@ async function aplicarLiquidacion() {
     if (!grupos.has(clave)) grupos.set(clave, { p: f.p, lineas: [], f });
     grupos.get(clave).lineas.push(f.linea);
   }
-  let marcadas = 0, nuevas = 0, corregidas = 0;
-  for (const { p, lineas, f } of grupos.values()) {
+  let marcadas = 0, nuevas = 0, corregidas = 0, hechas = 0;
+  const errores = [];
+  await guardarEnLote(async () => { for (const { p, lineas, f } of grupos.values()) try {
+    if (++hechas % 25 === 0) { aviso(`Aplicando la liquidación… ${hechas} de ${grupos.size}`); await new Promise((ok) => setTimeout(ok)); }
     const l = lineas[0], total = lineas.reduce((s, x) => s + x.monto, 0), { numero, fecha } = deLinea(l), nota = `Liq. ${numero}`;
     const detalle = lineas.length > 1 ? ` (${lineas.length} ítems)` : "";
     // Lo liquidado por cada código: así el valor de cada práctica se actualiza con lo último cobrado
@@ -1895,16 +1919,19 @@ async function aplicarLiquidacion() {
         notas: nota + detalle });
       nuevas++;
     }
-  }
-  await guardarPDFLiquidacion(liq, archivos).catch((e) => aviso("El PDF de la liquidación no se pudo guardar en el Drive: " + e.message));
+  } catch (e) { errores.push(`${lineas[0].paciente} (${fechaCorta(lineas[0].fecha)}): ${e.message}`); } });
   await Almacen.ajuste("liquidaciones", [...new Set([...ajuste("liquidaciones", []), ...((liq.liquidaciones || []).length ? liq.liquidaciones.map((x) => x.numero) : [liq.numero]).filter(Boolean)])]);
   // Autoactualizar: las pendientes sin valor de referencia toman lo último cobrado por la misma práctica
   const antes = new Map(datos().prestaciones.map((p) => [p.id, p.valor_estimado]));
   await recalcularPendientes();
   const actualizadas = datos().prestaciones.filter((p) => ["pendiente", "presentada"].includes(p.estado) && antes.get(p.id) !== p.valor_estimado).length;
   conciliacion = null;
+  $("#guardar-lote").disabled = false;
   cerrarRevision();
-  aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas` + (corregidas ? `, ${corregidas} ya estaban (corregidas)` : "") + (actualizadas ? `; ${actualizadas} pendientes con el valor actualizado.` : "."));
+  aviso(`Liquidación cargada: ${marcadas} marcadas cobradas, ${nuevas} agregadas` + (corregidas ? `, ${corregidas} ya estaban (corregidas)` : "") + (actualizadas ? `; ${actualizadas} pendientes con el valor actualizado.` : ".") +
+    (errores.length ? ` No se pudieron aplicar ${errores.length}: ${errores.slice(0, 3).join(" · ")}${errores.length > 3 ? "…" : ""}` : ""));
+  // Los PDF van al Drive después (cada uno como está, con su número), sin trabar
+  guardarPDFsLiquidacion(liq, porArchivo).catch((e) => aviso("Los PDF de la liquidación no se pudieron guardar en el Drive: " + e.message));
   $("#f-periodo").value = "todos"; $("#f-estado").value = "cobrada";
   ir("prestaciones");
 }
@@ -2374,7 +2401,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "60"; // igual que VERSION en sw.js
+const VERSION_APP = "61"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
