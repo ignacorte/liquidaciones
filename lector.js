@@ -617,19 +617,29 @@ const Lector = (() => {
     x = /,\d{2}$/.test(x) ? x.replace(/\./g, "").replace(",", ".") : x.replace(/,/g, "");
     return Number(x);
   }
+  // Un PDF puede traer varias liquidaciones (cada una con su «Detalle Liquidación Nº …» y su «Fecha de Emisión», que va al
+  // pie de cada página): cada línea queda con el número y la fecha de emisión de la suya
   function liquidacion(texto) {
-    const lineas = [];
+    const lineas = [], bloques = new Map();
+    let actual = "";
     for (const l of texto.split(/\r?\n/)) {
+      const n = l.match(/Liquidaci[oó]n\s+N[º°o]?\s*([A-Z]?\s*[\d\s-]{6,})/i);
+      if (n) { actual = n[1].replace(/\s+/g, " ").trim(); if (!bloques.has(actual)) bloques.set(actual, { numero: actual, emision: "", total: 0 }); }
+      const b = bloques.get(actual) || (bloques.set(actual, { numero: actual, emision: "", total: 0 }), bloques.get(actual));
+      const e = l.match(/Fecha de Emisi[oó]n:?\s*(\d{2}\/\d{2}\/\d{4})/i);
+      if (e && !b.emision) b.emision = fechaISO(e[1]);
+      const t = l.match(/Total Liquidaci[oó]n\s+([\d.,]+)/i);
+      if (t && !b.total) b.total = monto(t[1]);
       const m = l.match(RE_LIQ);
       if (!m) continue;
       lineas.push({ atencion: m[1], fecha: fechaISO(m[2]), paciente: m[3].replace(/[\s,]+$/, "").trim(), obra_social_texto: m[4].trim(),
-        periodo: m[5], nomenclador: m[6], codigo: m[7], descripcion: m[8].trim(), monto: monto(m[9]) });
+        periodo: m[5], nomenclador: m[6], codigo: m[7], descripcion: m[8].trim(), monto: monto(m[9]), numero: actual });
     }
-    const numero = (texto.match(/Liquidaci[oó]n\s+N[º°o]?\s*([A-Z]?\s*[\d\s-]{6,})/i) || [])[1]?.replace(/\s+/g, " ").trim() || "";
-    const emision = fechaISO((texto.match(/Fecha de Emisi[oó]n:?\s*(\d{2}\/\d{2}\/\d{4})/i) || [])[1] || "");
-    const total = monto((texto.match(/Total Liquidaci[oó]n\s+([\d.,]+)/i) || [])[1] || "0");
+    const liquidaciones = [...bloques.values()].filter((x) => x.numero && lineas.some((l) => l.numero === x.numero));
+    for (const l of lineas) l.emision = bloques.get(l.numero)?.emision || "";
     const empresa = ((texto.match(/Empresa:\s*(.+?)\s+-\s+Agente/i) || [])[1] || "").trim();
-    return { numero, emision, total, empresa, lineas };
+    return { numero: liquidaciones[0]?.numero || "", emision: liquidaciones[0]?.emision || "", total: liquidaciones.reduce((s, x) => s + x.total, 0),
+      empresa, lineas, liquidaciones };
   }
 
   // Endoscopías: alta (VEDA), baja (colonoscopía) o ambas; si se llegó a ciego y si hubo polipectomía (del informe)
