@@ -104,7 +104,7 @@ function datos(rama) {
   const tapados = new Set(valoresPropios.map(clave));
   const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
-  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 50)) || 0,
+  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 0)) || 0,
            liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: Number(ajuste("liq_anterior_pct", 30)) || 0 }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
@@ -684,7 +684,7 @@ const COLUMNAS_PLANILLA = [
   ["monto_cobrado", /^(monto |importe )?(cobrado|liquidado|pagado|percibido)/], ["complejidad", /complejidad/], ["nro_circuito", /circuito/],
   ["afiliado", /afiliado|credencial|carnet|socio/],
   ["obra_social_texto", /obra|soc(ial)?\b|cobertura|prepaga|financ|mutual|^o\.? ?s\.?\b|^os[ _]/],
-  ["paciente", /paciente|apellido|nombre/], ["dni", /\bdni\b|documento/],
+  ["paciente", /paciente|apellido y nombre|nombre y apellido|apellido, nombre/], ["apellido", /apellido/], ["nombres", /nombre/], ["dni", /\bdni\b|documento/],
   ["codigo_os", /codigo (obra social|os)/], ["procedimiento", /procedimiento|cirugia|practica|operacion|intervencion/],
   ["institucion", /institucion|clinica|sanatorio|lugar|centro/], ["tipo", /^tipo$/], ["rol", /^rol$|funcion/], ["notas", /^notas?$|observ|comentario/]];
 
@@ -729,16 +729,19 @@ async function leerPlanilla(archivos) {
         // Encabezado (puede haber uno por hoja): la fila con al menos 2 columnas reconocidas, entre ellas el paciente
         const mapa = {};
         enc.forEach((h, j) => { const c = h && COLUMNAS_PLANILLA.find(([k, re]) => !(k in mapa) && re.test(h)); if (c) mapa[c[0]] = j; });
-        if ("paciente" in mapa && Object.keys(mapa).length >= 2) { col = mapa; continue; }
+        if (("paciente" in mapa || "apellido" in mapa) && Object.keys(mapa).length >= 2) { col = mapa; continue; }
         if (!col) continue;
         const v = (k) => (k in col ? String(fila[col[k]] ?? "").trim() : "");
         // Sin columna de obra social con título reconocible: la celda de la fila que nombra una obra social conocida
         const osCelda = () => fila.map((c, j) => (Object.values(col).includes(j) ? null : Motor.obraSocialCanonica(d, String(c ?? "")) && String(c).trim())).find(Boolean) || "";
-        if (!v("paciente") && !v("procedimiento")) continue;
+        // Apellido y nombre en columnas separadas (o «Paciente» con solo el apellido y «Nombre» aparte): «APELLIDO, NOMBRE»
+        const ap = v("paciente") || v("apellido"), nom = v("nombres");
+        const paciente = nom && !Motor.plano(ap).includes(Motor.plano(nom)) ? `${ap}, ${nom}` : ap;
+        if (!paciente && !v("procedimiento")) continue;
         const tipoT = Motor.plano(v("tipo"));
         const tipo = /consulta/.test(tipoT) ? "consulta" : /endoscop|fuera de quirofano/.test(tipoT) ? "endoscopia" : /practica|dolor/.test(tipoT) ? "practica" : "cirugia";
         const cobrado = Importador.monto(col.monto_cobrado != null ? fila[col.monto_cobrado] : ""), cobro = col.fecha_cobro != null ? fechaPlanilla(fila[col.fecha_cobro]) : "";
-        const f = { fecha: fechaPlanilla(col.fecha != null ? fila[col.fecha] : "") || hoy(), tipo, paciente: v("paciente"), dni: v("dni").replace(/\D/g, ""),
+        const f = { fecha: fechaPlanilla(col.fecha != null ? fila[col.fecha] : "") || hoy(), tipo, paciente, dni: v("dni").replace(/\D/g, ""),
           afiliado: v("afiliado"), obra_social_texto: v("obra_social_texto") || osCelda(), obra_social: Motor.obraSocialCanonica(d, v("obra_social_texto") || osCelda()),
           procedimiento: v("procedimiento"), institucion: v("institucion"), codigo_os: v("codigo_os").split(/[\s,]+/)[0] || null,
           rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true,
@@ -1170,7 +1173,7 @@ function verValores() {
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
-  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 50);
+  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 0) || "";
   $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 30);
   $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
@@ -1786,7 +1789,7 @@ async function arrancar() {
     }
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
     if (!esAnestesia()) {
-      if ($("#pct-modulo-general").value !== "") await Almacen.ajuste("pct_modulo_general", Number($("#pct-modulo-general").value));
+      await Almacen.ajuste("pct_modulo_general", Number($("#pct-modulo-general").value) || 0); // vacío = no se usa
       if ($("#liq-anterior-pct").value !== "") await Almacen.ajuste("liq_anterior_pct", Number($("#liq-anterior-pct").value));
       if ($("#liq-anterior-hasta").value) await Almacen.ajuste("liq_anterior_hasta", $("#liq-anterior-hasta").value);
     }
@@ -1955,7 +1958,7 @@ async function unificarActos() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "50"; // igual que VERSION en sw.js
+const VERSION_APP = "51"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -1989,6 +1992,8 @@ function bienvenida(mensaje) {
 // Ya desbloqueada (o con el PIN recién creado)
 function entrar() {
   $("#pin").value = $("#pin2").value = "";
+  // v51: las pendientes se estimaron con un % general del módulo que no corresponde: se recalculan una vez (el valor a mano no se toca)
+  if (!ajuste("recalculo_v51", false)) Almacen.ajuste("recalculo_v51", true).then(recalcularPendientes).then(() => refrescar()).catch(() => {});
   Almacen.minutosBloqueo = minutosBloqueo();
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
