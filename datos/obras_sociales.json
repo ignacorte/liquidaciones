@@ -4,7 +4,7 @@
     {
       "nombre": "PAMI",
       "categoria": "nacional",
-      "alias": "pami, pamiuc, pami uc, inssjp, jubilados y pensionados, instituto nacional de servicio, inss3p, inssip",
+      "alias": "pami, pamiuc, pami uc, pami laboul, instituto, inssjp, jubilados y pensionados, instituto nacional de servicio, inss3p, inssip",
       "dias_pago": 60,
       "dia_presentacion": 15,
       "notas": "Transmitir por OME/CUP hasta el día 15 del mes siguiente; contrato: pago a 60 días de la factura (la prensa informa demoras reales de 85-105 días)."

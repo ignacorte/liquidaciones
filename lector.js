@@ -617,27 +617,44 @@ const Lector = (() => {
     x = /,\d{2}$/.test(x) ? x.replace(/\./g, "").replace(",", ".") : x.replace(/,/g, "");
     return Number(x);
   }
-  // Un PDF puede traer varias liquidaciones (cada una con su «Detalle Liquidación Nº …» y su «Fecha de Emisión», que va al
-  // pie de cada página): cada línea queda con el número y la fecha de emisión de la suya
+  // Número de liquidación igual en los dos formatos de la institución: «L 0000 - 00168460» y «Liq L-0000-00168722»
+  const numeroLiq = (t) => { const m = String(t || "").match(/(\d{4})\s*-\s*(\d{8})/); return m ? `L ${m[1]}-${m[2]}` : ""; };
+  // Un PDF (o varios juntos) puede traer varias liquidaciones; cada línea queda con su número y su fecha de cobro:
+  // la del pago («Fecha: 30/09/2025  Comprobante: OPL…», en el detalle de las órdenes de pago) o, si no está, la de emisión
+  // (que va al pie de cada página). Las órdenes de pago en cuotas repiten el detalle en cada pago: cada línea cuenta una vez.
   function liquidacion(texto) {
-    const lineas = [], bloques = new Map();
-    let actual = "";
+    // Repetidas: la misma línea en otra copia del detalle (otra cuota de la orden de pago, o el mismo PDF dos veces) no se
+    // cuenta; dos líneas iguales dentro del mismo detalle sí (p. ej. dos ítems de igual código y monto)
+    const lineas = [], bloques = new Map(), contadas = new Map();
+    let actual = "", pago = "", enEste = new Map();
     for (const l of texto.split(/\r?\n/)) {
-      const n = l.match(/Liquidaci[oó]n\s+N[º°o]?\s*([A-Z]?\s*[\d\s-]{6,})/i);
-      if (n) { actual = n[1].replace(/\s+/g, " ").trim(); if (!bloques.has(actual)) bloques.set(actual, { numero: actual, emision: "", total: 0 }); }
-      const b = bloques.get(actual) || (bloques.set(actual, { numero: actual, emision: "", total: 0 }), bloques.get(actual));
+      const f = l.match(/^\s*Fecha:\s+(\d{2}\/\d{2}\/\d{4})/);
+      if (f) pago = fechaISO(f[1]);
+      const n = l.match(/Liquidaci[oó]n\s+N[º°o]?\s*(?:Liq\.?\s*)?L?\s*-?\s*(\d{4}\s*-\s*\d{8})/i);
+      if (n) {
+        actual = numeroLiq(n[1]); enEste = new Map();
+        if (!bloques.has(actual)) bloques.set(actual, { numero: actual, emision: "", pago: "", total: 0 });
+        bloques.get(actual).pago ||= pago;
+      }
+      const b = bloques.get(actual) || (bloques.set(actual, { numero: actual, emision: "", pago: "", total: 0 }), bloques.get(actual));
       const e = l.match(/Fecha de Emisi[oó]n:?\s*(\d{2}\/\d{2}\/\d{4})/i);
-      if (e && !b.emision) b.emision = fechaISO(e[1]);
+      if (e) { if (!b.emision) b.emision = fechaISO(e[1]); pago = ""; } // fin de página
       const t = l.match(/Total Liquidaci[oó]n\s+([\d.,]+)/i);
       if (t && !b.total) b.total = monto(t[1]);
       const m = l.match(RE_LIQ);
       if (!m) continue;
-      lineas.push({ atencion: m[1], fecha: fechaISO(m[2]), paciente: m[3].replace(/[\s,]+$/, "").trim(), obra_social_texto: m[4].trim(),
-        periodo: m[5], nomenclador: m[6], codigo: m[7], descripcion: m[8].trim(), monto: monto(m[9]), numero: actual });
+      const linea = { atencion: m[1], fecha: fechaISO(m[2]), paciente: m[3].replace(/[\s,]+$/, "").trim(), obra_social_texto: m[4].trim(),
+        periodo: m[5], nomenclador: m[6], codigo: m[7], descripcion: m[8].trim(), monto: monto(m[9]), numero: actual };
+      const clave = [actual, linea.atencion, linea.fecha, linea.codigo, linea.monto].join("|");
+      enEste.set(clave, (enEste.get(clave) || 0) + 1);
+      if (enEste.get(clave) <= (contadas.get(clave) || 0)) continue;
+      contadas.set(clave, enEste.get(clave)); lineas.push(linea);
     }
-    const liquidaciones = [...bloques.values()].filter((x) => x.numero && lineas.some((l) => l.numero === x.numero));
-    for (const l of lineas) l.emision = bloques.get(l.numero)?.emision || "";
-    const empresa = ((texto.match(/Empresa:\s*(.+?)\s+-\s+Agente/i) || [])[1] || "").trim();
+    const liquidaciones = [...bloques.values()].filter((x) => x.numero && lineas.some((l) => l.numero === x.numero))
+      .map((x) => ({ numero: x.numero, emision: x.pago || x.emision, total: x.total || lineas.filter((l) => l.numero === x.numero).reduce((s, l) => s + l.monto, 0) }));
+    const porNumero = new Map(liquidaciones.map((x) => [x.numero, x]));
+    for (const l of lineas) l.emision = porNumero.get(l.numero)?.emision || "";
+    const empresa = ((texto.match(/Empresa:\s*(.+?)(?:\s+-\s+Agente|$)/im) || [])[1] || "").trim();
     return { numero: liquidaciones[0]?.numero || "", emision: liquidaciones[0]?.emision || "", total: liquidaciones.reduce((s, x) => s + x.total, 0),
       empresa, lineas, liquidaciones };
   }
@@ -825,5 +842,5 @@ const Lector = (() => {
     }));
   }
 
-  return { textoDe, aPrestaciones, parte, listado, liquidacion, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento, puntajeDocumento, lienzosPDF };
+  return { textoDe, aPrestaciones, parte, listado, liquidacion, numeroLiq, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento, puntajeDocumento, lienzosPDF };
 })();
