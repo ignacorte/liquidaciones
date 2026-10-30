@@ -162,7 +162,21 @@
     <div class="card"><h2>Cuándo cobro</h2><p class="ayuda">Lo que falta cobrar, por el mes en que debería entrar según el plazo de cada obra social.</p><div id="flujo"></div></div>
     <div class="card"><h2 id="titulo-presentar">Para presentar</h2><div id="a-presentar"></div></div>
     <div class="card"><h2>Vencidas</h2><p class="ayuda">Ya pasó la fecha estimada de cobro: reclamar o revisar débitos.</p><div id="vencidas"></div></div>
+    <div class="card"><h2>Liquidaciones cobradas</h2><p class="ayuda">Historial de lo cobrado, agrupado por liquidación. Tocá una para ver sus pacientes.</p>
+      <label>Año<select id="liq-anio"></select></label><div id="historial-liq"></div></div>
     <div class="card"><h2>Cuánto tarda cada una (real)</h2><p class="ayuda">Promedio entre la prestación y el cobro, según lo que marcaste como cobrado.</p><div id="plazos-reales"></div></div>
+  </section>
+
+  <!-- Análisis: estadística y economía del año -->
+  <section id="v-analisis" hidden>
+    <div class="card"><div class="grid"><label>Año<select id="an-anio"></select></label></div>
+      <p class="ayuda" id="an-nota"></p></div>
+    <div class="kpis" id="an-kpis"></div>
+    <div class="card"><h2 id="an-titulo-n">Cirugías por mes</h2><div id="an-n-mes"></div></div>
+    <div class="card economia"><h2>Cobrado por mes</h2><p class="ayuda">Lo que entró cada mes (por la fecha de cobro).</p><div id="an-cobrado-mes"></div></div>
+    <div class="card"><h2>Por obra social</h2><div class="tabla" id="an-os"></div></div>
+    <div class="card"><h2 id="an-titulo-proc">Procedimientos más frecuentes</h2><div class="tabla" id="an-proc"></div></div>
+    <div class="card"><h2>Otros datos</h2><div class="tabla" id="an-otros"></div></div>
   </section>
 
   <!-- Valores y configuración -->
@@ -260,6 +274,7 @@
   <button data-vista="cargar"><span>📷</span>Cargar</button>
   <button data-vista="prestaciones"><span>🗂️</span>Prestaciones</button>
   <button data-vista="cobros" class="economia"><span>💰</span>Cobros</button>
+  <button data-vista="analisis"><span>📈</span>Análisis</button>
   <button data-vista="valores"><span>⚙️</span>Valores</button>
 </nav>
 

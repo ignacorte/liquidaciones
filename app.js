@@ -53,7 +53,7 @@ const CAMPOS = ["fecha", "hora", "tipo", "atencion", "paciente", "dni", "afiliad
   "diagnostico", "abordaje", "urgencia", "rol", "pct", "pct_modulo", "codigo_aac", "codigo_os", "valor_manual", "estado", "fecha_presentacion",
   "fecha_cobro", "monto_cobrado", "origen", "notas", "endoscopia", "ciego", "polipectomia", "observaciones", "extras",
   "complejidad", "edad_grupo", "feriado", "obesidad", "suspendida", "doc_foja", "doc_autorizacion", "especialidad", "foja_archivos",
-  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas", "solo_registro"];
+  "doc_foja_anestesia", "foja_anestesia_archivos", "autorizacion_archivos", "nro_circuito", "nro_ref", "carpeta_docs", "motivo_debito", "cobro_lineas", "solo_registro", "liquidacion"];
 
 // Endoscopía: el procedimiento se escribe solo a partir del tipo (si no se escribió otro)
 function textoEndoscopia(p) {
@@ -152,7 +152,7 @@ async function numerarAnestesias() {
 
 // ---------- Navegación ----------
 
-const TITULOS = { inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
+const TITULOS = { inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", analisis: "Análisis", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
 
 function ir(vista) {
   // Al entrar a Cargar con el acceso de Google por vencer (menos de 20 min), se renueva antes de empezar a cargar fotos
@@ -166,7 +166,7 @@ function ir(vista) {
   $("#cambiar-rama").hidden = afuera;
   $("#titulo").textContent = TITULOS[vista];
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
-  ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, valores: verValores }[vista] || (() => {}))();
+  ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, analisis: verAnalisis, valores: verValores }[vista] || (() => {}))();
 }
 const refrescar = () => {
   if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().then(() => Almacen.doc.cuenta && migrarCarpetas()).catch(() => {});
@@ -1188,9 +1188,126 @@ function verCobros() {
   $("#vencidas").innerHTML = r.vencidas.length ? r.vencidas.map((p) => `<div class="item" data-id="${p.id}"><div class="cuerpo">
       <div class="titulo">${esc(p.paciente)}</div><div class="sub">${esc(p.obra_social || "")} · ${fechaCorta(p.fecha)} · ${p.dias_atraso} días de atraso</div></div>
       <div class="monto">${pesos(p.valor_estimado)}</div></div>`).join("") : '<p class="ayuda">Nada vencido. 👌</p>';
+  verHistorialLiquidaciones();
   $("#plazos-reales").innerHTML = plazos.length ? `<table><tr><th>Obra social</th><th class="n">Cobros</th><th class="n">Días</th><th class="n">Cobrado / estimado</th></tr>` +
     plazos.map((o) => `<tr><td>${esc(o.obra_social)}</td><td class="n">${o.n}</td><td class="n">${o.dias}</td><td class="n">${o.cobrado_vs_estimado ?? "—"} %</td></tr>`).join("") + "</table>"
     : '<p class="ayuda">Todavía no hay cobros registrados.</p>';
+}
+
+// Historial de lo cobrado, por liquidación (número guardado o anotado en las notas «Liq. N»); lo marcado cobrado a mano,
+// por mes de cobro
+const numeroLiquidacion = (p) => p.liquidacion || (p.notas || "").match(/\bLiq\. ([^\s·()]+)/)?.[1] || "";
+const cobradas = () => datos().prestaciones.filter((p) => ["cobrada", "debitada"].includes(p.estado) && p.fecha_cobro);
+
+function verHistorialLiquidaciones() {
+  const todas = cobradas();
+  const anios = [...new Set(todas.map((p) => p.fecha_cobro.slice(0, 4)))].sort().reverse();
+  const sel = $("#liq-anio"), antes = sel.value;
+  sel.innerHTML = anios.map((a) => `<option>${a}</option>`).join("") + (anios.length > 1 ? '<option value="">Todos</option>' : "");
+  if (antes !== undefined && [...sel.options].some((o) => o.value === antes)) sel.value = antes;
+  const anio = sel.value, lista = todas.filter((p) => !anio || p.fecha_cobro.startsWith(anio));
+  const grupos = {};
+  for (const p of lista) {
+    const n = numeroLiquidacion(p), k = n ? "L" + n : "M" + p.fecha_cobro.slice(0, 7);
+    (grupos[k] ||= { numero: n, mes: p.fecha_cobro.slice(0, 7), fecha: p.fecha_cobro, ps: [] }).ps.push(p);
+    if (p.fecha_cobro > grupos[k].fecha) grupos[k].fecha = p.fecha_cobro;
+  }
+  const filas = Object.values(grupos).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const total = (ps, k) => ps.reduce((s, p) => s + (p[k] || 0), 0);
+  $("#historial-liq").innerHTML = filas.length ? `<p class="ayuda">${lista.length} cobradas · ${pesos(total(lista, "monto_cobrado"))}</p>` + filas.map((g) => {
+    const cob = total(g.ps, "monto_cobrado"), est = total(g.ps, "valor_estimado"), dif = est ? Math.round(100 * (cob - est) / est) : null;
+    return `<details class="liq"><summary><div><b>${g.numero ? "Liquidación " + esc(g.numero) : "Cobradas a mano · " + nombreMes(g.mes)}</b>
+        <div class="ayuda" style="margin:0">${fechaCorta(g.fecha)} · ${g.ps.length} ${g.ps.length === 1 ? "prestación" : "prestaciones"}${dif != null ? ` · ${dif >= 0 ? "+" : ""}${dif} % vs. estimado` : ""}</div></div>
+        <div class="monto"><b>${pesos(cob)}</b></div></summary>
+      <table><tr><th>Paciente</th><th class="n">Cobrado</th><th class="n">Estimado</th></tr>${g.ps.sort((a, b) => a.fecha.localeCompare(b.fecha)).map((p) => `<tr data-id="${p.id}" style="cursor:pointer">
+        <td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "")} · ${esc(p.tipo === "consulta" ? "Consulta" : procedimientosDe(p))}${p.estado === "debitada" ? " · <b>debitada</b>" : ""}</div></td>
+        <td class="n">${pesos(p.monto_cobrado)}</td><td class="n">${pesos(p.valor_estimado)}</td></tr>`).join("")}</table></details>`;
+  }).join("") : '<p class="ayuda">Todavía no hay cobros registrados. Cargá el PDF de la liquidación desde «Cargar».</p>';
+}
+
+// ---------- Análisis: estadística y economía del año ----------
+
+// Barras de una serie (cantidad o plata por mes); el valor de cada mes al tocarla o pasar el mouse
+function barrasMes(meses, valores, formato) {
+  const max = Math.max(1, ...valores), iMax = valores.indexOf(Math.max(...valores));
+  const id = "b" + Math.random().toString(36).slice(2, 8);
+  return `<div class="barras" id="${id}" role="img" aria-label="${meses.map((m, i) => nombreMes(m) + ": " + formato(valores[i])).join(", ")}">` +
+    meses.map((m, i) => `<div class="b" data-txt="${esc(nombreMes(m) + ": " + formato(valores[i]))}" title="${esc(nombreMes(m) + ": " + formato(valores[i]))}">
+      ${i === iMax && valores[i] ? `<small>${formato(valores[i])}</small>` : ""}<i style="height:${(100 * valores[i]) / max}%"></i></div>`).join("") +
+    `</div><div class="ejes">${meses.map((m) => `<span>${MESES[+m.slice(5, 7) - 1].slice(0, 1).toUpperCase()}</span>`).join("")}</div><div class="barras-valor" id="${id}-v"></div>`;
+}
+
+function verAnalisis() {
+  const d = datos(), todas = d.prestaciones, quir = (p) => p.tipo !== "consulta", anest = esAnestesia();
+  const anios = [...new Set(todas.map((p) => p.fecha.slice(0, 4)).concat(cobradas().map((p) => p.fecha_cobro.slice(0, 4))))].sort().reverse();
+  const sel = $("#an-anio"), antes = sel.value;
+  sel.innerHTML = anios.map((a) => `<option>${a}</option>`).join("") || `<option>${hoy().slice(0, 4)}</option>`;
+  if (antes && anios.includes(antes)) sel.value = antes;
+  const anio = sel.value, previo = String(+anio - 1);
+  const delAnio = (a) => todas.filter((p) => p.fecha.startsWith(a));
+  const ps = delAnio(anio), cx = ps.filter(quir), cxPrev = delAnio(previo).filter(quir);
+  const cobradasAnio = cobradas().filter((p) => p.fecha_cobro.startsWith(anio)), cobPrev = cobradas().filter((p) => p.fecha_cobro.startsWith(previo));
+  const suma = (l, k) => l.reduce((s, p) => s + (p[k] || 0), 0);
+  const conValor = ps.filter((p) => !p.solo_registro);
+  const cobrado = suma(cobradasAnio, "monto_cobrado"), estimado = suma(conValor, "valor_estimado");
+  const debitado = ps.filter((p) => p.estado === "debitada").reduce((s, p) => s + Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)), 0);
+  const pagas = ps.filter((p) => ["cobrada", "debitada"].includes(p.estado) && p.monto_cobrado > 0 && p.valor_estimado > 0);
+  const efectividad = suma(pagas, "valor_estimado") ? Math.round(100 * suma(pagas, "monto_cobrado") / suma(pagas, "valor_estimado")) : null;
+  const dias = pagas.filter((p) => p.fecha_cobro).map((p) => (Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5);
+  const variacion = (a, b) => (b ? `${a >= b ? "+" : ""}${Math.round((100 * (a - b)) / b)} % vs. ${previo}` : "");
+  const kpi = (t, v, sub = "", clase = "") => `<div class="kpi ${clase}"><small>${t}</small><b>${v}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
+  const nombreQ = anest ? "Anestesias" : "Cirugías";
+  $("#an-nota").textContent = ps.some((p) => p.solo_registro) ? "Las cargadas desde planillas cuentan en las cantidades, no en la plata." : "";
+  $("#an-kpis").innerHTML = kpi(nombreQ, cx.length, variacion(cx.length, cxPrev.length)) +
+    kpi(anest ? "Consultas preanestésicas" : "Consultas", ps.length - cx.length) +
+    `<div class="economia" style="display:contents">` +
+    kpi("Cobrado en el año", pesos(cobrado), variacion(cobrado, suma(cobPrev, "monto_cobrado")), "verde") +
+    kpi("Facturado estimado", pesos(estimado)) +
+    kpi("Promedio cobrado por " + (anest ? "anestesia" : "cirugía"), pesos(cobradasAnio.filter(quir).length ? suma(cobradasAnio.filter(quir), "monto_cobrado") / cobradasAnio.filter(quir).length : null)) +
+    kpi("Cobrado / estimado", efectividad != null ? efectividad + " %" : "—", "de lo ya cobrado") +
+    kpi("Días hasta cobrar", dias.length ? Math.round(dias.reduce((a, b) => a + b, 0) / dias.length) : "—", "promedio") +
+    kpi("Debitado", pesos(debitado), "", debitado ? "rojo" : "") + `</div>`;
+  const meses = Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, "0")}`);
+  $("#an-titulo-n").textContent = nombreQ + " por mes";
+  $("#an-n-mes").innerHTML = barrasMes(meses, meses.map((m) => cx.filter((p) => p.fecha.startsWith(m)).length), (n) => String(n));
+  $("#an-cobrado-mes").innerHTML = barrasMes(meses, meses.map((m) => suma(cobradasAnio.filter((p) => p.fecha_cobro.startsWith(m)), "monto_cobrado")), pesos);
+  // Por obra social
+  const os = {};
+  for (const p of cx) {
+    const x = (os[p.obra_social || p.obra_social_texto || "Sin obra social"] ||= { n: 0, cob: 0, ncob: 0, est: 0, dias: 0, nd: 0, deb: 0 });
+    x.n++;
+    if (p.monto_cobrado > 0) { x.cob += p.monto_cobrado; x.ncob++; if (p.valor_estimado) x.est += p.valor_estimado; if (p.fecha_cobro) { x.dias += (Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5; x.nd++; } }
+    if (p.estado === "debitada") x.deb++;
+  }
+  $("#an-os").innerHTML = Object.keys(os).length ? `<table><tr><th>Obra social</th><th class="n">#</th><th class="n economia">Cobrado</th><th class="n economia">Promedio</th></tr>` +
+    Object.entries(os).sort((a, b) => b[1].n - a[1].n).map(([k, x]) => `<tr><td>${esc(k)}${x.deb ? ` <span class="chip vencida">${x.deb} debitada${x.deb > 1 ? "s" : ""}</span>` : ""}<div class="barra"><i style="width:${(100 * x.n) / cx.length}%"></i></div></td><td class="n">${x.n}</td>
+      <td class="n economia">${x.cob ? pesos(x.cob) : "—"}</td><td class="n economia">${x.ncob ? pesos(x.cob / x.ncob) : "—"}</td></tr>`).join("") + "</table>" +
+      '<p class="ayuda economia" style="margin-top:6px">Los días que tarda cada una en pagar están en Cobros.</p>'
+    : `<p class="ayuda">Sin ${nombreQ.toLowerCase()} en ${anio}.</p>`;
+  // Procedimientos (o complejidades en anestesia)
+  const clave = (p) => anest ? (p.complejidad ? "Complejidad " + p.complejidad : "Sin complejidad") :
+    (p.procedimiento || "Sin procedimiento").trim().toUpperCase().replace(/\s+/g, " ").slice(0, 60);
+  // Se agrupan sin acentos ni signos («LÁPAROSCOPICA» = «LAPAROSCOPICA»); se muestra como figura la primera vez
+  const proc = {}, comoFigura = {};
+  for (const p of cx) {
+    const k = Motor.plano(clave(p)).replace(/[^a-z0-9]+/g, " ").trim(); comoFigura[k] ||= clave(p);
+    const x = (proc[k] ||= { n: 0, cob: 0, ncob: 0 }); x.n++; if (p.monto_cobrado > 0) { x.cob += p.monto_cobrado; x.ncob++; }
+  }
+  $("#an-titulo-proc").textContent = anest ? "Por complejidad" : "Procedimientos más frecuentes";
+  const top = Object.entries(proc).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).slice(0, anest ? 12 : 10);
+  $("#an-proc").innerHTML = top.length ? `<table><tr><th>${anest ? "Complejidad" : "Procedimiento"}</th><th class="n">#</th><th class="n economia">Promedio cobrado</th></tr>` +
+    top.map(([k, x]) => `<tr><td>${esc(comoFigura[k])}</td><td class="n">${x.n}</td><td class="n economia">${x.ncob ? pesos(x.cob / x.ncob) : "—"}</td></tr>`).join("") + "</table>" : "";
+  // Otros: instituciones, rol, urgencias
+  const contar = (f) => { const c = {}; for (const p of cx) { const k = f(p); if (k) c[k] = (c[k] || 0) + 1; } return Object.entries(c).sort((a, b) => b[1] - a[1]); };
+  const bloques = [["Institución", contar((p) => (p.institucion || "").trim().toUpperCase() || "Sin dato")],
+    ...(anest ? [] : [["Rol", contar((p) => (p.rol === "ayudante" ? "Ayudante" : "Cirujano"))]]),
+    ["Urgencia", contar((p) => (p.urgencia ? "De urgencia" : "Programada"))]];
+  $("#an-otros").innerHTML = cx.length ? bloques.filter(([, l]) => !(l.length === 1 && l[0][0] === "Sin dato")).map(([t, l]) => `<table><tr><th>${t}</th><th class="n">#</th><th class="n">%</th></tr>` +
+    l.slice(0, 8).map(([k, n]) => `<tr><td>${esc(k)}</td><td class="n">${n}</td><td class="n">${Math.round((100 * n) / cx.length)} %</td></tr>`).join("") + "</table>").join('<div style="height:10px"></div>') : "";
+  $$("#v-analisis .barras .b").forEach((b) => b.addEventListener("click", () => {
+    const cont = b.parentElement; cont.querySelectorAll(".b").forEach((x) => x.classList.toggle("activa", x === b));
+    $("#" + cont.id + "-v").textContent = b.dataset.txt;
+  }));
 }
 
 // ---------- Valores y cuenta ----------
@@ -1618,7 +1735,7 @@ async function aplicarLiquidacion() {
       const conocidos = new Set([p.codigo_os, ...(p.extras || []).map((x) => x.codigo_os)].filter(Boolean));
       const extras = [...(p.extras || [])];
       for (const x of lineas.slice(1)) if (!conocidos.has(x.codigo) && x.codigo !== l.codigo) { extras.push({ procedimiento: x.descripcion, codigo_os: x.codigo }); conocidos.add(x.codigo); }
-      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, codigo_os: p.codigo_os || l.codigo,
+      await guardarPrestacion({ ...p, extras, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, solo_registro: false, liquidacion: liq.numero || null, codigo_os: p.codigo_os || l.codigo,
         atencion: p.atencion || l.atencion, notas: [p.notas, nota + detalle].filter(Boolean).join(" · ") });
       marcadas++;
     } else {
@@ -1626,7 +1743,7 @@ async function aplicarLiquidacion() {
       await guardarPrestacion({ fecha: l.fecha, paciente: l.paciente, obra_social: f.os, obra_social_texto: l.obra_social_texto, atencion: l.atencion,
         tipo: f.esConsulta ? "consulta" : "cirugia", procedimiento: f.esConsulta ? "" : l.descripcion, codigo_os: l.codigo,
         extras: f.esConsulta ? [] : [...new Map(lineas.slice(1).filter((x) => x.codigo !== l.codigo).map((x) => [x.codigo, { procedimiento: x.descripcion, codigo_os: x.codigo }])).values()],
-        codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, origen: "liquidacion",
+        codigo_aac: aac && aac !== "CONSULTA" ? aac : null, estado: "cobrada", fecha_cobro: fecha, monto_cobrado: total, cobro_lineas, liquidacion: liq.numero || null, origen: "liquidacion",
         notas: nota + detalle });
       nuevas++;
     }
@@ -1829,6 +1946,9 @@ async function arrancar() {
   });
   $("#apellido").addEventListener("change", () => Almacen.ajuste("apellido", $("#apellido").value.trim()));
   $("#recalcular").addEventListener("click", async () => aviso(`${await recalcularPendientes()} prestaciones recalculadas`));
+  $("#an-anio").addEventListener("change", verAnalisis);
+  $("#liq-anio").addEventListener("change", verHistorialLiquidaciones);
+  $("#historial-liq").addEventListener("click", (ev) => { const tr = ev.target.closest("tr[data-id]"); const p = tr && datos().prestaciones.find((x) => x.id === tr.dataset.id); if (p) editar(p); });
   $("#unir-repetidas").addEventListener("click", async () => {
     if (!confirm("¿Unir las cirugías repetidas (mismo paciente y mismo día)? Queda la más completa; las otras se pueden recuperar desde un respaldo.")) return;
     const n = await unirRepetidas(); aviso(n ? `Se unieron ${n} repetidas.` : "No hay cirugías repetidas."); refrescar();
@@ -2056,7 +2176,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "55"; // igual que VERSION en sw.js
+const VERSION_APP = "56"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

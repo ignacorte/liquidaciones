@@ -25,7 +25,7 @@ header .rama { display: block; margin-top: 4px; background: rgba(255,255,255,.18
 html, body { max-width: 100%; overflow-x: hidden; }
 main { max-width: 900px; margin: 0 auto; padding: 12px 16px 96px; }
 nav.abajo { position: fixed; bottom: 0; left: 0; right: 0; z-index: 6; display: flex; background: var(--tarjeta); border-top: 1px solid var(--borde); padding-bottom: env(safe-area-inset-bottom); }
-nav.abajo button { flex: 1; background: none; border: 0; color: var(--suave); padding: 8px 2px 6px; font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
+nav.abajo button { flex: 1; min-width: 0; background: none; border: 0; color: var(--suave); padding: 8px 1px 6px; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
 nav.abajo button span { font-size: 21px; line-height: 1; }
 nav.abajo button.activa { color: var(--acento); font-weight: 700; }
 .card { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
@@ -114,3 +114,16 @@ dialog.camara video.flash { opacity: .3; }
   #revision-filas .revision, .item { font-size: 15px; }
 }
 #mes.apagado { opacity: .45; }
+
+/* Análisis: barras por mes (una serie; el valor al tocar o pasar el mouse) */
+.barras { display: flex; align-items: flex-end; gap: 2px; height: 140px; padding-top: 18px; border-bottom: 1px solid var(--borde); }
+.barras .b { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; cursor: pointer; position: relative; }
+.barras .b i { display: block; width: 70%; max-width: 28px; background: var(--acento); border-radius: 4px 4px 0 0; min-height: 0; }
+.barras .b:hover i, .barras .b.activa i { opacity: .75; }
+.barras .b small { position: absolute; top: -16px; font-size: 10px; color: var(--suave); white-space: nowrap; }
+.ejes { display: flex; gap: 2px; font-size: 10px; color: var(--suave); margin-top: 3px; }
+.ejes span { flex: 1; text-align: center; min-width: 0; }
+.barras-valor { font-size: 13px; min-height: 18px; margin-top: 6px; color: var(--texto); }
+details.liq { border-bottom: 1px solid var(--borde); padding: 6px 0; }
+details.liq summary { cursor: pointer; display: flex; justify-content: space-between; gap: 8px; list-style: none; }
+details.liq summary::-webkit-details-marker { display: none; }
