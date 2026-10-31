@@ -23,7 +23,7 @@ header { flex-wrap: wrap; }
 header .rama { display: block; margin-top: 4px; background: rgba(255,255,255,.18); color: inherit; border: 1px solid currentColor; border-radius: 999px;
   padding: 3px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
 html, body { max-width: 100%; overflow-x: hidden; }
-main { max-width: 900px; margin: 0 auto; padding: 12px 16px 96px; }
+main { max-width: 900px; margin: 0 auto; padding: 12px 16px 150px; } /* 150: que el botón «+» no tape la última fila */
 nav.abajo { position: fixed; bottom: 0; left: 0; right: 0; z-index: 6; display: flex; background: var(--tarjeta); border-top: 1px solid var(--borde); padding-bottom: env(safe-area-inset-bottom); }
 nav.abajo button { flex: 1; min-width: 0; background: none; border: 0; color: var(--suave); padding: 8px 1px 6px; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
 nav.abajo button span { font-size: 21px; line-height: 1; }
@@ -128,3 +128,12 @@ details.liq { border-bottom: 1px solid var(--borde); padding: 6px 0; }
 details.liq summary { cursor: pointer; display: flex; justify-content: space-between; gap: 8px; list-style: none; }
 details.liq summary::-webkit-details-marker { display: none; }
 #evolucion td:first-child { white-space: nowrap; }
+details.avanzado { border: 1px solid var(--borde); border-radius: 10px; padding: 6px 10px; margin: 4px 0; }
+details.avanzado > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+details.avanzado > summary .ayuda { font-weight: 400; display: block; margin: 0; }
+details.avanzado > .grid { margin-top: 6px; }
+.fab { position: fixed; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); z-index: 7; width: 56px; height: 56px; border-radius: 50%;
+  border: 0; background: var(--acento); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 3px 10px rgba(0,0,0,.25); cursor: pointer; }
+.buscador { margin-bottom: 12px; }
+.buscador input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--borde); font-size: 16px; background: var(--tarjeta); color: inherit; }
+#buscar-res:not(:empty) { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; padding: 4px 10px; margin-top: 6px; }

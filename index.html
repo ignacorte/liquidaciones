@@ -56,6 +56,7 @@
   <!-- Inicio: resumen del mes -->
   <section id="v-inicio">
     <div class="alerta" id="sin-copia" hidden></div>
+    <div class="buscador"><input id="buscar-inicio" type="search" placeholder="🔎 Buscar paciente, DNI o procedimiento" autocomplete="off"><div class="tabla" id="buscar-res"></div></div>
     <div class="kpis" id="kpis"></div>
     <div class="card" id="para-hacer-card" hidden><h2>Para hacer</h2><div class="tabla" id="para-hacer"></div></div>
     <div class="card economia"><h2>Últimos 6 meses</h2><div class="tabla" id="evolucion"></div></div>
@@ -273,6 +274,7 @@
   </section>
 </main>
 
+<button id="mas" class="fab" hidden aria-label="Nueva cirugía de hoy" title="Nueva cirugía de hoy">+</button>
 <nav class="abajo">
   <button data-vista="inicio" class="activa"><span>📊</span>Inicio</button>
   <button data-vista="cargar"><span>📷</span>Cargar</button>
