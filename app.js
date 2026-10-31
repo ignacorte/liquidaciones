@@ -235,9 +235,18 @@ function verInicio() {
   if (modoRegistro()) return verInicioRegistro();
   const inflacion = +ajuste("inflacion_mensual", 0);
   const r = Motor.resumen(datos(), mes(), hoy(), inflacion), t = r.totales;
+  // Tendencia contra el mes anterior (▲ / ▼)
+  const [ya, ma] = mes().split("-").map(Number), mesAnt = ma === 1 ? `${ya - 1}-12` : `${ya}-${String(ma - 1).padStart(2, "0")}`;
+  const ant = Motor.resumen(datos(), mesAnt, hoy(), inflacion).totales;
+  const tendencia = (a, b) => {
+    if (!(b > 0)) return "";
+    const x = Math.round((100 * (a - b)) / b), txt = x > 200 ? `${Math.floor(a / b)} veces` : `${Math.abs(x)} %`; // con un mes anterior casi vacío, «▲ 24317 %» no dice nada
+    return `<span class="${a >= b ? "sube" : "baja"}">${a >= b ? "▲" : "▼"} ${txt}</span> vs. ${MESES[+mesAnt.slice(5) - 1]}`;
+  };
   const kpi = (titulo, valor, clase = "", detalle = "") => `<div class="kpi ${clase}"><small>${titulo}</small><b>${valor}</b>${detalle ? `<small>${detalle}</small>` : ""}</div>`;
   // Seis recuadros (antes nueve): las cantidades en uno; la pérdida por demora solo si se cargó la inflación
-  $("#kpis").innerHTML = kpi("Facturado estimado", pesos(t.estimado)) + kpi("Cobrado (de lo hecho en el mes)", pesos(t.cobrado), "verde") +
+  $("#kpis").innerHTML = kpi("Facturado estimado", pesos(t.estimado), "", tendencia(t.estimado, ant.estimado)) +
+    kpi("Cobrado (de lo hecho en el mes)", pesos(t.cobrado), "verde", tendencia(t.cobrado, ant.cobrado)) +
     kpi("Falta cobrar", pesos(t.pendiente)) + kpi("Vencido", pesos(t.vencido), t.vencido ? "rojo" : "") +
     kpi("Prestaciones", t.n, "", `${t.cirugias} ${esAnestesia() ? "anestesias" : "cirugías"} · ${t.consultas} ${esAnestesia() ? "preanestésicas" : "consultas"}`) +
     (inflacion > 0 ? kpi(`Pérdida por demora (${inflacion} %/mes)`, pesos(t.perdida_inflacion), t.perdida_inflacion ? "rojo" : "") : "");
@@ -1270,6 +1279,19 @@ document.addEventListener("click", (ev) => {
 
 // ---------- Editar en diálogo ----------
 
+// En qué paso está: hecha → presentada → cobrada (o debitada), con las fechas reales o estimadas
+function lineaDeTiempo(p) {
+  if (p.solo_registro && !["cobrada", "debitada"].includes(p.estado)) return "";
+  const anest = esAnestesia(), est = p.estado || "pendiente", hecho = (e) => ["presentada", "cobrada", "debitada"].includes(e);
+  const pasos = [
+    ["Hecha", fechaCorta(p.fecha), true],
+    [anest ? "Cargada" : "Presentada", p.fecha_presentacion ? fechaCorta(p.fecha_presentacion) + (hecho(est) ? "" : " (est.)") : "", hecho(est)],
+    est === "debitada" ? ["Debitada", fechaCorta(p.fecha_cobro) + (p.monto_cobrado ? " · " + pesos(p.monto_cobrado) : ""), true, "rojo"]
+      : [anest ? "Liquidada" : "Cobrada", est === "cobrada" ? fechaCorta(p.fecha_cobro) + " · " + pesos(p.monto_cobrado) : p.fecha_cobro_estimada ? fechaCorta(p.fecha_cobro_estimada) + " (est.)" : "", est === "cobrada"],
+  ];
+  return `<ol class="linea-tiempo economia">${pasos.map(([t, f, ok, clase]) => `<li class="${ok ? "ok" : ""} ${clase || ""}"><b>${t}</b><small>${esc(f || "—")}</small></li>`).join("")}</ol>`;
+}
+
 function editar(p) {
   const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
   let actual = { ...p };
@@ -1277,7 +1299,7 @@ function editar(p) {
   if (esAnestesia()) actual = { ...actual, ...Motor.estimar(datos(), { ...actual, fecha: actual.fecha || hoy() }) };
   else if (actual.tipo !== "consulta" && !actual.sugerencias) actual.sugerencias = Motor.sugerencias(actual);
   const pintar = () => {
-    cuerpo.innerHTML = `<h2>${p.id ? "Prestación" : esAnestesia() ? TIPOS[p.tipo] : "Nueva " + TIPOS[p.tipo].toLowerCase()}</h2>` + camposPrestacion(actual, true) +
+    cuerpo.innerHTML = `<h2>${p.id ? "Prestación" : esAnestesia() ? TIPOS[p.tipo] : "Nueva " + TIPOS[p.tipo].toLowerCase()}</h2>` + (p.id ? lineaDeTiempo(actual) : "") + camposPrestacion(actual, true) +
       `<div class="fila"><button class="boton" data-ok>Guardar</button><button class="boton secundario" data-cerrar>Cerrar</button>
        ${p.id ? '<button class="boton peligro chico" data-borrar>Borrar</button>' : ""}</div>`;
   };
@@ -1387,8 +1409,24 @@ async function marcar(nuevo) {
 
 // ---------- Cobros ----------
 
+// Antigüedad de lo que falta cobrar (días desde la prestación), como en los tableros de cuentas por cobrar
+function verAntiguedad(d) {
+  const h = Date.parse(hoy()), tramos = [["0 a 30 días", 0, 30], ["31 a 60", 31, 60], ["61 a 90", 61, 90], ["Más de 90", 91, Infinity]];
+  const pend = d.prestaciones.filter((p) => !p.solo_registro && ["pendiente", "presentada"].includes(p.estado) && p.valor_estimado > 0);
+  const filas = tramos.map(([t, a, b]) => {
+    const l = pend.filter((p) => { const x = (h - Date.parse(p.fecha)) / 864e5; return x >= a && x <= b + 0.99; });
+    return { t, n: l.length, total: l.reduce((s, p) => s + p.valor_estimado, 0) };
+  });
+  const total = filas.reduce((s, f) => s + f.total, 0);
+  if (!total) { $("#antiguedad").innerHTML = '<p class="ayuda">No hay nada pendiente de cobro.</p>'; return; }
+  $("#antiguedad").innerHTML = `<div class="apilada" role="img" aria-label="${filas.map((f) => f.t + ": " + pesos(f.total)).join(", ")}">${filas.map((f, i) =>
+      f.total ? `<i class="t${i}" style="width:${(100 * f.total) / total}%" title="${esc(f.t)}: ${pesos(f.total)}"></i>` : "").join("")}</div>
+    <table>${filas.map((f, i) => `<tr><td><span class="punto t${i}"></span>${f.t}</td><td class="n">${f.n}</td><td class="n">${pesos(f.total)}</td><td class="n ayuda">${Math.round((100 * f.total) / total)} %</td></tr>`).join("")}</table>`;
+}
+
 function verCobros() {
   const d = datos(), r = Motor.cobros(d, hoy()), plazos = Motor.plazosReales(d);
+  verAntiguedad(d);
   $("#flujo").innerHTML = r.meses.length ? `<table><tr><th>Mes</th><th class="n">#</th><th class="n">Total</th></tr>` +
     r.meses.map((m) => `<tr><td><b style="${m.mes === "vencido" ? "color:var(--rojo)" : ""}">${nombreMes(m.mes)}</b>
       <div class="ayuda" style="margin:2px 0 0">${m.obras_sociales.slice(0, 4).map(([o, v]) => esc(o) + " " + pesos(v)).join(" · ")}</div></td>
@@ -1483,8 +1521,11 @@ function verAnalisis() {
   if (antes && anios.includes(antes)) sel.value = antes;
   const anio = sel.value, previo = String(+anio - 1);
   const delAnio = (a) => todas.filter((p) => p.fecha.startsWith(a));
-  const ps = delAnio(anio), cx = ps.filter(quir), cxPrev = delAnio(previo).filter(quir);
-  const cobradasAnio = cobradas().filter((p) => p.fecha_cobro.startsWith(anio)), cobPrev = cobradas().filter((p) => p.fecha_cobro.startsWith(previo));
+  // El año en curso se compara con el mismo período del anterior (hasta el mismo día), no con el año entero
+  const enCurso = anio === hoy().slice(0, 4), hasta = previo + hoy().slice(4);
+  const mismoPeriodo = (f) => !enCurso || f <= hasta;
+  const ps = delAnio(anio), cx = ps.filter(quir), cxPrev = delAnio(previo).filter((p) => quir(p) && mismoPeriodo(p.fecha));
+  const cobradasAnio = cobradas().filter((p) => p.fecha_cobro.startsWith(anio)), cobPrev = cobradas().filter((p) => p.fecha_cobro.startsWith(previo) && mismoPeriodo(p.fecha_cobro));
   const suma = (l, k) => l.reduce((s, p) => s + (p[k] || 0), 0);
   const conValor = ps.filter((p) => !p.solo_registro);
   const cobrado = suma(cobradasAnio, "monto_cobrado"), estimado = suma(conValor, "valor_estimado");
@@ -1492,7 +1533,7 @@ function verAnalisis() {
   const pagas = ps.filter((p) => ["cobrada", "debitada"].includes(p.estado) && p.monto_cobrado > 0 && p.valor_estimado > 0);
   const efectividad = suma(pagas, "valor_estimado") ? Math.round(100 * suma(pagas, "monto_cobrado") / suma(pagas, "valor_estimado")) : null;
   const dias = pagas.filter((p) => p.fecha_cobro).map((p) => (Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5);
-  const variacion = (a, b) => (b ? `${a >= b ? "+" : ""}${Math.round((100 * (a - b)) / b)} % vs. ${previo}` : "");
+  const variacion = (a, b) => (b ? `${a >= b ? "+" : ""}${Math.round((100 * (a - b)) / b)} % vs. ${enCurso ? `el mismo período de ${previo}` : previo}` : "");
   const kpi = (t, v, sub = "", clase = "") => `<div class="kpi ${clase}"><small>${t}</small><b>${v}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
   const nombreQ = anest ? "Anestesias" : "Cirugías";
   $("#an-nota").textContent = ps.some((p) => p.solo_registro) ? "Las cargadas desde planillas cuentan en las cantidades, no en la plata." : "";
@@ -1510,7 +1551,7 @@ function verAnalisis() {
   $("#an-titulo-n").textContent = nombreQ + " por mes";
   $("#an-n-mes").innerHTML = barrasMes(meses, meses.map((m) => cx.filter((p) => p.fecha.startsWith(m)).length), (n) => String(n));
   const liqAnio = [...new Set(cobradasAnio.map(numeroLiquidacion).filter(Boolean))];
-  $("#an-cobrado-mes").innerHTML = barrasMes(meses, meses.map((m) => suma(cobradasAnio.filter((p) => p.fecha_cobro.startsWith(m)), "monto_cobrado")), pesos) +
+  $("#an-cobrado-mes").innerHTML = (cobradasAnio.length ? barrasMes(meses, meses.map((m) => suma(cobradasAnio.filter((p) => p.fecha_cobro.startsWith(m)), "monto_cobrado")), pesos) : "") +
     `<p class="ayuda" style="margin-top:6px">${cobradasAnio.length ? `${liqAnio.length} ${liqAnio.length === 1 ? "liquidación cargada" : "liquidaciones cargadas"} con cobro en ${anio}` +
       (cobradasAnio.some((p) => !numeroLiquidacion(p)) ? " y cobros marcados a mano" : "") + ". El detalle está en Cobros → «Liquidaciones cobradas»."
       : `No hay cobros con fecha en ${anio}. Para verlos acá, cargá el PDF de cada liquidación («Detalle Liquidación») desde Cargar → «Liquidación (PDF)».`}</p>`;
@@ -2655,7 +2696,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "72"; // igual que VERSION en sw.js
+const VERSION_APP = "73"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;

@@ -1,10 +1,13 @@
 :root {
-  --acento: #0f5c4d; --acento-claro: #e4f2ee; --borde: #d3dcd9; --rojo: #b42318; --ambar: #b45309; --verde: #15803d;
-  --texto: #1a1a1a; --suave: #5b6663; --fondo: #f3f6f5; --tarjeta: #fff;
+  /* Identidad Quirón (la misma de la web): azul marino y dorado */
+  --acento: #1f3a5f; --acento-claro: #e8eef5; --oro: #b08d57; --oro-claro: #f4ede2; --cabecera: #1f3a5f; --cabecera-texto: #fff;
+  --borde: #dde3ea; --rojo: #b42318; --ambar: #b45309; --verde: #15803d;
+  --texto: #1d2329; --suave: #5b6670; --fondo: #f5f7fa; --tarjeta: #fff;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --acento: #5cc4ab; --acento-claro: #16302a; --borde: #2c3a37; --rojo: #f97066; --ambar: #fbbf24; --verde: #4ade80;
-          --texto: #e6ecea; --suave: #9aa8a4; --fondo: #0f1514; --tarjeta: #18201e; }
+  :root { --acento: #9db9dc; --acento-claro: #1b2a3d; --oro: #d9b97f; --oro-claro: #2a2418; --cabecera: #152a45; --cabecera-texto: #fff;
+          --borde: #2b3747; --rojo: #f97066; --ambar: #fbbf24; --verde: #4ade80;
+          --texto: #e7ecf2; --suave: #9aa6b2; --fondo: #0e141c; --tarjeta: #161f2b; }
 }
 [hidden] { display: none !important; }
 /* Modo «solo registro de procedimientos»: sin montos ni cobros */
@@ -14,9 +17,11 @@ body.modo-anestesia .solo-cirugia { display: none !important; }
 body:not(.admin) .solo-admin, body.admin .solo-colega { display: none !important; }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fondo); color: var(--texto); font-size: 16px; }
-header { position: sticky; top: 0; z-index: 5; background: var(--acento); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; gap: 8px; }
-@media (prefers-color-scheme: dark) { header { color: #0f1514; } }
-header h1 { font-size: 18px; margin: 0; }
+header { position: sticky; top: 0; z-index: 5; background: var(--cabecera); color: var(--cabecera-texto); display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; gap: 8px; border-bottom: 3px solid var(--oro); }
+header h1 { font-size: 19px; margin: 0; font-family: Lora, Georgia, "Times New Roman", serif; font-weight: 600; letter-spacing: .01em; }
+header .marca { display: flex; align-items: center; gap: 10px; min-width: 0; }
+header .marca img { width: 36px; height: 36px; flex: none; }
 header input[type=month] { width: auto; max-width: 150px; padding: 4px 6px; font-size: 15px; border: 0; }
 header { flex-wrap: wrap; }
 /* Administrador: rama actual; tocar cambia de cirugía a anestesiología o al revés */
@@ -27,9 +32,10 @@ main { max-width: 900px; margin: 0 auto; padding: 12px 16px 150px; } /* 150: que
 nav.abajo { position: fixed; bottom: 0; left: 0; right: 0; z-index: 6; display: flex; background: var(--tarjeta); border-top: 1px solid var(--borde); padding-bottom: env(safe-area-inset-bottom); }
 nav.abajo button { flex: 1; min-width: 0; background: none; border: 0; color: var(--suave); padding: 8px 1px 6px; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
 nav.abajo button span { font-size: 21px; line-height: 1; }
-nav.abajo button.activa { color: var(--acento); font-weight: 700; }
+nav.abajo button.activa { color: var(--acento); font-weight: 700; box-shadow: inset 0 3px 0 var(--oro); }
 .card { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
-h2 { font-size: 17px; margin: 0 0 10px; color: var(--acento); }
+h2 { font-size: 18px; margin: 0 0 10px; color: var(--acento); font-family: Lora, Georgia, "Times New Roman", serif; font-weight: 600; }
+.card > h2::after, .card > details > summary h2::after { content: ""; display: block; width: 28px; height: 2px; background: var(--oro); margin-top: 4px; border-radius: 1px; }
 .ayuda { font-size: 13px; color: var(--suave); margin: 4px 0 10px; }
 .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
 @media (min-width: 640px) { .kpis { grid-template-columns: repeat(4, 1fr); } }
@@ -52,7 +58,7 @@ input[type=checkbox] { width: 20px; height: 20px; }
 .grid .ancho { grid-column: 1 / -1; }
 .fila { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
 .boton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--acento); color: #fff; border: 1px solid var(--acento); border-radius: 10px; padding: 10px 14px; font-size: 15px; cursor: pointer; text-decoration: none; min-height: 44px; }
-@media (prefers-color-scheme: dark) { .boton { color: #0f1514; } }
+@media (prefers-color-scheme: dark) { .boton { color: #0e141c; } }
 .boton:disabled { opacity: .5; cursor: default; }
 .boton.secundario { background: transparent; color: var(--acento); }
 .boton.peligro { background: transparent; color: var(--rojo); border-color: var(--rojo); }
@@ -133,7 +139,31 @@ details.avanzado > summary { cursor: pointer; font-weight: 600; padding: 4px 0; 
 details.avanzado > summary .ayuda { font-weight: 400; display: block; margin: 0; }
 details.avanzado > .grid { margin-top: 6px; }
 .fab { position: fixed; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); z-index: 7; width: 56px; height: 56px; border-radius: 50%;
-  border: 0; background: var(--acento); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 3px 10px rgba(0,0,0,.25); cursor: pointer; }
+  border: 2px solid var(--oro); background: var(--cabecera); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 3px 10px rgba(0,0,0,.25); cursor: pointer; }
 .buscador { margin-bottom: 12px; }
 .buscador input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--borde); font-size: 16px; background: var(--tarjeta); color: inherit; }
 #buscar-res:not(:empty) { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; padding: 4px 10px; margin-top: 6px; }
+
+/* Identidad: el recuadro principal y lo cobrado en dorado */
+.kpi:first-child { box-shadow: inset 0 3px 0 var(--oro); }
+#an-cobrado-mes .barras .b i { background: var(--oro); }
+.kpi small:first-child { letter-spacing: .02em; }
+/* Tendencia contra el mes anterior */
+.kpi .sube { color: var(--verde); font-weight: 600; } .kpi .baja { color: var(--rojo); font-weight: 600; }
+/* Antigüedad de lo pendiente: barra apilada (del azul al rojo a medida que envejece) */
+.apilada { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; background: var(--acento-claro); margin: 4px 0 8px; }
+.apilada i { display: block; height: 100%; }
+.t0 { background: var(--acento); } .t1 { background: var(--oro); } .t2 { background: var(--ambar); } .t3 { background: var(--rojo); }
+.punto { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+/* Línea de tiempo de la prestación */
+.linea-tiempo { list-style: none; display: flex; padding: 0; margin: 0 0 12px; }
+.linea-tiempo li { flex: 1; position: relative; text-align: center; padding-top: 18px; font-size: 12px; color: var(--suave); }
+.linea-tiempo li::before { content: ""; position: absolute; top: 4px; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; border: 2px solid var(--borde); background: var(--tarjeta); z-index: 1; }
+.linea-tiempo li::after { content: ""; position: absolute; top: 9px; left: -50%; width: 100%; height: 2px; background: var(--borde); }
+.linea-tiempo li:first-child::after { display: none; }
+.linea-tiempo li.ok::before { background: var(--acento); border-color: var(--acento); }
+.linea-tiempo li.ok::after { background: var(--acento); }
+.linea-tiempo li.rojo::before { background: var(--rojo); border-color: var(--rojo); }
+.linea-tiempo li b { display: block; color: var(--texto); font-size: 13px; }
+.linea-tiempo li small { display: block; }
+@media (prefers-color-scheme: dark) { .alerta { background: #2a2418; border-color: #b08d57; color: #f4ede2; } .alerta a { color: #d9b97f; } }

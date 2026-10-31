@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f5c4d">
+<meta name="theme-color" content="#1f3a5f">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://www.googleapis.com; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Liquidaciones</title>
@@ -15,9 +15,10 @@
 </head>
 <body>
 <header>
-  <div style="min-width:0"><h1 id="titulo">Inicio</h1><small id="sync" style="opacity:.8;font-size:11px"></small>
-    <button id="cambiar-rama" class="rama solo-admin" hidden></button></div>
-  <button id="subir-ahora" class="boton chico" style="background:#f5b942;color:#3a2a00;border-color:#f5b942" hidden>Subir a Drive</button>
+  <div class="marca"><img src="logo-quiron.svg" alt="Quirón">
+    <div style="min-width:0"><h1 id="titulo">Inicio</h1><small id="sync" style="opacity:.8;font-size:11px"></small>
+    <button id="cambiar-rama" class="rama solo-admin" hidden></button></div></div>
+  <button id="subir-ahora" class="boton chico" style="background:var(--oro);color:#1d2329;border-color:var(--oro)" hidden>Subir a Drive</button>
   <div class="fila" style="margin:0;flex-wrap:nowrap"><input type="month" id="mes" aria-label="Mes">
   <button id="bloquear" class="boton chico secundario" style="background:transparent;color:inherit;border-color:currentColor" aria-label="Configuración" title="Configuración" hidden>⚙️</button></div>
 </header>
@@ -162,6 +163,7 @@
   <section id="v-cobros" hidden>
     <div class="card"><h2>Cuándo cobro</h2><p class="ayuda">Lo que falta cobrar, por el mes en que debería entrar según el plazo de cada obra social.</p><div id="flujo"></div></div>
     <div class="card"><h2 id="titulo-presentar">Para presentar</h2><div id="a-presentar"></div></div>
+    <div class="card economia"><h2>Antigüedad de lo que falta cobrar</h2><p class="ayuda">Días desde la cirugía o consulta. Lo de más de 90 días conviene reclamarlo.</p><div class="tabla" id="antiguedad"></div></div>
     <div class="card"><h2>Vencidas</h2><p class="ayuda">Ya pasó la fecha estimada de cobro: reclamar o revisar débitos.</p><div id="vencidas"></div></div>
     <div class="card"><h2>Liquidaciones cobradas</h2><p class="ayuda">Historial de lo cobrado, agrupado por liquidación. Tocá una para ver sus pacientes.</p>
       <div class="grid"><label>Año<select id="liq-anio"></select></label>
