@@ -57,6 +57,8 @@ const DOCS_EXTRA = {
   datos: { campo: "doc_datos", lista: "datos_archivos", nombre: "Datos del paciente", archivo: "Datos del paciente" },
 };
 const DOC_TODOS = () => ({ ...DOCS, ...DOCS_EXTRA });
+// Cirugía leída de una foto del parte cuyo parte no está en el Drive (hasta la v59 la rama cirugía no guardaba la foto)
+const sinParte = (p) => (p.especialidad || "cirugia") === "cirugia" && p.origen === "foto_parte" && !p.doc_parte && !(p.parte_archivos || []).length;
 const DOCS = {
   quirurgica: { campo: "doc_foja", lista: "foja_archivos", nombre: "Foja quirúrgica", corto: "foja quirúrgica", archivo: "Foja quirúrgica", ruta: RUTA_DOCS },
   anestesia: { campo: "doc_foja_anestesia", lista: "foja_anestesia_archivos", nombre: "Foja de anestesia", corto: "foja de anestesia", archivo: "Foja de anestesia", ruta: RUTA_DOCS },
@@ -246,6 +248,7 @@ function verParaHacer() {
     ["", "-", "Obra social sin reconocer", lista.filter((p) => !p.obra_social && p.tipo !== "consulta")],
     ["debitada", "", "Debitadas sin motivo anotado", lista.filter((p) => p.estado === "debitada" && !p.motivo_debito)],
     ["revisar", "", "Cobros para revisar (no figuran en su liquidación)", lista.filter((p) => p.revisar_cobro)],
+    ...(esAnestesia() ? [] : [["sin_parte", "", "Parte sin guardar en el Drive (adjuntá la foto desde la galería)", datos().prestaciones.filter(sinParte)]]),
   ].filter((x) => x[3].length);
   $("#para-hacer-card").hidden = modoRegistro();
   $("#para-hacer").innerHTML = !items.length ? `<p class="ayuda">✓ Nada pendiente: no hay cobros vencidos, documentación faltante ni débitos sin motivo.</p>` : `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
@@ -315,7 +318,9 @@ function aplicarModo() {
   const elegido = $("#f-estado").value;
   $("#f-estado").innerHTML = '<option value="">Todos</option><option value="a_cobrar">A cobrar</option><option value="vencida">Vencidas</option>' +
     (anest ? '<option value="falta_doc">Falta documentación</option><option value="para_cargar">Listas para cargar</option>' : "") +
-    Object.entries(ESTADOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+    Object.entries(ESTADOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("") +
+    // (antes se perdían al rearmar la lista: «Para hacer → Cobros para revisar» mostraba todas)
+    '<option value="revisar">Cobros para revisar</option>' + (anest ? "" : '<option value="sin_parte">Parte sin guardar en el Drive</option>');
   $("#f-estado").value = [...$("#f-estado").options].some((o) => o.value === elegido) ? elegido : "";
 }
 
@@ -480,6 +485,7 @@ function camposAnestesia(p) {
 function documentosPaciente(p) {
   const clases = esAnestesia() ? ["datos"] : ["parte", "datos"];
   return `<div class="ancho ayuda" style="margin:8px 0 0"><b>Documentos en el Drive</b>${p.carpeta_docs?.link ? ` · <a href="${esc(p.carpeta_docs.link)}" target="_blank" rel="noopener">📁 Abrir la carpeta del paciente</a>` : ""}</div>` +
+    (sinParte(p) && !(documentosDe(p).parte || []).length ? `<div class="ancho alerta" style="margin:4px 0">Se cargó con una versión que todavía no guardaba la foto del parte: adjuntala desde la galería («Adjuntar») y queda en la carpeta del paciente.</div>` : "") +
     clases.map((c) => documento(p, c, DOCS_EXTRA[c], null)).join("");
 }
 
@@ -1278,6 +1284,7 @@ function verPrestaciones() {
   if (est === "vencida") lista = lista.filter((p) => Motor.vencida(p, h));
   else if (est === "a_cobrar") lista = lista.filter((p) => ["pendiente", "presentada"].includes(p.estado));
   else if (est === "revisar") lista = lista.filter((p) => p.revisar_cobro);
+  else if (est === "sin_parte") lista = lista.filter(sinParte);
   else if (est === "falta_doc") lista = lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length);
   else if (est === "para_cargar") lista = lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length);
   else if (est) lista = lista.filter((p) => p.estado === est);
@@ -2571,7 +2578,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "69"; // igual que VERSION en sw.js
+const VERSION_APP = "70"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
