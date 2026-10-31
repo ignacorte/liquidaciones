@@ -29,13 +29,16 @@ const Lector = (() => {
       ort.env.wasm.wasmPaths = local("paddle/");
       // Varios hilos si la página está aislada (encabezados COOP/COEP que agrega sw.js); si no, uno
       ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
-      const { PaddleOcrService } = await import(local("paddle/paddleocr.mjs"));
+      // En segundo plano (un worker): leer una foto de pantalla con ~100 renglones lleva de 15 s a más de un minuto en el
+      // celular, y en el hilo de la página la app quedaba congelada todo ese tiempo, como colgada
+      ort.env.wasm.proxy = true;
+      const { PaddleOcrService, normalizeInputToRgb } = await import(local("paddle/paddleocr.mjs"));
       const bajar = (f, tipo) => fetch(local("paddle/" + f)).then((r) => {
         if (!r.ok) throw new Error("Sin conexión para descargar el lector (solo hace falta la primera vez).");
         return tipo === "texto" ? r.text() : r.arrayBuffer();
       });
       const [det, rec, dic] = await Promise.all([bajar("det.onnx"), bajar("rec_latin.onnx"), bajar("dict_latin.txt", "texto")]);
-      return PaddleOcrService.createInstance({
+      const crear = () => PaddleOcrService.createInstance({
         ort, modelPreset: "PP-OCRv5_mobile",
         // Como RapidOCR/PaddleOCR: el lado corto a 736 px como mínimo, sin achicar (por defecto la librería reduce a 960 px
         // de lado largo y se pierden los renglones chicos de una hoja entera)
@@ -43,6 +46,10 @@ const Lector = (() => {
         // 504 clases = «blank» (CTC) + 502 caracteres del diccionario + espacio
         recognition: { modelBuffer: rec, charactersDictionary: ["blank", ...dic.replace(/\r/g, "").split("\n").filter((c, i, a) => c !== "" || i < a.length - 1), " "] },
       });
+      // Si el navegador no deja usar el worker, en la página (como antes)
+      const ocr = await crear().catch(() => { ort.env.wasm.proxy = false; return crear(); });
+      ocr.rgb = normalizeInputToRgb;
+      return ocr;
     })().catch((e) => { motor = null; throw e; });
     return motor;
   }
@@ -84,20 +91,24 @@ const Lector = (() => {
   async function leerImagen(lienzo, avance) {
     avance && avance("Preparando el lector…");
     const ocr = await paddle();
-    // Orientación con una copia chica (rápido): si la mayoría de los renglones salen verticales, la hoja está de costado
+    // Orientación con una copia chica: solo se buscan los renglones (1 s), sin leerlos (leerlos llevaba tanto como la
+    // lectura entera); si la mayoría salen verticales, la hoja está de costado y ahí sí se compara cómo se lee mejor
     const chica = achicar(lienzo, 1000);
-    const prueba = await ocr.recognize(pixeles(chica));
-    const verticales = prueba.filter((r) => r.box.height > r.box.width * 1.5).length;
+    const cajas = await ocr.detectionService.run(ocr.rgb(pixeles(chica)), ocr.resolveDetectionRuntimeOptions());
+    const verticales = cajas.filter((r) => r.height > r.width * 1.5).length;
     let giro = 0;
-    if (prueba.length >= 4 && verticales > prueba.length * 0.5) {
-      let mejor = confianza(prueba);
+    if (cajas.length >= 4 && verticales > cajas.length * 0.5) {
+      avance && avance("Viendo si la hoja está de costado…");
+      let mejor = confianza(await ocr.recognize(pixeles(chica)));
       for (const g of [90, -90]) {
         const c = confianza(await ocr.recognize(pixeles(girar(chica, g))));
         if (c > mejor) { mejor = c; giro = g; }
       }
     }
-    avance && avance(giro ? "La hoja estaba de costado: leyendo…" : "Leyendo…");
-    return renglones(await ocr.recognize(pixeles(giro ? girar(lienzo, giro) : lienzo)));
+    const leyendo = giro ? "La hoja estaba de costado: leyendo" : "Leyendo";
+    avance && avance(leyendo + "…");
+    const onProgress = (e) => e.type === "rec" && e.stage === "item" && avance && avance(`${leyendo}: renglón ${e.progress.current} de ${e.progress.total}…`);
+    return renglones(await ocr.recognize(pixeles(giro ? girar(lienzo, giro) : lienzo), { onProgress }));
   }
 
   // Foto del celular (12 MP, a veces HEIC) o captura chica: girada según EXIF y a un tamaño manejable. Así el reconocimiento
