@@ -214,11 +214,12 @@ function verInicio() {
   if (modoRegistro()) return verInicioRegistro();
   const inflacion = +ajuste("inflacion_mensual", 0);
   const r = Motor.resumen(datos(), mes(), hoy(), inflacion), t = r.totales;
-  const kpi = (titulo, valor, clase = "") => `<div class="kpi ${clase}"><small>${titulo}</small><b>${valor}</b></div>`;
+  const kpi = (titulo, valor, clase = "", detalle = "") => `<div class="kpi ${clase}"><small>${titulo}</small><b>${valor}</b>${detalle ? `<small>${detalle}</small>` : ""}</div>`;
+  // Seis recuadros (antes nueve): las cantidades en uno; la pérdida por demora solo si se cargó la inflación
   $("#kpis").innerHTML = kpi("Facturado estimado", pesos(t.estimado)) + kpi("Cobrado (de lo hecho en el mes)", pesos(t.cobrado), "verde") +
     kpi("Falta cobrar", pesos(t.pendiente)) + kpi("Vencido", pesos(t.vencido), t.vencido ? "rojo" : "") +
-    kpi(esAnestesia() ? "Consultas preanestésicas" : "Consultas", t.consultas) + kpi(esAnestesia() ? "Anestesiologías" : "Cirugías", t.cirugias) + kpi("Prestaciones", t.n) +
-    kpi(`Pérdida por demora (${inflacion} %/mes)`, pesos(t.perdida_inflacion), t.perdida_inflacion ? "rojo" : "");
+    kpi("Prestaciones", t.n, "", `${t.cirugias} ${esAnestesia() ? "anestesias" : "cirugías"} · ${t.consultas} ${esAnestesia() ? "preanestésicas" : "consultas"}`) +
+    (inflacion > 0 ? kpi(`Pérdida por demora (${inflacion} %/mes)`, pesos(t.perdida_inflacion), t.perdida_inflacion ? "rojo" : "") : "");
   const debitado = datos().prestaciones.filter((p) => p.fecha.slice(0, 7) === mes() && p.estado === "debitada")
     .reduce((s, p) => s + Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)), 0);
   $("#kpis").innerHTML += kpi("Debitado", pesos(debitado), debitado ? "rojo" : "");
@@ -236,6 +237,12 @@ function verInicio() {
       <td class="n">${p.n}</td>${celdaPesos(p.estimado)}${celdaPesos(p.cobrado)}</tr>`).join("") + "</table>" : "";
 }
 
+// Filtros de Prestaciones que no son los de siempre (para decir por qué la lista está vacía)
+function filtrosPuestos() {
+  const texto = (id) => $(id).selectedOptions[0]?.textContent || "";
+  return [$("#f-tipo").value && texto("#f-tipo"), $("#f-os").value && texto("#f-os"), $("#f-estado").value && texto("#f-estado"),
+    $("#f-q").value && `«${$("#f-q").value}»`].filter(Boolean);
+}
 // Alertas: lo que conviene resolver (de todos los meses). Tocar una lleva a la lista ya filtrada.
 function verParaHacer() {
   const lista = datos().prestaciones.filter((p) => !p.solo_registro), h = hoy();
@@ -252,7 +259,7 @@ function verParaHacer() {
   ].filter((x) => x[3].length);
   $("#para-hacer-card").hidden = modoRegistro();
   $("#para-hacer").innerHTML = !items.length ? `<p class="ayuda">✓ Nada pendiente: no hay cobros vencidos, documentación faltante ni débitos sin motivo.</p>` : `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
-    <td class="n economia">${pesos(l.reduce((s, p) => s + (p.valor_estimado || 0), 0))}</td></tr>`).join("")}</table>`;
+    <td class="n economia">${pesos(l.reduce((s, p) => s + (["pendiente", "presentada"].includes(p.estado) ? p.valor_estimado || 0 : 0), 0))}</td></tr>`).join("")}</table>`;
   $$("#para-hacer tr[data-hacer]").forEach((tr) => tr.addEventListener("click", () => {
     const [est, os] = items[+tr.dataset.hacer];
     $("#f-estado").value = est; $("#f-os").value = os; $("#f-tipo").value = ""; $("#f-q").value = ""; $("#f-periodo").value = "todos";
@@ -268,7 +275,7 @@ function verEvolucion() {
     meses.map((k) => {
       const t = Motor.resumen(d, k, hoy(), 0).totales;
       const deb = d.prestaciones.filter((p) => p.fecha.slice(0, 7) === k && p.estado === "debitada").reduce((s, p) => s + Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)), 0);
-      return `<tr><td>${nombreMes(k)}</td>${celdaPesos(t.estimado)}${celdaPesos(t.cobrado)}${celdaPesos(t.pendiente)}${deb ? celdaPesos(deb) : '<td class="n">—</td>'}</tr>`;
+      return `<tr><td>${MESES[+k.slice(5, 7) - 1].slice(0, 3)} ${k.slice(2, 4)}</td>${celdaPesos(t.estimado)}${celdaPesos(t.cobrado)}${celdaPesos(t.pendiente)}${deb ? celdaPesos(deb) : '<td class="n">—</td>'}</tr>`;
     }).join("") + "</table>";
 }
 
@@ -434,7 +441,7 @@ function camposPrestacion(p, completo) {
     ${quir && esAnestesia() ? "" : `<label>Hora<input type="time" name="hora" value="${esc(p.hora)}"></label>`}
     ${quir ? "" : `<label>DNI<input name="dni" value="${esc(p.dni)}" inputmode="numeric"></label>`}
     ${quir && esAnestesia() ? "" : `<label>Institución<input name="institucion" value="${esc(p.institucion)}"></label>`}
-    ${p.solo_registro || p.origen === "planilla" ? `<label class="check economia ancho"><input type="checkbox" name="solo_registro" ${p.solo_registro ? "checked" : ""}> Solo registro (planilla vieja: sin valor ni cobro esperado)</label>` : ""}
+    ${p.solo_registro || p.origen === "planilla" ? `<label class="check economia ancho"><input type="checkbox" name="solo_registro" ${p.solo_registro ? "checked" : ""}> Solo registro (ya liquidada antes: sin valor ni cobro esperado)</label>` : ""}
     <label class="economia">Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
     <label class="economia">Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
     <label class="economia">${esAnestesia() ? "Cargada el" : "Presentada el"}${campoFecha("fecha_presentacion", p.estado === "pendiente" ? "" : p.fecha_presentacion)}</label>
@@ -854,7 +861,9 @@ async function leerPlanilla(archivos) {
           rol: /ayud/.test(Motor.plano(v("rol"))) ? "ayudante" : "cirujano", pct: 100, notas: v("notas"), origen: "planilla", incluir: true,
           complejidad: parseInt(v("complejidad"), 10) || null, nro_circuito: v("nro_circuito") || null }; // De la planilla se toman solo el paciente, sus datos y la cirugía: los montos y cobros no (regla del usuario)
         f.fecha_leida = col.fecha != null && !!fechaPlanilla(fila[col.fecha]);
-        f.solo_registro = true; // planilla: solo registro (sin valor ni cobro); se puede destildar en la ficha
+        // Planilla: lo viejo (hasta el fin del régimen anterior, ya liquidado) queda como solo registro, sin valor ni cobro; lo de
+        // ahora (cirugías de 2026 todavía sin liquidar) se estima como cualquier cirugía. Se puede cambiar en la ficha
+        f.solo_registro = planillaVieja(f.fecha);
         if (!f.fecha_leida) f.incluir = false; // sin fecha legible no se guarda con la de hoy: se corrige en la revisión
         filas.push(f);
       }
@@ -1303,7 +1312,12 @@ function verPrestaciones() {
         <div class="cuerpo"><div class="titulo">${esc(p.paciente)}</div>
         <div class="sub">${esAnestesia() && p.nro_ref ? `Ref. ${refTexto(p)} · ` : ""}${p.carpeta_docs?.link ? `<a href="${esc(p.carpeta_docs.link)}" target="_blank" rel="noopener">📁 documentos</a> · ` : ""}${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "¿obra social?")} · ${esc(detalle)}</div></div>
         <div class="monto economia">${pesos(p.monto_cobrado ?? p.valor_estimado)}<br>${chip}</div></div>`;
-    }).join("") : '<p class="ayuda">Nada para mostrar con estos filtros.</p>';
+    }).join("") : `<p class="ayuda">Nada para mostrar${filtrosPuestos().length ? ` con: <b>${filtrosPuestos().map(esc).join(" · ")}</b>` : " con estos filtros"}.</p>
+      ${filtrosPuestos().length ? '<button class="boton chico" data-quitar-filtros>Quitar filtros (ver todo el mes)</button>' : ""}`;
+  $("[data-quitar-filtros]")?.addEventListener("click", () => {
+    $("#f-estado").value = ""; $("#f-os").value = ""; $("#f-tipo").value = ""; $("#f-q").value = ""; $("#f-periodo").value = "mes";
+    $("#f-periodo").dispatchEvent(new Event("change"));
+  });
 }
 
 function actualizarSeleccion() {
@@ -1360,9 +1374,10 @@ const cobradas = () => datos().prestaciones.filter((p) => ["cobrada", "debitada"
 function verHistorialLiquidaciones() {
   const todas = cobradas();
   const anios = [...new Set(todas.map((p) => p.fecha_cobro.slice(0, 4)))].sort().reverse();
-  const sel = $("#liq-anio"), antes = sel.value;
+  // La primera vez, el año más reciente (antes quedaba «Todos»: las 55 liquidaciones en una sola página)
+  const sel = $("#liq-anio"), antes = sel.options.length ? sel.value : null;
   sel.innerHTML = anios.map((a) => `<option>${a}</option>`).join("") + (anios.length > 1 ? '<option value="">Todos</option>' : "");
-  if (antes !== undefined && [...sel.options].some((o) => o.value === antes)) sel.value = antes;
+  if (antes !== null && [...sel.options].some((o) => o.value === antes)) sel.value = antes;
   const anio = sel.value, lista = todas.filter((p) => !anio || p.fecha_cobro.startsWith(anio));
   if ($("#liq-vista").value === "mes") return verCobradoPorMes(lista);
   const grupos = {};
@@ -1373,18 +1388,24 @@ function verHistorialLiquidaciones() {
   }
   const filas = Object.values(grupos).sort((a, b) => b.fecha.localeCompare(a.fecha));
   const total = (ps, k) => ps.reduce((s, p) => s + (p[k] || 0), 0);
-  $("#historial-liq").innerHTML = filas.length ? `<p class="ayuda">${lista.length} cobradas · ${pesos(total(lista, "monto_cobrado"))}</p>` + filas.map((g) => {
+  // Las 12 más recientes; el resto con «Ver todas»
+  const visibles = estado.liqTodas ? filas : filas.slice(0, 12);
+  $("#historial-liq").innerHTML = filas.length ? `<p class="ayuda">${filas.length} ${filas.length === 1 ? "liquidación" : "liquidaciones"} · ${lista.length} cobradas · ${pesos(total(lista, "monto_cobrado"))}</p>` + visibles.map((g) => {
     const cob = total(g.ps, "monto_cobrado"), est = total(g.ps, "valor_estimado"), dif = est ? Math.round(100 * (cob - est) / est) : null;
     const posteriores = g.ps.filter((p) => p.fecha > g.fecha).length;
-    return `<details class="liq"><summary><div><b>${g.numero ? "Liquidación " + esc(g.numero) : "Cobradas a mano · " + nombreMes(g.mes)}</b>
+    // «L 0000-00168460» → «Liq. 168460» (el número completo queda al tocar)
+    return `<details class="liq"><summary><div><b title="${esc(g.numero || "")}">${g.numero ? "Liq. " + esc(g.numero.replace(/^L[\s-]*0+[\s-]*0*/, "")) : "Cobradas a mano · " + nombreMes(g.mes)}</b>
         <div class="ayuda" style="margin:0">${g.numero && ajuste("liq_archivos", {})[g.numero] ? `<a href="${esc(ajuste("liq_archivos", {})[g.numero].link)}" target="_blank" rel="noopener">📄 PDF</a> · ` : ""}${fechaCorta(g.fecha)} · ${g.ps.length} ${g.ps.length === 1 ? "prestación" : "prestaciones"}${dif != null ? ` · ${dif >= 0 ? "+" : ""}${dif} % vs. estimado` : ""}</div></div>
         <div class="monto"><b>${pesos(cob)}</b></div></summary>
       ${posteriores ? `<p class="alerta" style="margin:6px 0">⚠️ La fecha de cobro (${fechaCorta(g.fecha)}) es anterior a ${posteriores} de sus prestaciones: seguramente se cargó con otra fecha.
         <button class="boton chico secundario" data-cambiar-cobro="${g.ps.map((p) => p.id).join(",")}">Corregir la fecha de cobro</button></p>` : ""}
       <table><tr><th>Paciente</th><th class="n">Cobrado</th><th class="n">Estimado</th></tr>${g.ps.sort((a, b) => a.fecha.localeCompare(b.fecha)).map((p) => `<tr data-id="${p.id}" style="cursor:pointer">
         <td>${esc(p.paciente)}<div class="ayuda" style="margin:0">${fechaCorta(p.fecha)} · ${esc(p.obra_social || p.obra_social_texto || "")} · ${esc(p.tipo === "consulta" ? "Consulta" : procedimientosDe(p))}${p.estado === "debitada" ? " · <b>debitada</b>" : ""}</div></td>
-        <td class="n">${pesos(p.monto_cobrado)}</td><td class="n">${pesos(p.valor_estimado)}</td></tr>`).join("")}</table></details>`;
-  }).join("") : '<p class="ayuda">Todavía no hay cobros registrados. Cargá el PDF de la liquidación desde «Cargar».</p>';
+        <td class="n">${pesos(p.monto_cobrado)}</td><td class="n">${pesos(p.valor_estimado)}</td></tr>`).join("")}</table>
+      ${g.numero ? `<p class="ayuda" style="margin:4px 0 0">N.º completo: ${esc(g.numero)}</p>` : ""}</details>`;
+  }).join("") + (filas.length > visibles.length ? `<button class="boton chico secundario" data-liq-todas>Ver las ${filas.length} liquidaciones</button>` : "")
+    : '<p class="ayuda">Todavía no hay cobros registrados. Cargá el PDF de la liquidación desde «Cargar».</p>';
+  $("[data-liq-todas]")?.addEventListener("click", () => { estado.liqTodas = true; verHistorialLiquidaciones(); });
 }
 
 // Lo cobrado por mes (por la fecha de cobro): total del mes y, adentro, cada liquidación con sus pacientes
@@ -2271,7 +2292,7 @@ async function arrancar() {
   $("#apellido").addEventListener("change", () => Almacen.ajuste("apellido", $("#apellido").value.trim()));
   $("#recalcular").addEventListener("click", async () => aviso(`${await recalcularPendientes()} prestaciones recalculadas`));
   $("#an-anio").addEventListener("change", verAnalisis);
-  $("#liq-anio").addEventListener("change", verHistorialLiquidaciones);
+  $("#liq-anio").addEventListener("change", () => { estado.liqTodas = false; verHistorialLiquidaciones(); });
   $("#liq-vista").addEventListener("change", verHistorialLiquidaciones);
   $("#historial-liq").addEventListener("click", async (ev) => {
     const b = ev.target.closest("[data-cambiar-cobro]");
@@ -2562,10 +2583,20 @@ async function arreglarLiquidaciones() {
   if (n) { aviso(`Se unieron ${n} cirugías que las liquidaciones habían agregado repetidas (quedan con su procedimiento y el cobro).`); refrescar(); }
 }
 
+const planillaVieja = (fecha) => (fecha || "") <= ajuste("liq_anterior_hasta", "2025-12-31");
+// v71: las cirugías de ahora cargadas desde la planilla (2026) no son «solo registro»: se estiman (antes quedaban en $0)
+async function planillasActuales() {
+  if (ajuste("planilla_actual_v71", false)) return;
+  const actuales = Almacen.doc.prestaciones.filter((p) => !p.borrada && p.origen === "planilla" && p.solo_registro &&
+    ["pendiente", "presentada"].includes(p.estado) && !planillaVieja(p.fecha));
+  if (actuales.length) await Almacen.guardarVarios("prestaciones", actuales.map((p) => Motor.completar(datos(), { ...p, solo_registro: false })));
+  await Almacen.ajuste("planilla_actual_v71", true);
+}
 // v55: lo cargado desde planillas pasa a «solo registro» (no suma a lo que falta cobrar) y se unen las cirugías repetidas
 async function arreglarPlanillas() {
   if (ajuste("arreglo_planillas_v55", false)) return;
-  const viejas = Almacen.doc.prestaciones.filter((p) => !p.borrada && p.origen === "planilla" && ["pendiente", "presentada"].includes(p.estado) && !p.solo_registro);
+  const viejas = Almacen.doc.prestaciones.filter((p) => !p.borrada && p.origen === "planilla" && ["pendiente", "presentada"].includes(p.estado) && !p.solo_registro &&
+    planillaVieja(p.fecha));
   if (viejas.length) await Almacen.guardarVarios("prestaciones", viejas.map((p) => ({ ...p, solo_registro: true, valor_estimado: null,
     valor_origen: "Solo registro (cargada desde una planilla): sin valor ni cobro esperado", fecha_presentacion: null, fecha_cobro_estimada: null })));
   const n = await unirRepetidas({ paso1: true });
@@ -2578,7 +2609,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "70"; // igual que VERSION en sw.js
+const VERSION_APP = "71"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2621,7 +2652,7 @@ function entrar() {
     // v69 (regla del usuario): tus cirugías por módulo = ~70 % del módulo para vos (un 0 o vacío guardado antes pasa a 70)
     .then(() => (ajuste("modulo_70_v69", false) ? null : (Number(ajuste("pct_modulo_general", 0)) > 0 ? null : Almacen.ajuste("pct_modulo_general", 70))
       .then(() => Almacen.ajuste("modulo_70_v69", true))));
-  const arreglos = () => liq70().then(() => ajuste("recalculo_v69", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v69", true)))
+  const arreglos = () => liq70().then(planillasActuales).then(() => ajuste("recalculo_v69", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v69", true)))
     .then(arreglarPlanillas).then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(nombrarCirugiasDeLiquidacion).then(ordenarDrive)
     .then(() => refrescar()).catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();

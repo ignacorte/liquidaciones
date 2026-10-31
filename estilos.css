@@ -127,3 +127,4 @@ dialog.camara video.flash { opacity: .3; }
 details.liq { border-bottom: 1px solid var(--borde); padding: 6px 0; }
 details.liq summary { cursor: pointer; display: flex; justify-content: space-between; gap: 8px; list-style: none; }
 details.liq summary::-webkit-details-marker { display: none; }
+#evolucion td:first-child { white-space: nowrap; }
