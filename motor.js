@@ -263,13 +263,6 @@ const Motor = (() => {
   // «% a facturar» vacío = 100; 0 = no se cobra (p. ej. ayudantía en un módulo)
   const pctDe = (x) => (x === 0 || x === "0" ? 0 : Number(x) || 100);
 
-  // PAMI paga el módulo completo a la institución, sin separar cirujano y ayudantes: la ayudantía no se cobra aparte
-  function ayudantiaEnModuloPami(os, p, codigoOS) {
-    if (os !== "PAMI" || (p.rol || "cirujano") !== "ayudante" || p.valor_manual) return null;
-    const vp = codigoOS ? valorPami(codigoOS, p.fecha) : null;
-    return vp && vp.modulo ? vp : null;
-  }
-
   // Parte del módulo para el cirujano: la cargada en la cirugía, la de la obra social o la general (Valores → Referencias)
   function pctModulo(datos, p, o, general) {
     if (p.pct_modulo > 0) return { pct: Number(p.pct_modulo), nota: " (cargado en la cirugía)" };
@@ -473,10 +466,14 @@ const Motor = (() => {
       if (!out.codigo_os && os === "PAMI" && out.sugerencias.pami.length) out.codigo_os = out.sugerencias.pami[0].code;
     }
     [out.valor_estimado, out.valor_origen] = valor(datos, p, os, out.codigo_aac, out.codigo_os);
-    const sinCobro = !p.valor_manual && (pctDe(p.pct) === 0 || ayudantiaEnModuloPami(os, p, out.codigo_os));
-    if (sinCobro && pctDe(p.pct) !== 0) {
-      const vp = ayudantiaEnModuloPami(os, p, out.codigo_os);
-      [out.valor_estimado, out.valor_origen] = [0, `Ayudantía en módulo PAMI ${vp.codigo}: PAMI paga el módulo completo (${pesos(vp.monto)}) a la institución, sin separar ayudantes; no se cobra aparte`];
+    // Ayudantía (regla del usuario): se cobra en forma particular al cirujano, un monto fijo por ayudantía (Valores → Referencias),
+    // con cualquier obra social; los otros procedimientos del mismo acto no suman
+    const ayudantia = !p.valor_manual && (p.rol || "cirujano") === "ayudante" && p.tipo !== "consulta" && pctDe(p.pct) !== 0;
+    const sinCobro = !p.valor_manual && (pctDe(p.pct) === 0 || ayudantia);
+    if (ayudantia) {
+      const m = Number(datos.monto_ayudantia) || 0;
+      [out.valor_estimado, out.valor_origen] = m > 0 ? [m, `Ayudantía: se cobra en forma particular al cirujano (${pesos(m)} por ayudantía, Valores → Referencias)`]
+        : [null, "Ayudantía: cargá lo que cobrás por ayudantía en Valores → Referencias («Cobro por ayudantía»)"];
     }
     // Otros procedimientos del mismo acto (mismo paciente y día): cada uno con su código, al % de operación múltiple (AAC)
     if (p.extras?.length && p.tipo !== "consulta") {

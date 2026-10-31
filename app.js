@@ -127,7 +127,7 @@ function datos(rama) {
   const tapados = new Set(valoresPropios.map(clave));
   const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
-  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 0)) || 0,
+  return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 70)) || 0, monto_ayudantia: Number(ajuste("monto_ayudantia", 0)) || 0,
            liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: Number(ajuste("liq_anterior_pct", 70)) || 0 }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
@@ -1496,7 +1496,8 @@ function verValores() {
   $("#uq-vigencia").value = (uq[0]?.vigencia || "").slice(0, 7);
   $("#inflacion").value = ajuste("inflacion_mensual", "");
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
-  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 0) || "";
+  $("#pct-modulo-general").value = ajuste("pct_modulo_general", 70) || "";
+  $("#monto-ayudantia").value = ajuste("monto_ayudantia", 0) || "";
   $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 70);
   $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
@@ -2251,6 +2252,7 @@ async function arrancar() {
     await Almacen.ajuste("inflacion_mensual", $("#inflacion").value || "0");
     if (!esAnestesia()) {
       await Almacen.ajuste("pct_modulo_general", Number($("#pct-modulo-general").value) || 0); // vacío = no se usa
+      await Almacen.ajuste("monto_ayudantia", Number($("#monto-ayudantia").value) || 0);
       if ($("#liq-anterior-pct").value !== "") await Almacen.ajuste("liq_anterior_pct", Number($("#liq-anterior-pct").value));
       if ($("#liq-anterior-hasta").value) await Almacen.ajuste("liq_anterior_hasta", $("#liq-anterior-hasta").value);
     }
@@ -2569,7 +2571,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "68"; // igual que VERSION en sw.js
+const VERSION_APP = "69"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2608,8 +2610,11 @@ function entrar() {
   // no los aplica sobre lo viejo y pisa lo hecho en otro
   // v66: lo cobrado hasta 2025 era ~65–70 % de tu parte, no 30 % (dividir por 0,30 daba más que el módulo entero)
   const liq70 = () => (ajuste("liq_anterior_70_v66", false) ? Promise.resolve() : (Number(ajuste("liq_anterior_pct", 70)) === 30 ? Almacen.ajuste("liq_anterior_pct", 70) : Promise.resolve())
-    .then(() => Almacen.ajuste("liq_anterior_70_v66", true)));
-  const arreglos = () => liq70().then(() => ajuste("recalculo_v66", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v66", true)))
+    .then(() => Almacen.ajuste("liq_anterior_70_v66", true)))
+    // v69 (regla del usuario): tus cirugías por módulo = ~70 % del módulo para vos (un 0 o vacío guardado antes pasa a 70)
+    .then(() => (ajuste("modulo_70_v69", false) ? null : (Number(ajuste("pct_modulo_general", 0)) > 0 ? null : Almacen.ajuste("pct_modulo_general", 70))
+      .then(() => Almacen.ajuste("modulo_70_v69", true))));
+  const arreglos = () => liq70().then(() => ajuste("recalculo_v69", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v69", true)))
     .then(arreglarPlanillas).then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(nombrarCirugiasDeLiquidacion).then(ordenarDrive)
     .then(() => refrescar()).catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();
