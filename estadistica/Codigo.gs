@@ -1,4 +1,5 @@
-// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 4 (hojas con títulos en castellano).
+// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 5 (hojas con títulos en castellano;
+// códigos y meses siempre como texto).
 // 1) Base económica ANÓNIMA (esta planilla). 2) Cuentas y uso (OTRA planilla, «Liquidaciones – Cuentas y uso», que se crea sola la
 // primera vez): correo, especialidad, versión, último uso y cantidades, sin datos de pacientes ni montos. Están separadas para que no
 // se pueda cruzar quién aportó cada fila anónima (en la base anónima la llegada se guarda solo como mes).
@@ -59,6 +60,8 @@ function hoja(t) {
         const tipo = tipoDe(t, cols[k]);
         // Meses que la planilla había convertido en fecha completa → «AAAA-MM»
         if (v instanceof Date && (tipo === "m" || cols[k] === "recibido")) return Utilities.formatDate(v, "GMT-3", "yyyy-MM");
+        // Códigos que la planilla había convertido en fecha («08.02.17» → 8/02/2017): de vuelta al código
+        if (v instanceof Date && tipo === "t") return Utilities.formatDate(v, "GMT-3", "dd.MM.yy");
         if (tipo === "b" && (v === 1 || v === 0 || v === "1" || v === "0" || v === true || v === false)) return Number(v) ? "sí" : "no";
         return v;
       });
@@ -74,11 +77,12 @@ function hoja(t) {
   }
   return h;
 }
-// Meses como texto (si no, la planilla los convierte en una fecha completa), pesos con separador de miles
-function formatos(t, h) {
-  const cols = columnas(t), filas = h.getMaxRows();
+// Meses y códigos como texto (si no, la planilla convierte «2026-10» y «08.02.17» en fechas y le saca el 0 a «080203»), pesos
+// con separador de miles. Sobre toda la hoja, o solo sobre las filas que se van a escribir (desde, cuantas)
+function formatos(t, h, desde = 1, cuantas = h.getMaxRows()) {
+  const cols = columnas(t);
   cols.forEach((k, i) => {
-    const tipo = tipoDe(t, k), r = h.getRange(1, i + 1, filas, 1);
+    const tipo = tipoDe(t, k), r = h.getRange(desde, i + 1, cuantas, 1);
     if (tipo === "m" || k === "recibido" || k === "id" || k === "aportante" || k === "version" || tipo === "t") r.setNumberFormat("@");
     else if (tipo === "$") r.setNumberFormat("$ #,##0");
   });
@@ -190,10 +194,15 @@ function doPost(e) {
       const x = limpiar(t, f, aportante, d.version);
       if (!x) continue;
       const valores = cols.map((k) => x[k]);
-      if (filaDe[x.id]) { h.getRange(filaDe[x.id], 1, 1, cols.length).setValues([valores]); actualizadas++; }
+      if (filaDe[x.id]) { formatos(t, h, filaDe[x.id], 1); h.getRange(filaDe[x.id], 1, 1, cols.length).setValues([valores]); actualizadas++; }
       else nuevas.push(valores);
     }
-    if (nuevas.length) h.getRange(h.getLastRow() + 1, 1, nuevas.length, cols.length).setValues(nuevas);
+    if (nuevas.length) {
+      const desde = h.getLastRow() + 1;
+      if (desde + nuevas.length - 1 > h.getMaxRows()) h.insertRowsAfter(h.getMaxRows(), desde + nuevas.length - 1 - h.getMaxRows());
+      formatos(t, h, desde, nuevas.length); // el formato antes de escribir: así no se convierte nada
+      h.getRange(desde, 1, nuevas.length, cols.length).setValues(nuevas);
+    }
     return salida({ ok: true, tabla: t, nuevas: nuevas.length, actualizadas: actualizadas });
   } catch (err) {
     return salida({ ok: false, error: String(err) });
@@ -223,5 +232,5 @@ function doGet() {
     }
     cuentasUrl = libro.getUrl();
   }
-  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 4, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
+  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 5, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
 }
