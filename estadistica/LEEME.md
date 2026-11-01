@@ -21,7 +21,8 @@ descarta cualquier campo que no tenga la forma esperada.
 6. Copiá la **URL de la aplicación web** (termina en `/exec`). Al abrirla en el navegador tiene que responder `{"ok":true,…}`.
 7. Esa URL va en `movil/config.js` → `ESTADISTICA_URL`, y se publica una versión nueva de la app.
 
-Los datos quedan en la hoja «Cobros» de esa planilla, una fila por línea cobrada. Si la misma línea llega de nuevo, se actualiza y no se duplica.
+Los datos quedan en cuatro hojas de esa planilla: «Cirugía · Facturación», «Cirugía · Liquidaciones», «Anestesia · Facturación» y
+«Anestesia · Liquidaciones». Si la misma fila llega de nuevo, se actualiza y no se duplica. (La hoja «Cobros» es de la primera versión: se puede borrar.)
 Si un profesional toca «Dejar de compartir y borrar lo aportado», se borran todas sus filas.
 
 ## Cuentas y uso (versión 3 del script)
