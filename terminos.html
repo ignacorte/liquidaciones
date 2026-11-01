@@ -11,7 +11,7 @@
 <main style="max-width:760px">
 <div class="card">
 <h1 style="font-family:Lora, Georgia, serif;color:var(--acento)">Términos y condiciones de «Liquidaciones»</h1>
-<p class="ayuda">Versión 1 · vigente desde el 1 de noviembre de 2026.</p>
+<p class="ayuda">Versión 2 · vigente desde el 1 de noviembre de 2026 (la versión 1 solo incluía lo cobrado).</p>
 
 <h2>1. Qué es</h2>
 <p>«Liquidaciones» es una aplicación gratuita, en etapa de prueba, para que profesionales de la salud registren sus prestaciones,
@@ -34,11 +34,17 @@ mantener en secreto su PIN y el acceso a su celular.</p>
 envía al responsable <b>datos económicos sin identificación de pacientes</b>, para armar una base común que permita conocer cuánto y cuándo
 paga cada obra social y mejorar la aplicación:</p>
 <ul>
-  <li><b>Se envía:</b> especialidad, tipo de prestación, rol (cirujano/ayudante), obra social, código de la práctica, vía, si fue urgencia,
-    <b>mes</b> de la prestación y del cobro, días hasta el cobro, monto cobrado o debitado, monto estimado por la app, y un número de
-    aportante al azar (no está ligado al nombre ni al correo).</li>
-  <li><b>Nunca se envía:</b> nombre, DNI, n.º de afiliado ni diagnóstico del paciente; fechas exactas; documentos ni fotos; notas;
-    institución; nombre ni correo del profesional.</li>
+  <li><b>Se envía, en tablas separadas para cirugía y para anestesiología:</b>
+    <ul>
+      <li><b>Facturación</b> (cada prestación, aunque todavía no esté cobrada): obra social, tipo de prestación, código de la práctica (cirugía) o
+        complejidad y recargos (anestesia), rol, vía, urgencia, % de operación múltiple, <b>mes</b> de la prestación y de la presentación, estado,
+        monto estimado por la app y de qué tipo de referencia sale, monto cobrado o debitado y días hasta el cobro.</li>
+      <li><b>Liquidaciones</b> (cada línea cobrada): obra social, código o complejidad, <b>mes</b> de la prestación y del cobro, días hasta el cobro,
+        monto y si fue un débito.</li>
+      <li>Un número de aportante al azar (no está ligado al nombre ni al correo) y la versión de la app.</li>
+    </ul></li>
+  <li><b>Nunca se envía:</b> nombre, DNI, n.º de afiliado, edad exacta ni diagnóstico del paciente; fechas exactas; documentos ni fotos; notas;
+    institución; n.º de circuito o de referencia; nombre ni correo del profesional.</li>
   <li>Los resultados que se muestren a otros usuarios serán siempre agregados (promedios o rangos) y solo cuando haya suficientes casos y
     profesionales como para que nadie pueda deducir de quién es un dato.</li>
   <li>El profesional puede, en cualquier momento, dejar de compartir y <b>pedir el borrado</b> de todo lo aportado (botón en Valores → Mi cuenta).</li>

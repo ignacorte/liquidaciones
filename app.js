@@ -384,13 +384,14 @@ async function esAdmin() {
 // ---------- Términos y condiciones y base económica anónima ----------
 // Al entrar se aceptan los términos (obligatorio, una vez por versión); aportar datos económicos anónimos es una casilla aparte,
 // destildada (consentimiento libre y expreso, Ley 25.326). Lo aceptado viaja con los ajustes (vale en todos los dispositivos).
-const TERMINOS_VERSION = 1;
+// v2: además de lo cobrado se aporta lo facturado (cada prestación, aunque no esté cobrada), separado cirugía / anestesia
+const TERMINOS_VERSION = 2;
 function pedirTerminos() {
   if ((ajuste("terminos", null)?.version || 0) >= TERMINOS_VERSION) return Promise.resolve();
   const dlg = $("#dlg-terminos");
   if (dlg.open) return estado.terminos;
   $("#acepto-terminos").checked = false;
-  $("#acepto-compartir").checked = !!ajuste("compartir_economicos", false);
+  $("#acepto-compartir").checked = false; // cada versión de los términos se vuelve a elegir (lo que se comparte puede haber cambiado)
   $("[data-aceptar-terminos]").disabled = true;
   estado.terminos = new Promise((listo) => {
     $("#acepto-terminos").onchange = () => { $("[data-aceptar-terminos]").disabled = !$("#acepto-terminos").checked; };
@@ -409,46 +410,79 @@ function pedirTerminos() {
 
 const sha256 = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, "0")).join("");
 const nuevoAportante = () => (crypto.randomUUID ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join(""));
-// Una fila por línea cobrada, SIN datos del paciente (ni nombre, DNI, afiliado, diagnóstico, fechas exactas, notas, institución)
-async function filasEconomicas(uid) {
-  const filas = [];
+// De dónde sale el estimado, como categoría (nunca el texto, que puede tener nombres de listas propias)
+function origenEstimado(t) {
+  const x = Motor.plano(t || "");
+  return /^cargado a mano/.test(x) ? "manual" : /^ayudantia/.test(x) ? "ayudantia" : /^modulo/.test(x) ? "modulo" : /^ultimo cobro/.test(x) ? "ultimo_cobro"
+    : /^referencia aac/.test(x) ? "referencia_aac" : /^pami \d/.test(x) ? "nomenclador_pami" : /^sin |^solo registro/.test(x) ? "sin_valor"
+    : /complejidad|arancel/.test(x) ? "arancel_anestesia" : x ? "lista_obra_social" : "";
+}
+// Las cuatro tablas de la base común, SIN datos del paciente (ni nombre, DNI, afiliado, diagnóstico, fechas exactas, notas, institución):
+// facturación = cada prestación (aunque no esté cobrada); liquidaciones = cada línea liquidada. Cirugía y anestesia por separado.
+async function tablasEconomicas(uid) {
+  const t = { cirugia_facturacion: [], cirugia_liquidaciones: [], anestesia_facturacion: [], anestesia_liquidaciones: [] };
+  const fecha = (f) => /^\d{4}-\d{2}-\d{2}$/.test(f || "");
+  const retencion = Number(ajuste("pct_asociacion", 0)) || 0;
   for (const p of Almacen.doc.prestaciones) {
-    if (p.borrada || !["cobrada", "debitada"].includes(p.estado) || p.monto_cobrado == null || !/^\d{4}-\d{2}-\d{2}$/.test(p.fecha_cobro || "")) continue;
+    if (p.borrada || p.solo_registro && !["cobrada", "debitada"].includes(p.estado) || !fecha(p.fecha)) continue;
+    const anest = p.especialidad === "anestesia", rama = anest ? "anestesia" : "cirugia";
+    const id = async (tabla, i = 0) => (await sha256(`${uid}:${tabla}:${p.id}:${i}`)).slice(0, 32);
+    const cobrada = ["cobrada", "debitada"].includes(p.estado) && p.monto_cobrado != null && fecha(p.fecha_cobro);
+    const dias = cobrada ? Math.round((Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5) : "";
+    const debitado = p.estado === "debitada" ? Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)) : "";
+    const os = p.obra_social || "SIN RECONOCER", mes = p.fecha.slice(0, 7);
+    const comun = anest
+      ? { obra_social: os, tipo: p.tipo, complejidad: p.tipo === "consulta" ? "" : Motor.complejidadEfectiva(p) || "",
+          recargos: p.tipo === "consulta" ? "" : Motor.recargosAnestesia(p).map(([n]) => Motor.plano(n).replace(/\s+/g, "_")).join("+") }
+      : { obra_social: os, tipo: p.tipo, rol: p.rol || "cirujano", codigo_os: p.codigo_os || "", codigo_aac: p.codigo_aac || "", abordaje: p.abordaje || "",
+          urgencia: !!p.urgencia, pct: p.pct ?? 100 };
+    t[rama + "_facturacion"].push({ id: await id("facturacion"), ...comun, mes_prestacion: mes, estado: p.estado, extras: (p.extras || []).length,
+      ...(anest ? { edad_grupo: p.edad_grupo || "", obesidad: !!p.obesidad, suspendida: !!p.suspendida, bruto: p.valor_bruto ?? "", neto: p.valor_estimado ?? "",
+                    retencion_pct: retencion, mes_carga: fecha(p.fecha_presentacion) && p.estado !== "pendiente" ? p.fecha_presentacion.slice(0, 7) : "" }
+               : { estimado: p.valor_estimado ?? "", origen_estimado: origenEstimado(p.valor_origen),
+                   mes_presentacion: fecha(p.fecha_presentacion) && p.estado !== "pendiente" ? p.fecha_presentacion.slice(0, 7) : "" }),
+      cobrado: cobrada ? p.monto_cobrado : "", debitado, dias_cobro: dias });
+    if (!cobrada) continue;
     const lineas = (p.cobro_lineas || []).length ? p.cobro_lineas.map((l) => ({ codigo_os: l.codigo, monto: l.monto })) : [{ codigo_os: p.codigo_os, monto: p.monto_cobrado }];
-    const una = lineas.length === 1;
     for (const [i, l] of lineas.entries()) {
-      filas.push({ id: (await sha256(`${uid}:${p.id}:${i}`)).slice(0, 32), especialidad: p.especialidad || "cirugia", tipo: p.tipo, rol: p.rol || "cirujano",
-        obra_social: p.obra_social || "SIN RECONOCER", codigo_os: l.codigo_os || "", codigo_aac: una ? p.codigo_aac || "" : "", complejidad: p.complejidad || "",
-        abordaje: p.abordaje || "", urgencia: !!p.urgencia, mes_prestacion: p.fecha.slice(0, 7), mes_cobro: p.fecha_cobro.slice(0, 7),
-        dias_cobro: Math.round((Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5), monto: l.monto, estimado: una ? p.valor_estimado ?? "" : "",
-        estado: p.estado, pct: p.pct ?? 100, version: VERSION_APP });
+      t[rama + "_liquidaciones"].push({ id: await id("liquidaciones", i), ...comun, ...(anest ? {} : { codigo_os: l.codigo_os || "", codigo_aac: lineas.length === 1 ? p.codigo_aac || "" : "" }),
+        mes_prestacion: mes, mes_cobro: p.fecha_cobro.slice(0, 7), dias_cobro: dias, monto: l.monto, debito: l.monto < 0 || p.estado === "debitada" });
     }
   }
-  return filas;
+  return t;
 }
-// Envía lo nuevo o cambiado (cada fila una vez; si cambia el cobro, se actualiza). Sin conexión o sin receptor, espera a la próxima.
+// Envía lo nuevo o cambiado de cada tabla (cada fila una vez; si cambia, se actualiza). Sin conexión o sin receptor, espera a la
+// próxima. El receptor tiene que devolver la tabla (versión 2 del script): con el de la primera versión no se marca nada como enviado.
 async function aportarEstadistica() {
   const url = CONFIG.ESTADISTICA_URL;
   if (!url || !ajuste("compartir_economicos", false) || estado.aportando || !navigator.onLine) return 0;
   estado.aportando = true;
   let n = 0;
+  const enviados = { ...ajuste("aportes_enviados", {}) };
   try {
+    // Solo con el receptor de tablas separadas (versión 2 del script): al de la primera versión no se le manda nada
+    if (!((await fetch(url).then((x) => x.json())).version >= 2)) return 0;
     let uid = ajuste("aportante", null);
     if (!uid) { uid = nuevoAportante(); await Almacen.ajuste("aportante", uid); }
-    const enviados = { ...ajuste("aportes_enviados", {}) };
-    const firma = async (f) => (await sha256(JSON.stringify([f.monto, f.estado, f.obra_social, f.codigo_os, f.mes_cobro, f.estimado, f.rol, f.pct]))).slice(0, 12);
-    const pendientes = [];
-    for (const f of await filasEconomicas(uid)) { const x = await firma(f); if (enviados[f.id] !== x) pendientes.push([f, x]); }
-    for (let i = 0; i < pendientes.length; i += 200) {
-      const lote = pendientes.slice(i, i + 200);
-      const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "guardar", aportante: uid, filas: lote.map(([f]) => f) }) }).then((x) => x.json());
-      if (!r.ok) break;
-      for (const [f, x] of lote) enviados[f.id] = x;
-      n += lote.length;
+    const firma = async (f) => (await sha256(JSON.stringify(Object.entries(f).filter(([k]) => k !== "id").sort()))).slice(0, 12);
+    for (const [tabla, filas] of Object.entries(await tablasEconomicas(uid))) {
+      const pendientes = [];
+      for (const f of filas) { const x = await firma(f); if (enviados[f.id] !== x) pendientes.push([f, x]); }
+      for (let i = 0; i < pendientes.length; i += 200) {
+        const lote = pendientes.slice(i, i + 200);
+        const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "guardar", tabla, aportante: uid, version: VERSION_APP, filas: lote.map(([f]) => f) }) })
+          .then((x) => x.json());
+        if (!r.ok || r.tabla !== tabla) throw new Error("receptor");
+        for (const [f, x] of lote) enviados[f.id] = x;
+        n += lote.length;
+      }
     }
-    if (n) await Almacen.ajuste("aportes_enviados", enviados);
-  } catch { /* sin conexión o receptor caído: se reintenta la próxima vez */ }
-  finally { estado.aportando = false; }
+  } catch { /* sin conexión o receptor viejo/caído: se reintenta la próxima vez */ }
+  finally {
+    estado.aportando = false;
+  }
+  // Lo que sí llegó queda marcado aunque una tabla posterior falle
+  if (n) await Almacen.ajuste("aportes_enviados", enviados);
   return n;
 }
 // Dejar de compartir y borrar todo lo aportado (el número de aportante se cambia: lo próximo no queda ligado a lo anterior)
@@ -2785,7 +2819,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "75"; // igual que VERSION en sw.js
+const VERSION_APP = "76"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
