@@ -11,7 +11,7 @@
 <main style="padding-bottom:32px">
 <div class="card">
 <h2>Política de privacidad de «Liquidaciones»</h2>
-<p class="ayuda">Vigente desde el 21 de octubre de 2026.</p>
+<p class="ayuda">Vigente desde el 1 de noviembre de 2026 (versión anterior: 21 de octubre de 2026). Ver también los <a href="terminos.html">términos y condiciones</a>.</p>
 
 <p>«Liquidaciones» es una aplicación gratuita para que profesionales de la salud registren sus prestaciones (consultas
 y cirugías), estimen honorarios por obra social y sigan sus cobros.</p>
@@ -21,11 +21,19 @@ y cirugías), estimen honorarios por obra social y sigan sus cobros.</p>
   <li><b>Datos que carga el profesional</b> (nombre, DNI y n.º de afiliado del paciente, obra social, fecha,
     procedimiento, montos): se guardan <b>en el propio dispositivo</b> del profesional y, si lo autoriza, en
     <b>su propia cuenta de Google Drive</b> (carpeta «Liquidaciones»).</li>
-  <li><b>No existe un servidor de la aplicación</b>: los responsables de «Liquidaciones» no reciben, no almacenan y no
-    pueden ver ninguno de esos datos.</li>
-  <li><b>Fotos, capturas y PDF</b>: se leen dentro del dispositivo (reconocimiento de texto local) y no se envían a
-    ningún lado ni se guardan.</li>
+  <li>Los responsables de «Liquidaciones» <b>no reciben, no almacenan y no pueden ver</b> ninguno de los datos de pacientes.</li>
+  <li><b>Fotos, capturas y PDF</b>: se leen dentro del dispositivo (reconocimiento de texto local). El parte, las fojas y los PDF de
+    liquidación se guardan como PDF en el Google Drive del propio profesional, en la carpeta de cada paciente; no se envían a ningún otro lado.</li>
 </ul>
+
+<h2>Datos económicos anónimos (solo si el profesional lo acepta)</h2>
+<p>Con una casilla aparte, que viene destildada y se puede desactivar en Valores → Mi cuenta, el profesional puede aportar datos
+<b>económicos sin identificación de pacientes</b> a una base común: especialidad, tipo de prestación, rol, obra social, código, vía, urgencia,
+<b>mes</b> de la prestación y del cobro, días hasta el cobro, monto cobrado o debitado, monto estimado y un número de aportante al azar.
+<b>Nunca</b> se envían nombre, DNI, afiliado o diagnóstico del paciente, fechas exactas, documentos, notas, institución ni el nombre o correo
+del profesional. Esos datos se guardan en una planilla de Google del responsable, se usan solo para mostrar promedios a los usuarios y mejorar
+la app (con un mínimo de casos para que nadie pueda ser identificado), no se venden ni se ceden, y el profesional puede pedir su borrado
+desde la app en cualquier momento.</p>
 
 <h2>Uso de Google Drive</h2>
 <p>La aplicación solicita únicamente el permiso <code>drive.file</code>: solo puede ver y modificar los archivos que ella
@@ -48,7 +56,8 @@ Protección de Datos Personales y al secreto profesional. Se recomienda registra
 </ul>
 
 <h2>Servicios de terceros</h2>
-<p>La app no se comunica con ningún servicio salvo Google Drive (cuando el profesional lo conecta). Las librerías de
+<p>La app no se comunica con ningún servicio salvo Google Drive (cuando el profesional lo conecta) y, solo si el profesional aceptó
+aportar datos económicos anónimos, el receptor de esa base (Google Apps Script del responsable). Las librerías de
 código abierto que usa (PaddleOCR con ONNX Runtime, PDF.js y SheetJS) están alojadas junto con la app.</p>
 
 <h2>Seguridad en el dispositivo</h2>

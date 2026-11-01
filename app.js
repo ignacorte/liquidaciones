@@ -381,6 +381,89 @@ async function esAdmin() {
   return estado.admin.es;
 }
 
+// ---------- Términos y condiciones y base económica anónima ----------
+// Al entrar se aceptan los términos (obligatorio, una vez por versión); aportar datos económicos anónimos es una casilla aparte,
+// destildada (consentimiento libre y expreso, Ley 25.326). Lo aceptado viaja con los ajustes (vale en todos los dispositivos).
+const TERMINOS_VERSION = 1;
+function pedirTerminos() {
+  if ((ajuste("terminos", null)?.version || 0) >= TERMINOS_VERSION) return Promise.resolve();
+  const dlg = $("#dlg-terminos");
+  if (dlg.open) return estado.terminos;
+  $("#acepto-terminos").checked = false;
+  $("#acepto-compartir").checked = !!ajuste("compartir_economicos", false);
+  $("[data-aceptar-terminos]").disabled = true;
+  estado.terminos = new Promise((listo) => {
+    $("#acepto-terminos").onchange = () => { $("[data-aceptar-terminos]").disabled = !$("#acepto-terminos").checked; };
+    dlg.oncancel = (ev) => ev.preventDefault(); // no se cierra con «atrás» sin elegir
+    $("[data-aceptar-terminos]").onclick = async () => {
+      await Almacen.ajuste("terminos", { version: TERMINOS_VERSION, fecha: new Date().toISOString() });
+      await Almacen.ajuste("compartir_economicos", $("#acepto-compartir").checked);
+      dlg.close(); listo();
+      aportarEstadistica();
+    };
+    $("[data-no-acepto]").onclick = () => { dlg.close(); aviso("Para usar la app hay que aceptar los términos y condiciones."); bloquearYa(); };
+  });
+  dlg.showModal();
+  return estado.terminos;
+}
+
+const sha256 = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+const nuevoAportante = () => (crypto.randomUUID ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join(""));
+// Una fila por línea cobrada, SIN datos del paciente (ni nombre, DNI, afiliado, diagnóstico, fechas exactas, notas, institución)
+async function filasEconomicas(uid) {
+  const filas = [];
+  for (const p of Almacen.doc.prestaciones) {
+    if (p.borrada || !["cobrada", "debitada"].includes(p.estado) || p.monto_cobrado == null || !/^\d{4}-\d{2}-\d{2}$/.test(p.fecha_cobro || "")) continue;
+    const lineas = (p.cobro_lineas || []).length ? p.cobro_lineas.map((l) => ({ codigo_os: l.codigo, monto: l.monto })) : [{ codigo_os: p.codigo_os, monto: p.monto_cobrado }];
+    const una = lineas.length === 1;
+    for (const [i, l] of lineas.entries()) {
+      filas.push({ id: (await sha256(`${uid}:${p.id}:${i}`)).slice(0, 32), especialidad: p.especialidad || "cirugia", tipo: p.tipo, rol: p.rol || "cirujano",
+        obra_social: p.obra_social || "SIN RECONOCER", codigo_os: l.codigo_os || "", codigo_aac: una ? p.codigo_aac || "" : "", complejidad: p.complejidad || "",
+        abordaje: p.abordaje || "", urgencia: !!p.urgencia, mes_prestacion: p.fecha.slice(0, 7), mes_cobro: p.fecha_cobro.slice(0, 7),
+        dias_cobro: Math.round((Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5), monto: l.monto, estimado: una ? p.valor_estimado ?? "" : "",
+        estado: p.estado, pct: p.pct ?? 100, version: VERSION_APP });
+    }
+  }
+  return filas;
+}
+// Envía lo nuevo o cambiado (cada fila una vez; si cambia el cobro, se actualiza). Sin conexión o sin receptor, espera a la próxima.
+async function aportarEstadistica() {
+  const url = CONFIG.ESTADISTICA_URL;
+  if (!url || !ajuste("compartir_economicos", false) || estado.aportando || !navigator.onLine) return 0;
+  estado.aportando = true;
+  let n = 0;
+  try {
+    let uid = ajuste("aportante", null);
+    if (!uid) { uid = nuevoAportante(); await Almacen.ajuste("aportante", uid); }
+    const enviados = { ...ajuste("aportes_enviados", {}) };
+    const firma = async (f) => (await sha256(JSON.stringify([f.monto, f.estado, f.obra_social, f.codigo_os, f.mes_cobro, f.estimado, f.rol, f.pct]))).slice(0, 12);
+    const pendientes = [];
+    for (const f of await filasEconomicas(uid)) { const x = await firma(f); if (enviados[f.id] !== x) pendientes.push([f, x]); }
+    for (let i = 0; i < pendientes.length; i += 200) {
+      const lote = pendientes.slice(i, i + 200);
+      const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "guardar", aportante: uid, filas: lote.map(([f]) => f) }) }).then((x) => x.json());
+      if (!r.ok) break;
+      for (const [f, x] of lote) enviados[f.id] = x;
+      n += lote.length;
+    }
+    if (n) await Almacen.ajuste("aportes_enviados", enviados);
+  } catch { /* sin conexión o receptor caído: se reintenta la próxima vez */ }
+  finally { estado.aportando = false; }
+  return n;
+}
+// Dejar de compartir y borrar todo lo aportado (el número de aportante se cambia: lo próximo no queda ligado a lo anterior)
+async function borrarAportes() {
+  const uid = ajuste("aportante", null), url = CONFIG.ESTADISTICA_URL;
+  if (uid && url && Object.keys(ajuste("aportes_enviados", {})).length) {
+    const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "borrar", aportante: uid }) }).then((x) => x.json())
+      .catch(() => ({ ok: false }));
+    if (!r.ok) throw new Error("No se pudo borrar ahora (¿sin conexión?). Probá de nuevo más tarde.");
+  }
+  await Almacen.ajuste("compartir_economicos", false);
+  await Almacen.ajuste("aportes_enviados", {});
+  await Almacen.ajuste("aportante", nuevoAportante());
+}
+
 // Especialidad: se elige una sola vez, la primera. El administrador después cambia de camino con «⇄» (entra en el último usado)
 async function preguntarEspecialidad() {
   const admin = await esAdmin();
@@ -1607,6 +1690,11 @@ function verValores() {
   $("#pct-asociacion").value = ajuste("pct_asociacion", "");
   $("#pct-modulo-general").value = ajuste("pct_modulo_general", 70) || "";
   $("#monto-ayudantia").value = ajuste("monto_ayudantia", 0) || "";
+  $("#compartir").checked = !!ajuste("compartir_economicos", false);
+  const aportadas = Object.keys(ajuste("aportes_enviados", {})).length;
+  $("#compartir-estado").textContent = !CONFIG.ESTADISTICA_URL ? "La base común todavía no está habilitada: por ahora no se envía nada."
+    : ajuste("compartir_economicos", false) ? `Compartiendo: ${aportadas} ${aportadas === 1 ? "línea aportada" : "líneas aportadas"}, sin datos de pacientes.` : "No estás compartiendo.";
+  $("#borrar-aportes").hidden = !aportadas;
   $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 70);
   $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
@@ -2181,6 +2269,7 @@ async function aplicarLiquidacion() {
     (errores.length ? ` No se pudieron aplicar ${errores.length}: ${errores.slice(0, 3).join(" · ")}${errores.length > 3 ? "…" : ""}` : ""));
   // Los PDF van al Drive después (cada uno como está, con su número), sin trabar
   guardarPDFsLiquidacion(liq, porArchivo).catch((e) => aviso("Los PDF de la liquidación no se pudieron guardar en el Drive: " + e.message));
+  aportarEstadistica(); // si aceptó aportar: los cobros nuevos, anónimos, a la base común
   $("#f-periodo").value = "todos"; $("#f-estado").value = "cobrada";
   ir("prestaciones");
 }
@@ -2696,7 +2785,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "73"; // igual que VERSION en sw.js
+const VERSION_APP = "74"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2750,16 +2839,16 @@ function entrar() {
   if (Almacen.tieneToken()) {
     // Al entrar: traer lo cargado en otros dispositivos y subir lo de este
     Almacen.sincronizar().then(() => { if (estado.volvioDeGoogle) aviso("Datos al día con Google Drive (" + Almacen.doc.cuenta + ")"); estado.volvioDeGoogle = false; refrescar(); })
-      .then(arreglos, (e) => aviso(e.message)).finally(() => { unificarActos().catch(() => {}); aplicarModo(); preguntarEspecialidad(); });
+      .then(arreglos, (e) => aviso(e.message)).finally(() => { unificarActos().catch(() => {}); aplicarModo(); pedirTerminos().then(preguntarEspecialidad).then(aportarEstadistica); });
   } else if (Almacen.doc.cuenta) {
     // Con Drive pero sin acceso ahora: los arreglos esperan a la próxima sincronización
     mostrarSync("cambios sin subir");
     unificarActos().catch(() => {});
-    preguntarEspecialidad();
+    pedirTerminos().then(preguntarEspecialidad);
   } else {
     arreglos();
     unificarActos().catch(() => {});
-    preguntarEspecialidad();
+    pedirTerminos().then(preguntarEspecialidad).then(aportarEstadistica);
   }
 }
 
@@ -2817,6 +2906,17 @@ function configurarSeguridad() {
   });
   $("#bloquear").addEventListener("click", () => menuConfiguracion().catch((e) => aviso(e.message)));
   $("#cambiar-pin").addEventListener("click", () => pedirPin("cambiar"));
+  $("#compartir").addEventListener("change", async () => {
+    await Almacen.ajuste("compartir_economicos", $("#compartir").checked);
+    const n = $("#compartir").checked ? await aportarEstadistica() : 0;
+    aviso($("#compartir").checked ? `Gracias: aportás tus cobros anónimos${n ? ` (${n} líneas enviadas)` : ""}.` : "Dejaste de compartir. Lo ya aportado queda, salvo que lo borres.");
+    verValores();
+  });
+  $("#borrar-aportes").addEventListener("click", async () => {
+    if (!confirm("¿Dejar de compartir y borrar de la base común todo lo que aportaste? (Tus datos en el celular y en tu Drive no se tocan.)")) return;
+    try { await borrarAportes(); aviso("Listo: lo aportado se borró de la base común."); } catch (e) { aviso(e.message); }
+    verValores();
+  });
   // Bloqueo automático: N minutos (Valores → Mi cuenta) sin tocar la app, o al volver a ella después de ese tiempo
   let ultima = Date.now();
   ["pointerdown", "keydown", "input"].forEach((e) => document.addEventListener(e, () => { ultima = Date.now(); Almacen.tocar(); }, { passive: true, capture: true }));

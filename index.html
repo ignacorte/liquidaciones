@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1f3a5f">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://www.googleapis.com; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://www.googleapis.com https://script.google.com https://script.googleusercontent.com; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Liquidaciones</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -206,6 +206,12 @@
       <label>Bloquear la app después de<select id="min-bloqueo"><option value="5">5 minutos sin uso</option><option value="15">15 minutos sin uso</option>
         <option value="30">30 minutos sin uso</option><option value="60">1 hora sin uso</option></select></label>
       <div class="fila"><button class="boton chico secundario" id="cambiar-pin">Cambiar PIN</button></div>
+      <h3 style="margin:14px 0 4px;font-size:15px">Base común de valores (opcional)</h3>
+      <label class="check"><input type="checkbox" id="compartir"> Aportar mis cobros <b>anónimos</b> (obra social, código, mes, días y monto; nunca datos de pacientes)
+        para conocer cuánto y cuándo paga cada obra social.</label>
+      <p class="ayuda" id="compartir-estado"></p>
+      <div class="fila"><button class="boton chico peligro" id="borrar-aportes" hidden>Dejar de compartir y borrar lo aportado</button></div>
+      <p class="ayuda"><a href="terminos.html" target="_blank" rel="noopener">Términos y condiciones</a> · <a href="privacidad.html" target="_blank" rel="noopener">Privacidad</a></p>
     </details>
     <details class="card plegable" data-plegable="copia">
       <summary><h2>Copia de seguridad</h2></summary>
@@ -277,6 +283,18 @@
 </main>
 
 <button id="mas" class="fab" hidden aria-label="Nueva cirugía de hoy" title="Nueva cirugía de hoy">+</button>
+<dialog id="dlg-terminos" aria-labelledby="terminos-titulo"><div class="card">
+  <h2 id="terminos-titulo">Términos y condiciones</h2>
+  <p class="ayuda">Los datos de tus pacientes quedan <b>en tu celular, cifrados, y en tu Google Drive</b>: nadie más los ve. Los valores y fechas que
+    calcula la app son estimaciones. Leé los <a href="terminos.html" target="_blank" rel="noopener">términos y condiciones</a> y la
+    <a href="privacidad.html" target="_blank" rel="noopener">política de privacidad</a>.</p>
+  <label class="check"><input type="checkbox" id="acepto-terminos"> Leí y acepto los términos y condiciones y la política de privacidad.</label>
+  <label class="check" style="margin-top:8px"><input type="checkbox" id="acepto-compartir"> <span><b>Opcional:</b> aporto mis cobros anónimos (obra social, código, mes,
+    días y monto; <b>nunca</b> datos de pacientes) a la base común, para saber cuánto y cuándo paga cada obra social. Lo puedo desactivar y borrar
+    cuando quiera en Valores → Mi cuenta.</span></label>
+  <div class="fila" style="margin-top:12px"><button class="boton" data-aceptar-terminos disabled>Aceptar y seguir</button>
+    <button class="boton secundario" data-no-acepto>No acepto</button></div>
+</div></dialog>
 <nav class="abajo">
   <button data-vista="inicio" class="activa"><span>📊</span>Inicio</button>
   <button data-vista="cargar"><span>📷</span>Cargar</button>
