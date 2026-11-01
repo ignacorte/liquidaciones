@@ -189,6 +189,8 @@ function ir(vista) {
   const afuera = ["bienvenida", "pin"].includes(vista);
   $("nav.abajo").hidden = afuera;
   $("#bloquear").hidden = afuera;
+  $("#campana").hidden = afuera;
+  if (!afuera) verCampana();
   $("#cambiar-rama").hidden = afuera;
   $("#mas").hidden = !["inicio", "prestaciones"].includes(vista);
   $("#titulo").textContent = TITULOS[vista];
@@ -543,7 +545,11 @@ async function informarUso({ forzar = false } = {}) {
     else if (r.mensaje) {
       let visto = "";
       try { visto = localStorage.getItem("liq-mensaje") || ""; } catch { /* nada */ }
-      if (visto !== r.mensaje) { aviso("Mensaje del administrador: " + r.mensaje); try { localStorage.setItem("liq-mensaje", r.mensaje); } catch { /* nada */ } }
+      if (visto !== r.mensaje) {
+        aviso("Mensaje del administrador: " + r.mensaje);
+        agregarNotificacion(r.mensaje, "admin");
+        try { localStorage.setItem("liq-mensaje", r.mensaje); } catch { /* nada */ }
+      }
     }
     return r;
   } catch { return null; }
@@ -2913,20 +2919,101 @@ async function arreglarPlanillas() {
   }
 }
 
-// ---------- Actualizaciones de la app ----------
-const VERSION_APP = "78"; // igual que VERSION en sw.js
+// ---------- Notificaciones (🔔): versión nueva, mensajes del administrador y lo pendiente de «Para hacer» ----------
+// Los mensajes quedan en este dispositivo (los últimos 30); el número rojo cuenta lo no leído
+function notificaciones() {
+  try { return JSON.parse(localStorage.getItem("liq-notificaciones") || "[]"); } catch { return []; }
+}
+function guardarNotificaciones(l) {
+  try { localStorage.setItem("liq-notificaciones", JSON.stringify(l.slice(0, 30))); } catch { /* nada */ }
+}
+function agregarNotificacion(texto, tipo = "mensaje") {
+  const l = notificaciones();
+  if (l.some((n) => n.texto === texto && n.tipo === tipo)) return; // el mismo mensaje no se repite
+  l.unshift({ id: Date.now(), texto, tipo, fecha: new Date().toISOString(), leida: false });
+  guardarNotificaciones(l);
+  verCampana();
+}
+function verCampana() {
+  const n = notificaciones().filter((x) => !x.leida).length + (estado.versionNueva ? 1 : 0);
+  $("#campana-n").textContent = n > 9 ? "9+" : String(n);
+  $("#campana-n").hidden = !n;
+  $("#campana").classList.toggle("con-novedades", n > 0);
+}
+function pendientesParaHacer() {
+  try {
+    const lista = datos().prestaciones.filter((p) => !p.solo_registro), h = hoy();
+    return [["vencidas", lista.filter((p) => Motor.vencida(p, h)).length], ["para revisar", lista.filter((p) => p.revisar_cobro).length],
+      ["con obra social sin reconocer", lista.filter((p) => !p.obra_social && p.tipo !== "consulta").length]].filter(([, n]) => n);
+  } catch { return []; }
+}
+function abrirNotificaciones() {
+  const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo"), l = notificaciones(), pend = pendientesParaHacer();
+  cuerpo._actual = null;
+  const fecha = (f) => new Date(f).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  cuerpo.innerHTML = `<h2>Notificaciones</h2>
+    ${estado.versionNueva ? `<div class="notif nueva"><b>⬆️ Hay una versión nueva de la app</b><p class="ayuda" style="margin:2px 0 6px">Se aplica sola la próxima vez que entres; o ahora:</p>
+      <button class="boton chico" data-actualizar-ya>Actualizar ahora</button></div>` : ""}
+    ${pend.length ? `<div class="notif"><b>📋 Para hacer</b><p class="ayuda" style="margin:2px 0 6px">${pend.map(([t, n]) => `${n} ${t}`).join(" · ")}</p>
+      <button class="boton chico secundario" data-ir-inicio>Ver en Inicio</button></div>` : ""}
+    ${l.length ? l.map((n) => `<div class="notif ${n.leida ? "" : "nueva"}"><b>${n.tipo === "admin" ? "📣 Mensaje del administrador" : "ℹ️ Aviso"}</b>
+      <p style="margin:2px 0">${esc(n.texto)}</p><small class="ayuda">${fecha(n.fecha)}</small></div>`).join("")
+      : !estado.versionNueva && !pend.length ? '<p class="ayuda">No hay notificaciones.</p>' : ""}
+    <div class="fila"><button class="boton secundario" data-cerrar>Cerrar</button>${l.length ? '<button class="boton chico secundario" data-borrar-notif>Borrar mensajes</button>' : ""}</div>`;
+  cuerpo.onclick = (ev) => {
+    if (ev.target.closest("[data-cerrar]")) dlg.close();
+    if (ev.target.closest("[data-actualizar-ya]")) { dlg.close(); actualizarAhora(); }
+    if (ev.target.closest("[data-ir-inicio]")) { dlg.close(); ir("inicio"); }
+    if (ev.target.closest("[data-borrar-notif]")) { guardarNotificaciones([]); verCampana(); abrirNotificaciones(); }
+  };
+  // Abrirlas = leídas
+  guardarNotificaciones(l.map((n) => ({ ...n, leida: true })));
+  verCampana();
+  if (!dlg.open) dlg.showModal();
+}
 
+// ---------- Actualizaciones de la app ----------
+const VERSION_APP = "80"; // igual que VERSION en sw.js
+
+// Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
+// y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
   const habia = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => reg.update()).catch(() => {});
-  // Versión nueva instalada: recargar una vez para usarla (si no hay nada a medio cargar)
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (!habia || sessionStorage.getItem("liq_recargada")) return;
-    if ($("#dlg").open || !$("#revision").hidden) return aviso("Hay una versión nueva de la app: se usa al volver a abrirla.");
-    sessionStorage.setItem("liq_recargada", "1");
+  let reg = null, pendiente = false, ultimaBusqueda = 0;
+  const buscar = () => {
+    if (!reg || Date.now() - ultimaBusqueda < 10e3) return;
+    ultimaBusqueda = Date.now();
+    reg.update().catch(() => {});
+  };
+  const ocupado = () => $("#dlg").open || $("#dlg-terminos").open || !$("#revision").hidden || !$("#leyendo").hidden;
+  // Al abrir la app o al volver a ella se aplica sola mientras no haya empezado a usarla (no tocó la pantalla, hasta 1 minuto,
+  // aunque la descarga tarde por mala señal); si ya la está usando, solo se avisa (🔔) y se aplica la próxima vez que entre
+  let volvio = Date.now(), toco = 0;
+  ["pointerdown", "keydown"].forEach((e) => document.addEventListener(e, () => { toco = Date.now(); }, { passive: true, capture: true }));
+  const aplicar = (alEntrar = toco < volvio && Date.now() - volvio < 60e3) => {
+    if (!pendiente) return;
+    if (!alEntrar) { if (!estado.versionNueva) { estado.versionNueva = true; verCampana(); aviso("Hay una versión nueva de la app: tocá 🔔 para actualizar (o se aplica sola al volver a entrar)."); } return; }
+    if (ocupado()) return;
+    // (no puede quedar en bucle: solo se llega acá cuando el navegador instaló una versión nueva del service worker)
+    pendiente = false;
     location.reload();
+  };
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => { reg = r; buscar(); }).catch(() => {});
+  // Versión nueva instalada: recargar para usarla (si hay algo a medio cargar, al terminar)
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!habia) return; // primera instalación: ya es la última
+    pendiente = true;
+    aplicar();
   });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    volvio = Date.now();
+    if (pendiente) aplicar(true); else buscar();
+  });
+  setInterval(buscar, 30 * 60e3);
+  // Si al entrar había algo a medio cargar, se aplica apenas se cierra (dentro de los segundos de haber entrado)
+  document.addEventListener("close", () => setTimeout(() => aplicar(), 300), true);
 }
 
 // Forzar: borrar la copia guardada de la app (no los datos ni el lector) y volver a bajarla
@@ -2935,7 +3022,6 @@ async function actualizarAhora() {
     for (const k of await caches.keys()) if (!k.includes("libs")) await caches.delete(k);
     for (const r of await navigator.serviceWorker.getRegistrations()) await r.update();
   } catch { /* sin service worker */ }
-  sessionStorage.removeItem("liq_recargada");
   location.reload();
 }
 
@@ -3035,6 +3121,7 @@ function configurarSeguridad() {
   });
   $("#bloquear").addEventListener("click", () => menuConfiguracion().catch((e) => aviso(e.message)));
   $("#cambiar-pin").addEventListener("click", () => pedirPin("cambiar"));
+  $("#campana").addEventListener("click", abrirNotificaciones);
   $("#compartir").addEventListener("change", async () => {
     await Almacen.ajuste("compartir_economicos", $("#compartir").checked);
     const n = $("#compartir").checked ? await aportarEstadistica() : 0;

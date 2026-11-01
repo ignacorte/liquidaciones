@@ -167,3 +167,9 @@ details.avanzado > .grid { margin-top: 6px; }
 .linea-tiempo li b { display: block; color: var(--texto); font-size: 13px; }
 .linea-tiempo li small { display: block; }
 @media (prefers-color-scheme: dark) { .alerta { background: #2a2418; border-color: #b08d57; color: #f4ede2; } .alerta a { color: #d9b97f; } }
+/* Notificaciones */
+.campana { position: relative; background: transparent !important; color: inherit !important; border-color: currentColor !important; }
+.campana .insignia { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--rojo);
+  color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.notif { border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+.notif.nueva { border-left: 4px solid var(--oro); background: var(--oro-claro); }
