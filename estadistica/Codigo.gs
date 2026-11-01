@@ -1,4 +1,7 @@
-// Receptor de la base económica anónima de «Liquidaciones» (Google Apps Script, en la cuenta del responsable).
+// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 3.
+// 1) Base económica ANÓNIMA (esta planilla). 2) Cuentas y uso (OTRA planilla, «Liquidaciones – Cuentas y uso», que se crea sola la
+// primera vez): correo, especialidad, versión, último uso y cantidades, sin datos de pacientes ni montos. Están separadas para que no
+// se pueda cruzar quién aportó cada fila anónima (en la base anónima la llegada se guarda solo como mes).
 // Recibe filas SIN datos de pacientes y las guarda en cuatro hojas de esta planilla, separadas por especialidad:
 //   «Cirugía · Facturación», «Cirugía · Liquidaciones», «Anestesia · Facturación», «Anestesia · Liquidaciones».
 // Cada fila tiene un id (huella al azar): si llega de nuevo, se actualiza (no se duplica). «borrar» quita todo lo de un aportante
@@ -39,7 +42,7 @@ function salida(o) {
 // Solo valores cortos y de forma conocida: nada de texto libre (no puede colarse un nombre)
 function limpiar(t, f, aportante, version) {
   if (!/^[a-f0-9]{16,64}$/.test(String(f.id || ""))) return null;
-  const fila = { id: String(f.id), aportante: aportante, recibido: new Date(), version: String(version || "").replace(/[^\w.]/g, "").slice(0, 10) };
+  const fila = { id: String(f.id), aportante: aportante, recibido: Utilities.formatDate(new Date(), "GMT-3", "yyyy-MM"), version: String(version || "").replace(/[^\w.]/g, "").slice(0, 10) };
   const cols = TABLAS[t].cols;
   for (const k in cols) {
     const v = f[k];
@@ -51,15 +54,59 @@ function limpiar(t, f, aportante, version) {
   return fila;
 }
 
+// ---------- Cuentas y uso (planilla aparte) ----------
+// Columnas que escribe la app; «estado» (activo / suspendido) y «mensaje» las escribe el administrador a mano y no se pisan.
+const CUENTAS_COLS = ["cuenta", "especialidad", "admin", "dispositivo", "version", "primer_uso", "ultimo_uso", "prestaciones", "cirugias_mes",
+  "consultas_mes", "liquidaciones", "ultima_carga", "drive", "comparte", "terminos", "estado", "mensaje"];
+const ADMIN_COLS = ["estado", "mensaje"];
+function libroCuentas() {
+  const props = PropertiesService.getScriptProperties();
+  let id = props.getProperty("CUENTAS_ID");
+  if (id) { try { return SpreadsheetApp.openById(id); } catch (err) { id = null; } }
+  const libro = SpreadsheetApp.create("Liquidaciones – Cuentas y uso");
+  const h = libro.getSheets()[0];
+  h.setName("Cuentas"); h.appendRow(CUENTAS_COLS); h.setFrozenRows(1); h.getRange(1, 1, 1, CUENTAS_COLS.length).setFontWeight("bold");
+  h.getRange(1, CUENTAS_COLS.indexOf("estado") + 1).setNote("Escribí «suspendido» para que esa cuenta no pueda usar la app (sus datos siguen en su Drive). Vacío = activo.");
+  h.getRange(1, CUENTAS_COLS.indexOf("mensaje") + 1).setNote("Texto que la app le muestra a esa cuenta la próxima vez que entra.");
+  props.setProperty("CUENTAS_ID", libro.getId());
+  return libro;
+}
+function registrarUso(d) {
+  const correo = String(d.cuenta || "").toLowerCase().trim();
+  const dispositivo = String(d.dispositivo || "").replace(/[^a-f0-9-]/g, "").slice(0, 40);
+  const clave = /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(correo) ? correo.slice(0, 80) : dispositivo ? "sin cuenta · " + dispositivo.slice(0, 8) : "";
+  if (!clave) return { ok: false, error: "cuenta inválida" };
+  const h = libroCuentas().getSheetByName("Cuentas"), datos = h.getDataRange().getValues();
+  const col = (k) => CUENTAS_COLS.indexOf(k);
+  const ahora = new Date(), num = (v) => (isFinite(Number(v)) ? Number(v) : "");
+  const corto = (v) => String(v == null ? "" : v).replace(/[^\wÁÉÍÓÚÑáéíóúñü .\/+-]/g, "").slice(0, 30);
+  const fila = { cuenta: clave, especialidad: corto(d.especialidad), admin: d.admin ? "sí" : "", dispositivo: corto(d.plataforma), version: corto(d.version),
+    ultimo_uso: ahora, prestaciones: num(d.prestaciones), cirugias_mes: num(d.cirugias_mes), consultas_mes: num(d.consultas_mes),
+    liquidaciones: num(d.liquidaciones), ultima_carga: /^\d{4}-\d{2}-\d{2}$/.test(String(d.ultima_carga || "")) ? String(d.ultima_carga) : "",
+    drive: d.drive ? "sí" : "no", comparte: d.comparte ? "sí" : "no", terminos: num(d.terminos) };
+  let i = 1;
+  while (i < datos.length && datos[i][0] !== clave) i++;
+  if (i < datos.length) {
+    for (const k of ADMIN_COLS) fila[k] = datos[i][col(k)];
+    fila.primer_uso = datos[i][col("primer_uso")] || ahora;
+    h.getRange(i + 1, 1, 1, CUENTAS_COLS.length).setValues([CUENTAS_COLS.map((k) => fila[k] ?? "")]);
+  } else {
+    fila.primer_uso = ahora; fila.estado = ""; fila.mensaje = "";
+    h.appendRow(CUENTAS_COLS.map((k) => fila[k] ?? ""));
+  }
+  return { ok: true, estado: String(fila.estado || "activo").toLowerCase().trim() || "activo", mensaje: String(fila.mensaje || "") };
+}
+
 function doPost(e) {
   const candado = LockService.getScriptLock();
   candado.waitLock(20000);
   try {
     const d = JSON.parse(e.postData.contents);
+    if (d.accion === "uso") return salida(registrarUso(d));
     const aportante = String(d.aportante || "");
     if (!/^[a-f0-9-]{32,40}$/.test(aportante)) return salida({ ok: false, error: "aportante inválido" });
     if (d.accion === "borrar") {
-      // En todas las hojas (también la «Cobros» de la primera versión), de abajo hacia arriba
+      // En todas las hojas de la base anónima (también la «Cobros» de la primera versión), de abajo hacia arriba; las cuentas no
       let n = 0;
       for (const h of SpreadsheetApp.getActiveSpreadsheet().getSheets()) {
         const datos = h.getDataRange().getValues(), col = datos[0] ? datos[0].indexOf("aportante") : -1;
@@ -98,5 +145,18 @@ function doGet() {
     const h = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABLAS[t].hoja);
     filas[t] = h ? Math.max(0, h.getLastRow() - 1) : 0;
   }
-  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 2, filas: filas });
+  // Para el panel del administrador en la app: solo totales (nunca correos)
+  let cuentas = { total: 0, activas_7_dias: 0, suspendidas: 0 }, cuentasUrl = "";
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty("CUENTAS_ID")) {
+    const libro = libroCuentas(), datos = libro.getSheetByName("Cuentas").getDataRange().getValues(), hace7 = Date.now() - 7 * 864e5;
+    const col = (k) => CUENTAS_COLS.indexOf(k);
+    for (let i = 1; i < datos.length; i++) {
+      cuentas.total++;
+      if (new Date(datos[i][col("ultimo_uso")]).getTime() >= hace7) cuentas.activas_7_dias++;
+      if (String(datos[i][col("estado")]).toLowerCase().trim() === "suspendido") cuentas.suspendidas++;
+    }
+    cuentasUrl = libro.getUrl();
+  }
+  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 3, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
 }

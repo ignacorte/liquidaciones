@@ -24,6 +24,19 @@ descarta cualquier campo que no tenga la forma esperada.
 Los datos quedan en la hoja «Cobros» de esa planilla, una fila por línea cobrada. Si la misma línea llega de nuevo, se actualiza y no se duplica.
 Si un profesional toca «Dejar de compartir y borrar lo aportado», se borran todas sus filas.
 
+## Cuentas y uso (versión 3 del script)
+
+El mismo script crea sola, la primera vez que alguien entra a la app, una **planilla aparte**: «Liquidaciones – Cuentas y uso»
+(aparece en tu Drive). Una fila por cuenta: correo, especialidad, dispositivo, versión, primer y último uso, cantidades, si conectó Drive,
+si aporta y qué términos aceptó. Dos columnas son tuyas:
+
+- **estado**: escribí `suspendido` para que esa cuenta no pueda usar la app (sus datos siguen en su celular y su Drive). Vacío = activo.
+- **mensaje**: un aviso que le aparece a esa cuenta la próxima vez que entra (por ejemplo «Actualizá la app»).
+
+En la app, como administrador: Valores → **Administración** muestra los totales y el botón para abrir esa planilla.
+
+Al actualizar a la versión 3, Google pide **autorizar de nuevo** el script (ahora crea una planilla): aceptá con tu cuenta.
+
 ## Para cambiar el script después
 
 Editá el código y usá **Implementar → Administrar implementaciones → editar (lápiz) → Versión: nueva**. Así la URL no cambia.

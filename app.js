@@ -385,13 +385,17 @@ async function esAdmin() {
 // Al entrar se aceptan los términos (obligatorio, una vez por versión); aportar datos económicos anónimos es una casilla aparte,
 // destildada (consentimiento libre y expreso, Ley 25.326). Lo aceptado viaja con los ajustes (vale en todos los dispositivos).
 // v2: además de lo cobrado se aporta lo facturado (cada prestación, aunque no esté cobrada), separado cirugía / anestesia
-const TERMINOS_VERSION = 2;
+// v3: cuenta y uso (correo, especialidad, versión, último uso y cantidades; sin pacientes ni montos) para el administrador
+const TERMINOS_VERSION = 3;
+// Lo que se aporta a la base anónima cambió por última vez en la v2 de los términos: si ya lo eligió con esa versión, se respeta
+const COMPARTIR_VERSION = 2;
 function pedirTerminos() {
   if ((ajuste("terminos", null)?.version || 0) >= TERMINOS_VERSION) return Promise.resolve();
   const dlg = $("#dlg-terminos");
   if (dlg.open) return estado.terminos;
   $("#acepto-terminos").checked = false;
-  $("#acepto-compartir").checked = false; // cada versión de los términos se vuelve a elegir (lo que se comparte puede haber cambiado)
+  // Si lo que se comparte cambió desde que eligió, se vuelve a preguntar destildado
+  $("#acepto-compartir").checked = (ajuste("terminos", null)?.version || 0) >= COMPARTIR_VERSION && !!ajuste("compartir_economicos", false);
   $("[data-aceptar-terminos]").disabled = true;
   estado.terminos = new Promise((listo) => {
     $("#acepto-terminos").onchange = () => { $("[data-aceptar-terminos]").disabled = !$("#acepto-terminos").checked; };
@@ -485,6 +489,73 @@ async function aportarEstadistica() {
   if (n) await Almacen.ajuste("aportes_enviados", enviados);
   return n;
 }
+// ---------- Cuentas y uso (para el administrador) ----------
+// Una vez por hora como máximo: correo (o un número de este dispositivo si no conectó Google), especialidad, versión, último uso y
+// cantidades. Nunca datos de pacientes ni montos, y nunca el acceso de Google. Va a una planilla aparte de la base anónima.
+function idDispositivo() {
+  try {
+    let id = localStorage.getItem("liq-dispositivo");
+    if (!id) { id = nuevoAportante(); localStorage.setItem("liq-dispositivo", id); }
+    return id;
+  } catch { return ""; }
+}
+async function informarUso({ forzar = false } = {}) {
+  const url = CONFIG.ESTADISTICA_URL;
+  if (!url || !navigator.onLine) return null;
+  try {
+    if (!forzar && Date.now() - Number(localStorage.getItem("liq-uso") || 0) < 3600e3) return null;
+  } catch { /* sin almacenamiento: se informa igual */ }
+  try {
+    const todas = Almacen.doc.prestaciones.filter((p) => !p.borrada), m = hoy().slice(0, 7);
+    const plataforma = /iphone|ipad/i.test(navigator.userAgent) ? "iPhone" : /android/i.test(navigator.userAgent) ? "Android" : "Computadora";
+    const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "uso", cuenta: Almacen.doc.cuenta || "", dispositivo: idDispositivo(),
+      especialidad: ajuste("especialidad", ""), admin: !!estado.admin?.es, plataforma, version: VERSION_APP, prestaciones: todas.length,
+      cirugias_mes: todas.filter((p) => p.fecha?.startsWith(m) && p.tipo !== "consulta").length, consultas_mes: todas.filter((p) => p.fecha?.startsWith(m) && p.tipo === "consulta").length,
+      liquidaciones: new Set(todas.map((p) => p.liquidacion).filter(Boolean)).size,
+      ultima_carga: todas.filter((p) => p.origen !== "liquidacion").map((p) => p.fecha).filter(Boolean).sort().pop() || "",
+      drive: !!Almacen.doc.cuenta, comparte: !!ajuste("compartir_economicos", false), terminos: ajuste("terminos", null)?.version || 0 }) }).then((x) => x.json());
+    if (!r.ok) return null;
+    try { localStorage.setItem("liq-uso", String(Date.now())); } catch { /* nada */ }
+    if (r.estado === "suspendido") cuentaSuspendida(r.mensaje);
+    else if (r.mensaje) {
+      let visto = "";
+      try { visto = localStorage.getItem("liq-mensaje") || ""; } catch { /* nada */ }
+      if (visto !== r.mensaje) { aviso("Mensaje del administrador: " + r.mensaje); try { localStorage.setItem("liq-mensaje", r.mensaje); } catch { /* nada */ } }
+    }
+    return r;
+  } catch { return null; }
+}
+// El administrador suspendió la cuenta: no se puede seguir usando la app (los datos siguen en el celular y en su Drive)
+function cuentaSuspendida(mensaje) {
+  const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo");
+  cuerpo._actual = null;
+  cuerpo.innerHTML = `<h2>Cuenta suspendida</h2><p class="ayuda">El administrador suspendió el uso de la app para esta cuenta. Tus datos no se borraron:
+    siguen en este celular y en tu Google Drive (carpeta «Liquidaciones»).${mensaje ? `</p><p><b>${esc(mensaje)}</b>` : ""}</p>
+    <div class="fila"><button class="boton" data-cerrar-sesion>Cerrar</button></div>`;
+  cuerpo.onclick = (ev) => { if (ev.target.closest("[data-cerrar-sesion]")) { dlg.close(); bloquearYa(); } };
+  dlg.oncancel = (ev) => ev.preventDefault();
+  if (!dlg.open) dlg.showModal();
+}
+// Panel del administrador: totales (nunca correos) y el enlace a la planilla de cuentas, que solo abre con su cuenta de Google
+async function verAdministracion() {
+  const caja = $("#admin-cuentas");
+  if (!caja || !estado.admin?.es) return;
+  if (!CONFIG.ESTADISTICA_URL) { caja.innerHTML = '<p class="ayuda">Falta el receptor (ESTADISTICA_URL).</p>'; return; }
+  caja.innerHTML = '<p class="ayuda">Consultando…</p>';
+  try {
+    const r = await fetch(CONFIG.ESTADISTICA_URL).then((x) => x.json());
+    if (!(r.version >= 3)) { caja.innerHTML = '<p class="ayuda">El script de la planilla es de una versión anterior: actualizalo (ver estadistica/LEEME.md).</p>'; return; }
+    const f = r.filas || {}, c = r.cuentas || {};
+    caja.innerHTML = `<table><tr><td>Cuentas</td><td class="n">${c.total || 0}</td></tr><tr><td>Usaron la app en los últimos 7 días</td><td class="n">${c.activas_7_dias || 0}</td></tr>
+      <tr><td>Suspendidas</td><td class="n">${c.suspendidas || 0}</td></tr>
+      <tr><td>Base anónima · cirugía (facturación / liquidaciones)</td><td class="n">${f.cirugia_facturacion || 0} / ${f.cirugia_liquidaciones || 0}</td></tr>
+      <tr><td>Base anónima · anestesia (facturación / liquidaciones)</td><td class="n">${f.anestesia_facturacion || 0} / ${f.anestesia_liquidaciones || 0}</td></tr></table>
+      ${r.cuentas_url ? `<div class="fila"><a class="boton chico" href="${esc(r.cuentas_url)}" target="_blank" rel="noopener">📋 Abrir la planilla de cuentas</a></div>` : ""}
+      <p class="ayuda">En la planilla: columna <b>estado</b> = «suspendido» para que una cuenta no pueda usar la app; columna <b>mensaje</b> = un aviso que le
+        aparece la próxima vez que entra. Para que un colega nuevo pueda entrar, agregá su Gmail como usuario de prueba en Google Cloud.</p>`;
+  } catch { caja.innerHTML = '<p class="ayuda">No se pudo consultar ahora (¿sin conexión?).</p>'; }
+}
+
 // Dejar de compartir y borrar todo lo aportado (el número de aportante se cambia: lo próximo no queda ligado a lo anterior)
 async function borrarAportes() {
   const uid = ajuste("aportante", null), url = CONFIG.ESTADISTICA_URL;
@@ -1725,6 +1796,7 @@ function verValores() {
   $("#pct-modulo-general").value = ajuste("pct_modulo_general", 70) || "";
   $("#monto-ayudantia").value = ajuste("monto_ayudantia", 0) || "";
   $("#compartir").checked = !!ajuste("compartir_economicos", false);
+  verAdministracion();
   const aportadas = Object.keys(ajuste("aportes_enviados", {})).length;
   $("#compartir-estado").textContent = !CONFIG.ESTADISTICA_URL ? "La base común todavía no está habilitada: por ahora no se envía nada."
     : ajuste("compartir_economicos", false) ? `Compartiendo: ${aportadas} ${aportadas === 1 ? "línea aportada" : "líneas aportadas"}, sin datos de pacientes.` : "No estás compartiendo.";
@@ -2819,7 +2891,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "76"; // igual que VERSION en sw.js
+const VERSION_APP = "77"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -2873,16 +2945,16 @@ function entrar() {
   if (Almacen.tieneToken()) {
     // Al entrar: traer lo cargado en otros dispositivos y subir lo de este
     Almacen.sincronizar().then(() => { if (estado.volvioDeGoogle) aviso("Datos al día con Google Drive (" + Almacen.doc.cuenta + ")"); estado.volvioDeGoogle = false; refrescar(); })
-      .then(arreglos, (e) => aviso(e.message)).finally(() => { unificarActos().catch(() => {}); aplicarModo(); pedirTerminos().then(preguntarEspecialidad).then(aportarEstadistica); });
+      .then(arreglos, (e) => aviso(e.message)).finally(() => { unificarActos().catch(() => {}); aplicarModo(); pedirTerminos().then(preguntarEspecialidad).then(() => informarUso()).then(aportarEstadistica); });
   } else if (Almacen.doc.cuenta) {
     // Con Drive pero sin acceso ahora: los arreglos esperan a la próxima sincronización
     mostrarSync("cambios sin subir");
     unificarActos().catch(() => {});
-    pedirTerminos().then(preguntarEspecialidad);
+    pedirTerminos().then(preguntarEspecialidad).then(() => informarUso());
   } else {
     arreglos();
     unificarActos().catch(() => {});
-    pedirTerminos().then(preguntarEspecialidad).then(aportarEstadistica);
+    pedirTerminos().then(preguntarEspecialidad).then(() => informarUso()).then(aportarEstadistica);
   }
 }
 
