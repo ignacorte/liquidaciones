@@ -1,4 +1,4 @@
-// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 3.
+// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 4 (hojas con títulos en castellano).
 // 1) Base económica ANÓNIMA (esta planilla). 2) Cuentas y uso (OTRA planilla, «Liquidaciones – Cuentas y uso», que se crea sola la
 // primera vez): correo, especialidad, versión, último uso y cantidades, sin datos de pacientes ni montos. Están separadas para que no
 // se pueda cruzar quién aportó cada fila anónima (en la base anónima la llegada se guarda solo como mes).
@@ -9,30 +9,79 @@
 // Publicar: Implementar → Nueva implementación → Aplicación web → Ejecutar como: yo · Quién tiene acceso: cualquier usuario.
 // Para actualizar sin cambiar la URL: Implementar → Administrar implementaciones → lápiz → Versión: nueva → Implementar.
 
-const COMUNES = ["id", "aportante", "recibido", "version"];
-// Cada tabla: nombre de la hoja y sus columnas (t = texto corto, n = número, m = mes AAAA-MM, b = sí/no)
+// Columnas técnicas, al final de cada hoja (el id evita duplicados: si una fila llega de nuevo, se actualiza)
+const TECNICAS = [["id", "ID (técnico)"], ["aportante", "Aportante (número al azar)"], ["recibido", "Recibido (mes)"], ["version", "Versión de la app"]];
+// Cada tabla: nombre de la hoja y sus columnas en el orden en que se ven: [clave, tipo, título]
+// (t = texto corto, n = número, $ = pesos, m = mes AAAA-MM, b = sí/no). Las fechas van SOLO por mes: con el día exacto se podría
+// identificar al paciente.
 const TABLAS = {
-  cirugia_facturacion: { hoja: "Cirugía · Facturación", cols: {
-    obra_social: "t", tipo: "t", rol: "t", codigo_os: "t", codigo_aac: "t", abordaje: "t", urgencia: "b", pct: "n", extras: "n",
-    mes_prestacion: "m", estado: "t", estimado: "n", origen_estimado: "t", mes_presentacion: "m", cobrado: "n", debitado: "n", dias_cobro: "n" } },
-  cirugia_liquidaciones: { hoja: "Cirugía · Liquidaciones", cols: {
-    obra_social: "t", tipo: "t", rol: "t", codigo_os: "t", codigo_aac: "t", abordaje: "t", urgencia: "b", pct: "n",
-    mes_prestacion: "m", mes_cobro: "m", dias_cobro: "n", monto: "n", debito: "b" } },
-  anestesia_facturacion: { hoja: "Anestesia · Facturación", cols: {
-    obra_social: "t", tipo: "t", complejidad: "n", recargos: "t", edad_grupo: "t", obesidad: "b", suspendida: "b", extras: "n",
-    mes_prestacion: "m", estado: "t", bruto: "n", neto: "n", retencion_pct: "n", mes_carga: "m", cobrado: "n", debitado: "n", dias_cobro: "n" } },
-  anestesia_liquidaciones: { hoja: "Anestesia · Liquidaciones", cols: {
-    obra_social: "t", tipo: "t", complejidad: "n", recargos: "t", mes_prestacion: "m", mes_cobro: "m", dias_cobro: "n", monto: "n", debito: "b" } },
+  cirugia_facturacion: { hoja: "Cirugía · Facturación", cols: [
+    ["mes_prestacion", "m", "Mes de la cirugía"], ["obra_social", "t", "Obra social"], ["tipo", "t", "Tipo"], ["rol", "t", "Rol"],
+    ["codigo_os", "t", "Código obra social"], ["codigo_aac", "t", "Código AAC"], ["abordaje", "t", "Vía"], ["urgencia", "b", "Urgencia"],
+    ["pct", "n", "% a facturar"], ["extras", "n", "Otros procedimientos del acto"], ["estado", "t", "Estado"], ["mes_presentacion", "m", "Mes de presentación"],
+    ["estimado", "$", "Estimado"], ["origen_estimado", "t", "De dónde sale el estimado"], ["cobrado", "$", "Cobrado"], ["debitado", "$", "Debitado"],
+    ["dias_cobro", "n", "Días hasta cobrar"]] },
+  cirugia_liquidaciones: { hoja: "Cirugía · Liquidaciones", cols: [
+    ["mes_prestacion", "m", "Mes de la cirugía"], ["mes_cobro", "m", "Mes del cobro"], ["obra_social", "t", "Obra social"], ["tipo", "t", "Tipo"],
+    ["rol", "t", "Rol"], ["codigo_os", "t", "Código obra social"], ["codigo_aac", "t", "Código AAC"], ["abordaje", "t", "Vía"], ["urgencia", "b", "Urgencia"],
+    ["pct", "n", "% a facturar"], ["monto", "$", "Monto"], ["debito", "b", "Débito"], ["dias_cobro", "n", "Días hasta cobrar"]] },
+  anestesia_facturacion: { hoja: "Anestesia · Facturación", cols: [
+    ["mes_prestacion", "m", "Mes de la anestesia"], ["obra_social", "t", "Obra social"], ["tipo", "t", "Tipo"], ["complejidad", "n", "Complejidad"],
+    ["recargos", "t", "Recargos"], ["edad_grupo", "t", "Edad"], ["obesidad", "b", "Obesidad mórbida"], ["suspendida", "b", "Suspendida"],
+    ["extras", "n", "Otros procedimientos del acto"], ["estado", "t", "Estado"], ["mes_carga", "m", "Mes de carga en la asociación"], ["bruto", "$", "Bruto"],
+    ["neto", "$", "Neto"], ["retencion_pct", "n", "Retención de la asociación (%)"], ["cobrado", "$", "Cobrado"], ["debitado", "$", "Debitado"],
+    ["dias_cobro", "n", "Días hasta cobrar"]] },
+  anestesia_liquidaciones: { hoja: "Anestesia · Liquidaciones", cols: [
+    ["mes_prestacion", "m", "Mes de la anestesia"], ["mes_cobro", "m", "Mes del cobro"], ["obra_social", "t", "Obra social"], ["tipo", "t", "Tipo"],
+    ["complejidad", "n", "Complejidad"], ["recargos", "t", "Recargos"], ["monto", "$", "Monto"], ["debito", "b", "Débito"], ["dias_cobro", "n", "Días hasta cobrar"]] },
 };
 const MAX_FILAS = 500;
 
-function columnas(t) { return COMUNES.concat(Object.keys(TABLAS[t].cols)); }
+function columnas(t) { return TABLAS[t].cols.map((c) => c[0]).concat(TECNICAS.map((c) => c[0])); }
+function titulos(t) { return TABLAS[t].cols.map((c) => c[2]).concat(TECNICAS.map((c) => c[1])); }
+function tipoDe(t, k) { const c = TABLAS[t].cols.find((x) => x[0] === k); return c ? c[1] : "t"; }
 
+// La hoja con los títulos y formatos de esta versión; si es de una versión anterior (otros títulos u orden), se reacomoda
+// conservando todas sus filas
 function hoja(t) {
-  const libro = SpreadsheetApp.getActiveSpreadsheet(), nombre = TABLAS[t].hoja;
+  const libro = SpreadsheetApp.getActiveSpreadsheet(), nombre = TABLAS[t].hoja, cols = columnas(t), tits = titulos(t);
   let h = libro.getSheetByName(nombre);
-  if (!h) { h = libro.insertSheet(nombre); h.appendRow(columnas(t)); h.setFrozenRows(1); h.getRange(1, 1, 1, columnas(t).length).setFontWeight("bold"); }
+  if (!h) h = libro.insertSheet(nombre);
+  const datos = h.getLastRow() ? h.getDataRange().getValues() : [];
+  const cabecera = datos.length ? datos[0].map(String) : [];
+  if (cabecera.join("|") !== tits.join("|")) {
+    // Cada columna vieja se reconoce por su clave (versión 2-3) o por su título
+    const deCol = cabecera.map((c) => { const i = cols.indexOf(c) >= 0 ? cols.indexOf(c) : tits.indexOf(c); return i; });
+    const filas = datos.slice(1).filter((f) => f.some((v) => v !== "")).map((f) => {
+      const x = cols.map(() => "");
+      f.forEach((v, j) => { if (deCol[j] >= 0) x[deCol[j]] = v; });
+      return x.map((v, k) => {
+        const tipo = tipoDe(t, cols[k]);
+        // Meses que la planilla había convertido en fecha completa → «AAAA-MM»
+        if (v instanceof Date && (tipo === "m" || cols[k] === "recibido")) return Utilities.formatDate(v, "GMT-3", "yyyy-MM");
+        if (tipo === "b" && (v === 1 || v === 0 || v === "1" || v === "0" || v === true || v === false)) return Number(v) ? "sí" : "no";
+        return v;
+      });
+    });
+    h.clear();
+    h.getRange(1, 1, 1, tits.length).setValues([tits]).setFontWeight("bold").setBackground("#1f3a5f").setFontColor("#ffffff").setWrap(true);
+    h.setFrozenRows(1);
+    formatos(t, h);
+    if (filas.length) h.getRange(2, 1, filas.length, cols.length).setValues(filas);
+    // Lo técnico, en gris
+    h.getRange(1, cols.length - TECNICAS.length + 1, Math.max(1, filas.length + 1), TECNICAS.length).setFontColor("#8a94a0");
+    h.getRange(1, cols.length - TECNICAS.length + 1, 1, TECNICAS.length).setBackground("#dde3ea");
+  }
   return h;
+}
+// Meses como texto (si no, la planilla los convierte en una fecha completa), pesos con separador de miles
+function formatos(t, h) {
+  const cols = columnas(t), filas = h.getMaxRows();
+  cols.forEach((k, i) => {
+    const tipo = tipoDe(t, k), r = h.getRange(1, i + 1, filas, 1);
+    if (tipo === "m" || k === "recibido" || k === "id" || k === "aportante" || k === "version" || tipo === "t") r.setNumberFormat("@");
+    else if (tipo === "$") r.setNumberFormat("$ #,##0");
+  });
 }
 
 function salida(o) {
@@ -42,14 +91,14 @@ function salida(o) {
 // Solo valores cortos y de forma conocida: nada de texto libre (no puede colarse un nombre)
 function limpiar(t, f, aportante, version) {
   if (!/^[a-f0-9]{16,64}$/.test(String(f.id || ""))) return null;
-  const fila = { id: String(f.id), aportante: aportante, recibido: Utilities.formatDate(new Date(), "GMT-3", "yyyy-MM"), version: String(version || "").replace(/[^\w.]/g, "").slice(0, 10) };
-  const cols = TABLAS[t].cols;
-  for (const k in cols) {
+  const fila = { id: String(f.id), aportante: aportante, recibido: Utilities.formatDate(new Date(), "GMT-3", "yyyy-MM"),
+    version: String(version || "").replace(/[^\w.]/g, "").slice(0, 10) };
+  for (const [k, tipo] of TABLAS[t].cols) {
     const v = f[k];
-    if (cols[k] === "t") fila[k] = String(v == null ? "" : v).replace(/[^\wÁÉÍÓÚÑáéíóúñü .\/+-]/g, "").slice(0, 40);
-    else if (cols[k] === "n") { const n = Number(v); fila[k] = v !== null && v !== "" && v !== undefined && isFinite(n) ? Math.round(n * 100) / 100 : ""; }
-    else if (cols[k] === "m") fila[k] = /^\d{4}-\d{2}$/.test(String(v || "")) ? String(v) : "";
-    else fila[k] = v ? 1 : 0;
+    if (tipo === "t") fila[k] = String(v == null ? "" : v).replace(/[^\wÁÉÍÓÚÑáéíóúñü .\/+-]/g, "").slice(0, 40);
+    else if (tipo === "n" || tipo === "$") { const n = Number(v); fila[k] = v !== null && v !== "" && v !== undefined && isFinite(n) ? Math.round(n * 100) / 100 : ""; }
+    else if (tipo === "m") fila[k] = /^\d{4}-\d{2}$/.test(String(v || "")) ? String(v) : "";
+    else fila[k] = v ? "sí" : "no";
   }
   return fila;
 }
@@ -109,7 +158,8 @@ function doPost(e) {
       // En todas las hojas de la base anónima (también la «Cobros» de la primera versión), de abajo hacia arriba; las cuentas no
       let n = 0;
       for (const h of SpreadsheetApp.getActiveSpreadsheet().getSheets()) {
-        const datos = h.getDataRange().getValues(), col = datos[0] ? datos[0].indexOf("aportante") : -1;
+        const datos = h.getDataRange().getValues(), cab = datos[0] || [];
+        const col = cab.indexOf("aportante") >= 0 ? cab.indexOf("aportante") : cab.indexOf(TECNICAS[1][1]);
         if (col < 0) continue;
         for (let i = datos.length - 1; i >= 1; i--) if (datos[i][col] === aportante) { h.deleteRow(i + 1); n++; }
       }
@@ -118,8 +168,8 @@ function doPost(e) {
     const t = String(d.tabla || "");
     if (d.accion !== "guardar" || !TABLAS[t] || !Array.isArray(d.filas) || d.filas.length > MAX_FILAS) return salida({ ok: false, error: "pedido inválido" });
     const h = hoja(t), cols = columnas(t), datos = h.getDataRange().getValues();
-    const filaDe = {};
-    for (let i = 1; i < datos.length; i++) filaDe[datos[i][0]] = i + 1;
+    const filaDe = {}, colId = cols.indexOf("id");
+    for (let i = 1; i < datos.length; i++) filaDe[datos[i][colId]] = i + 1;
     const nuevas = [];
     let actualizadas = 0;
     for (const f of d.filas) {
@@ -138,11 +188,12 @@ function doPost(e) {
   }
 }
 
-// Comprobar que está publicado (abrir la URL en el navegador): filas de cada tabla
+// Comprobar que está publicado (abrir la URL en el navegador): filas de cada tabla. También reacomoda las hojas de versiones
+// anteriores (títulos en castellano, lo técnico al final, meses como texto)
 function doGet() {
   const filas = {};
   for (const t in TABLAS) {
-    const h = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABLAS[t].hoja);
+    const h = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABLAS[t].hoja) ? hoja(t) : null;
     filas[t] = h ? Math.max(0, h.getLastRow() - 1) : 0;
   }
   // Para el panel del administrador en la app: solo totales (nunca correos)
@@ -158,5 +209,5 @@ function doGet() {
     }
     cuentasUrl = libro.getUrl();
   }
-  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 3, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
+  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 4, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
 }
