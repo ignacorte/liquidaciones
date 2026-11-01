@@ -198,7 +198,14 @@ function ir(vista) {
 const refrescar = () => {
   if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().then(() => Almacen.doc.cuenta && migrarCarpetas()).catch(() => {});
   ir(estado.vista);
+  programarEnvio();
 };
+// Base común y uso: unos segundos después de cada cambio (y al volver a la app), no solo al entrar
+function programarEnvio(ms = 15000) {
+  if (!CONFIG.ESTADISTICA_URL || !Almacen.doc || Almacen.bloqueada() || !((ajuste("terminos", null)?.version || 0) >= TERMINOS_VERSION)) return;
+  clearTimeout(estado.envioTimer);
+  estado.envioTimer = setTimeout(() => informarUso().then(() => aportarEstadistica()).catch(() => {}), ms);
+}
 
 // ---------- Inicio ----------
 
@@ -465,7 +472,7 @@ async function aportarEstadistica() {
   const enviados = { ...ajuste("aportes_enviados", {}) };
   try {
     // Solo con el receptor de tablas separadas (versión 2 del script): al de la primera versión no se le manda nada
-    if (!((await fetch(url).then((x) => x.json())).version >= 2)) return 0;
+    if (!((await fetch(url).then((x) => x.json())).version >= 2)) { anotarEnvio("el receptor es de una versión anterior: no se envía"); return 0; }
     let uid = ajuste("aportante", null);
     if (!uid) { uid = nuevoAportante(); await Almacen.ajuste("aportante", uid); }
     const firma = async (f) => (await sha256(JSON.stringify(Object.entries(f).filter(([k]) => k !== "id").sort()))).slice(0, 12);
@@ -481,7 +488,8 @@ async function aportarEstadistica() {
         n += lote.length;
       }
     }
-  } catch { /* sin conexión o receptor viejo/caído: se reintenta la próxima vez */ }
+    anotarEnvio(n ? `${n} ${n === 1 ? "fila enviada" : "filas enviadas"}` : "nada nuevo para enviar");
+  } catch (e) { anotarEnvio("no se pudo enviar (" + (e.message === "receptor" ? "el receptor no respondió bien" : "sin conexión") + "): se reintenta solo"); }
   finally {
     estado.aportando = false;
   }
@@ -489,6 +497,21 @@ async function aportarEstadistica() {
   if (n) await Almacen.ajuste("aportes_enviados", enviados);
   return n;
 }
+// Último resultado del envío a la base común (se ve en Valores → Mi cuenta)
+function anotarEnvio(texto) {
+  try { localStorage.setItem("liq-envio", JSON.stringify({ texto, cuando: Date.now() })); } catch { /* nada */ }
+  if (estado.vista === "valores") verEstadoEnvio();
+}
+function verEstadoEnvio() {
+  let e = null;
+  try { e = JSON.parse(localStorage.getItem("liq-envio") || "null"); } catch { /* nada */ }
+  const aportadas = Object.keys(ajuste("aportes_enviados", {})).length;
+  $("#compartir-estado").textContent = !CONFIG.ESTADISTICA_URL ? "La base común todavía no está habilitada: por ahora no se envía nada."
+    : !ajuste("compartir_economicos", false) ? "No estás compartiendo."
+    : `Compartiendo: ${aportadas} ${aportadas === 1 ? "fila aportada" : "filas aportadas"}, sin datos de pacientes.` +
+      (e ? ` Último envío: ${new Date(e.cuando).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${e.texto}.` : "");
+}
+
 // ---------- Cuentas y uso (para el administrador) ----------
 // Una vez por hora como máximo: correo (o un número de este dispositivo si no conectó Google), especialidad, versión, último uso y
 // cantidades. Nunca datos de pacientes ni montos, y nunca el acceso de Google. Va a una planilla aparte de la base anónima.
@@ -1797,10 +1820,9 @@ function verValores() {
   $("#monto-ayudantia").value = ajuste("monto_ayudantia", 0) || "";
   $("#compartir").checked = !!ajuste("compartir_economicos", false);
   verAdministracion();
-  const aportadas = Object.keys(ajuste("aportes_enviados", {})).length;
-  $("#compartir-estado").textContent = !CONFIG.ESTADISTICA_URL ? "La base común todavía no está habilitada: por ahora no se envía nada."
-    : ajuste("compartir_economicos", false) ? `Compartiendo: ${aportadas} ${aportadas === 1 ? "línea aportada" : "líneas aportadas"}, sin datos de pacientes.` : "No estás compartiendo.";
-  $("#borrar-aportes").hidden = !aportadas;
+  verEstadoEnvio();
+  $("#borrar-aportes").hidden = !Object.keys(ajuste("aportes_enviados", {})).length;
+  $("#enviar-ahora").hidden = !CONFIG.ESTADISTICA_URL || !ajuste("compartir_economicos", false);
   $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 70);
   $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
@@ -2667,6 +2689,7 @@ async function arrancar() {
   $("#subir-ahora").addEventListener("click", () => renovarAcceso() || aviso("Terminá de cargar lo que estás editando y volvé a tocar «Subir a Drive»."));
   // Al volver a la app con cambios sin subir y el acceso vencido: renovarlo y subir
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && !Almacen.bloqueada()) programarEnvio(3000);
     if (document.visibilityState !== "visible" || Almacen.bloqueada() || !Almacen.doc.cuenta) return;
     if (Almacen.tieneToken()) { if (Almacen.pendiente) Almacen.sincronizar().then(refrescar).catch(() => {}); }
     else if (Almacen.pendiente) renovarAcceso();
@@ -2891,7 +2914,7 @@ async function arreglarPlanillas() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "77"; // igual que VERSION en sw.js
+const VERSION_APP = "78"; // igual que VERSION en sw.js
 
 function registrarActualizaciones() {
   if (!("serviceWorker" in navigator)) return;
@@ -3016,6 +3039,14 @@ function configurarSeguridad() {
     await Almacen.ajuste("compartir_economicos", $("#compartir").checked);
     const n = $("#compartir").checked ? await aportarEstadistica() : 0;
     aviso($("#compartir").checked ? `Gracias: aportás tus cobros anónimos${n ? ` (${n} líneas enviadas)` : ""}.` : "Dejaste de compartir. Lo ya aportado queda, salvo que lo borres.");
+    verValores();
+  });
+  $("#enviar-ahora").addEventListener("click", async () => {
+    $("#enviar-ahora").disabled = true;
+    await informarUso({ forzar: true });
+    const n = await aportarEstadistica();
+    $("#enviar-ahora").disabled = false;
+    aviso(n ? `Enviadas ${n} filas a la base común.` : "No había nada nuevo para enviar (o no se pudo: mirá el detalle en Mi cuenta).");
     verValores();
   });
   $("#borrar-aportes").addEventListener("click", async () => {
