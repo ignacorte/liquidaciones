@@ -439,7 +439,9 @@ async function tablasEconomicas(uid) {
   for (const p of Almacen.doc.prestaciones) {
     if (p.borrada || p.solo_registro && !["cobrada", "debitada"].includes(p.estado) || !fecha(p.fecha)) continue;
     const anest = p.especialidad === "anestesia", rama = anest ? "anestesia" : "cirugia";
-    const id = async (tabla, i = 0) => (await sha256(`${uid}:${tabla}:${p.id}:${i}`)).slice(0, 32);
+    // El id sale solo de la prestación (la misma en todos los dispositivos de la cuenta): mandada desde el celular o la computadora,
+    // ocupa una sola fila. (Antes dependía del número de aportante de cada dispositivo y se duplicaba.)
+    const id = async (tabla, i = 0) => (await sha256(`liq:${tabla}:${p.id}:${i}`)).slice(0, 32);
     const cobrada = ["cobrada", "debitada"].includes(p.estado) && p.monto_cobrado != null && fecha(p.fecha_cobro);
     const dias = cobrada ? Math.round((Date.parse(p.fecha_cobro) - Date.parse(p.fecha)) / 864e5) : "";
     const debitado = p.estado === "debitada" ? Math.max(0, (p.valor_estimado || 0) - (p.monto_cobrado || 0)) : "";
@@ -474,9 +476,20 @@ async function aportarEstadistica() {
   const enviados = { ...ajuste("aportes_enviados", {}) };
   try {
     // Solo con el receptor de tablas separadas (versión 2 del script): al de la primera versión no se le manda nada
-    if (!((await fetch(url).then((x) => x.json())).version >= 2)) { anotarEnvio("el receptor es de una versión anterior: no se envía"); return 0; }
+    // Desde la v81, solo con el receptor versión 4 (ids sin duplicados y limpieza de lo viejo)
+    if (!((await fetch(url).then((x) => x.json())).version >= 4)) { anotarEnvio("el script de la planilla es de una versión anterior: no se envía hasta actualizarlo"); return 0; }
     let uid = ajuste("aportante", null);
     if (!uid) { uid = nuevoAportante(); await Almacen.ajuste("aportante", uid); }
+    // v81: lo mandado con el id viejo (por dispositivo) se borra una vez y se vuelve a mandar con el id nuevo (sin duplicados)
+    let esquema = 1;
+    try { esquema = Number(localStorage.getItem("liq-esquema-aporte") || 1); } catch { /* nada */ }
+    if (esquema < 2) {
+      const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "limpiar_viejas", aportante: uid }) }).then((x) => x.json());
+      if (!r.ok) throw new Error("receptor");
+      for (const k of Object.keys(enviados)) delete enviados[k];
+      await Almacen.ajuste("aportes_enviados", {});
+      try { localStorage.setItem("liq-esquema-aporte", "2"); } catch { /* nada */ }
+    }
     const firma = async (f) => (await sha256(JSON.stringify(Object.entries(f).filter(([k]) => k !== "id").sort()))).slice(0, 12);
     for (const [tabla, filas] of Object.entries(await tablasEconomicas(uid))) {
       const pendientes = [];
@@ -2973,7 +2986,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "80"; // igual que VERSION en sw.js
+const VERSION_APP = "81"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)

@@ -152,6 +152,20 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     if (d.accion === "uso") return salida(registrarUso(d));
+    // Una vez, desde la versión 81 de la app: lo mandado por versiones anteriores (id por dispositivo, se duplicaba) se borra; cada
+    // dispositivo lo vuelve a mandar con el id nuevo
+    if (d.accion === "limpiar_viejas") {
+      let n = 0;
+      for (const t in TABLAS) {
+        const h = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABLAS[t].hoja) ? hoja(t) : null;
+        if (!h) continue;
+        const datos = h.getDataRange().getValues(), col = columnas(t).indexOf("version");
+        for (let i = datos.length - 1; i >= 1; i--) if (Number(datos[i][col]) < 81) { h.deleteRow(i + 1); n++; }
+      }
+      const vieja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Cobros");
+      if (vieja && SpreadsheetApp.getActiveSpreadsheet().getSheets().length > 1) SpreadsheetApp.getActiveSpreadsheet().deleteSheet(vieja);
+      return salida({ ok: true, borradas: n });
+    }
     const aportante = String(d.aportante || "");
     if (!/^[a-f0-9-]{32,40}$/.test(aportante)) return salida({ ok: false, error: "aportante inválido" });
     if (d.accion === "borrar") {
