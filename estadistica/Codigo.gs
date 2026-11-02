@@ -1,5 +1,5 @@
-// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 5 (hojas con títulos en castellano;
-// códigos y meses siempre como texto).
+// Receptor de «Liquidaciones» (Google Apps Script, en la cuenta del responsable). Versión 6 (hojas con títulos en castellano;
+// códigos y meses siempre como texto; lo borrado en la app se quita).
 // 1) Base económica ANÓNIMA (esta planilla). 2) Cuentas y uso (OTRA planilla, «Liquidaciones – Cuentas y uso», que se crea sola la
 // primera vez): correo, especialidad, versión, último uso y cantidades, sin datos de pacientes ni montos. Están separadas para que no
 // se pueda cruzar quién aportó cada fila anónima (en la base anónima la llegada se guarda solo como mes).
@@ -172,6 +172,18 @@ function doPost(e) {
     }
     const aportante = String(d.aportante || "");
     if (!/^[a-f0-9-]{32,40}$/.test(aportante)) return salida({ ok: false, error: "aportante inválido" });
+    // Lo que el profesional borró en la app: esas filas (por id) se quitan de todas las hojas
+    if (d.accion === "quitar") {
+      const ids = new Set((Array.isArray(d.ids) ? d.ids : []).slice(0, MAX_FILAS).map(String).filter((x) => /^[a-f0-9]{16,64}$/.test(x)));
+      let n = 0;
+      for (const t in TABLAS) {
+        const h = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABLAS[t].hoja) ? hoja(t) : null;
+        if (!h || !ids.size) continue;
+        const datos = h.getDataRange().getValues(), col = columnas(t).indexOf("id");
+        for (let i = datos.length - 1; i >= 1; i--) if (ids.has(String(datos[i][col]))) { h.deleteRow(i + 1); n++; }
+      }
+      return salida({ ok: true, quitadas: n });
+    }
     if (d.accion === "borrar") {
       // En todas las hojas de la base anónima (también la «Cobros» de la primera versión), de abajo hacia arriba; las cuentas no
       let n = 0;
@@ -232,5 +244,5 @@ function doGet() {
     }
     cuentasUrl = libro.getUrl();
   }
-  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 5, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
+  return salida({ ok: true, servicio: "Liquidaciones · base económica anónima", version: 6, filas: filas, cuentas: cuentas, cuentas_url: cuentasUrl });
 }

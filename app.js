@@ -51,6 +51,14 @@ const RUTA_DOCS = ["Anestesiología", "Documentos"]; // donde estaban hasta la v
 // «<Rama>/Listados de consultas/<año>» y «<Rama>/Planillas cargadas». Nombres que empiezan con la fecha (se ordenan solos).
 const RAMA_DRIVE = (p) => ((p?.especialidad || ajuste("especialidad", "cirugia")) === "anestesia" ? "Anestesiología" : "Cirugía");
 const rutaPaciente = (p) => [RAMA_DRIVE(p), "Pacientes", (p.fecha || hoy()).slice(0, 4)];
+// Borrar una prestación: queda marcada (se recupera desde un respaldo) y su carpeta de documentos sale de «Pacientes» y pasa a
+// «<Rama>/Borradas» en el Drive (no se elimina: nunca se pierde nada). La base común la quita en el próximo envío.
+async function borrarPrestacion(p) {
+  await Almacen.borrar("prestaciones", p.id);
+  if (!p.carpeta_docs?.id || !Almacen.doc.cuenta) return false;
+  await Almacen.encolarMover(p.id, p.carpeta_docs.id, [RAMA_DRIVE(p), "Borradas"], null, { aRuta: true });
+  return true;
+}
 // Otros documentos del paciente (las dos ramas): el parte quirúrgico y las fotos con sus datos
 const DOCS_EXTRA = {
   parte: { campo: "doc_parte", lista: "parte_archivos", nombre: "Parte quirúrgico", archivo: "Parte quirúrgico" },
@@ -477,7 +485,8 @@ async function aportarEstadistica() {
   try {
     // Solo con el receptor de tablas separadas (versión 2 del script): al de la primera versión no se le manda nada
     // Desde la v81, solo con el receptor versión 4 (ids sin duplicados y limpieza de lo viejo)
-    if (!((await fetch(url).then((x) => x.json())).version >= 4)) { anotarEnvio("el script de la planilla es de una versión anterior: no se envía hasta actualizarlo"); return 0; }
+    const receptor = await fetch(url).then((x) => x.json());
+    if (!(receptor.version >= 4)) { anotarEnvio("el script de la planilla es de una versión anterior: no se envía hasta actualizarlo"); return 0; }
     let uid = ajuste("aportante", null);
     if (!uid) { uid = nuevoAportante(); await Almacen.ajuste("aportante", uid); }
     // v81: lo mandado con el id viejo (por dispositivo) se borra una vez y se vuelve a mandar con el id nuevo (sin duplicados)
@@ -489,6 +498,22 @@ async function aportarEstadistica() {
       for (const k of Object.keys(enviados)) delete enviados[k];
       await Almacen.ajuste("aportes_enviados", {});
       try { localStorage.setItem("liq-esquema-aporte", "2"); } catch { /* nada */ }
+    }
+    // Lo que se borró en la app se quita de la base común (receptor versión 6)
+    if (receptor.version >= 6) {
+      const quitar = [];
+      for (const p of Almacen.doc.prestaciones.filter((x) => x.borrada)) {
+        const ids = [(await sha256(`liq:facturacion:${p.id}:0`)).slice(0, 32)];
+        for (let i = 0; i < Math.max(1, (p.cobro_lineas || []).length); i++) ids.push((await sha256(`liq:liquidaciones:${p.id}:${i}`)).slice(0, 32));
+        quitar.push(...ids.filter((id) => enviados[id]));
+      }
+      for (let i = 0; i < quitar.length; i += 200) {
+        const lote = quitar.slice(i, i + 200);
+        const r = await fetch(url, { method: "POST", body: JSON.stringify({ accion: "quitar", aportante: uid, ids: lote }) }).then((x) => x.json());
+        if (!r.ok) throw new Error("receptor");
+        for (const id of lote) delete enviados[id];
+        n += lote.length;
+      }
     }
     const firma = async (f) => (await sha256(JSON.stringify(Object.entries(f).filter(([k]) => k !== "id").sort()))).slice(0, 12);
     for (const [tabla, filas] of Object.entries(await tablasEconomicas(uid))) {
@@ -1536,7 +1561,8 @@ function editar(p) {
   pintar();
   cuerpo.onclick = async (ev) => {
     if (ev.target.matches("[data-cerrar]")) dlg.close();
-    if (ev.target.matches("[data-borrar]") && confirm("¿Borrar esta prestación?")) { await Almacen.borrar("prestaciones", p.id); dlg.close(); refrescar(); }
+    if (ev.target.matches("[data-borrar]") && confirm("¿Borrar esta prestación?")) { const movida = await borrarPrestacion(p); dlg.close(); refrescar();
+      if (movida) aviso("Borrada. Su carpeta de documentos pasó a «Borradas» en tu Drive (se puede recuperar)."); }
     if (ev.target.matches("[data-ok]")) {
       const datosForm = leerCampos(cuerpo, actual), f = faltantes(datosForm);
       if (f.length) return aviso("Falta completar: " + f.join(", "));
@@ -2986,7 +3012,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "81"; // igual que VERSION en sw.js
+const VERSION_APP = "82"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
