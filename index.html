@@ -11,7 +11,7 @@
 <link rel="icon" href="icono.svg">
 <link rel="apple-touch-icon" href="icono-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="estilos.css?v=83">
+<link rel="stylesheet" href="estilos.css?v=84">
 </head>
 <body>
 <header>
@@ -58,6 +58,10 @@
 
   <!-- Inicio: resumen del mes -->
   <section id="v-inicio">
+    <div class="card" id="ia-inicio">
+      <div class="chat-fila"><textarea id="ia-inicio-texto" rows="1" placeholder="✨ Preguntale a la IA: ¿cuánto me falta cobrar?" enterkeyhint="send"></textarea>
+        <button class="chat-enviar" id="ia-inicio-enviar" title="Preguntar">➤</button></div>
+    </div>
     <div class="alerta" id="sin-copia" hidden></div>
     <div class="buscador"><input id="buscar-inicio" type="search" placeholder="🔎 Buscar paciente, DNI o procedimiento" autocomplete="off"><div class="tabla" id="buscar-res"></div></div>
     <div class="kpis" id="kpis"></div>
@@ -232,7 +236,8 @@
         <label class="ancho">Modelo<input id="ia-modelo" list="ia-modelos" autocomplete="off"></label>
       </div>
       <datalist id="ia-modelos"></datalist>
-      <div class="fila"><button class="boton chico" id="ia-guardar">Guardar y probar</button><button class="boton chico peligro" id="ia-borrar">Borrar la clave</button></div>
+      <div class="fila"><button class="boton chico" id="ia-guardar">Guardar y probar</button><button class="boton chico secundario" id="ia-traer">Usar la clave de Pedidos</button><button class="boton chico peligro" id="ia-borrar">Borrar la clave</button></div>
+      <p class="ayuda">¿Ya la cargaste en la app Pedidos? Con el mismo PIN en las dos apps se toma sola al entrar; si no, «Usar la clave de Pedidos» te pide el PIN de Pedidos.</p>
       <p id="ia-estado" class="ayuda"></p>
       <details id="errores-drive" hidden><summary class="ayuda">⚠️ Problemas con el Drive en esta sesión</summary><ul class="ayuda" id="errores-drive-lista"></ul></details>
       <p class="ayuda solo-colega" id="especialidad-texto"></p>
@@ -350,12 +355,12 @@
 
 <dialog id="dlg"><div class="card" id="dlg-cuerpo"></div></dialog>
 <div id="toast" hidden></div>
-<script src="config.js?v=83"></script>
-<script src="motor.js?v=83"></script>
-<script src="lector.js?v=83"></script>
-<script src="importar.js?v=83"></script>
-<script src="almacen.js?v=83"></script>
-<script src="asistente.js?v=83"></script>
-<script src="app.js?v=83"></script>
+<script src="config.js?v=84"></script>
+<script src="motor.js?v=84"></script>
+<script src="lector.js?v=84"></script>
+<script src="importar.js?v=84"></script>
+<script src="almacen.js?v=84"></script>
+<script src="asistente.js?v=84"></script>
+<script src="app.js?v=84"></script>
 </body>
 </html>

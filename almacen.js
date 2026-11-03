@@ -76,6 +76,7 @@ const Almacen = (() => {
     llave = await derivar(pin, sal, ITERACIONES);
     meta = { sal, iteraciones: ITERACIONES, verificador: await cifrar(PRUEBA) };
     await idbEscribir({ pin: meta });
+    adoptarSecreto("groq", pin).catch(() => {});
     await escribirLocal(); // lo que hubiera sin cifrar (versión anterior) queda cifrado
     if (adjuntos) await guardarAdjuntos();
     if (secretos) await idbEscribir({ secretos: await cifrar(secretos) });
@@ -90,6 +91,31 @@ const Almacen = (() => {
     return secretos;
   }
   const secreto = async (nombre) => (llave ? (await leerSecretos())[nombre] ?? null : null);
+  // Clave del asistente compartida con la otra app (Pedidos ⇄ Liquidaciones, mismo sitio): cada una la guarda cifrada con
+  // su propio PIN; con el PIN de la otra se abre la suya (nunca sin PIN). Al desbloquear, si acá no hay clave y la otra tiene
+  // una con el mismo PIN, se copia (y queda cifrada con el PIN de acá).
+  const OTRA = { db: "pedidos", nombre: "Pedidos" };
+  async function secretoDeOtra(nombre, pin) {
+    const db = await new Promise((ok) => {
+      const r = indexedDB.open(OTRA.db);
+      r.onupgradeneeded = () => r.transaction.abort(); // la otra app no se usa en este navegador: no se crea nada
+      r.onsuccess = () => ok(r.result); r.onerror = () => ok(null);
+    });
+    if (!db) return null;
+    try {
+      if (!db.objectStoreNames.contains(STORE)) return null;
+      const leer = (k) => new Promise((ok) => { const r = db.transaction(STORE).objectStore(STORE).get(k); r.onsuccess = () => ok(r.result ?? null); r.onerror = () => ok(null); });
+      const m = await leer("pin"), s = await leer("secretos");
+      if (!m || !s) return null;
+      return (await descifrar(s, await derivar(pin, m.sal, m.iteraciones)))[nombre] ?? null;
+    } catch { return null; } finally { db.close(); }
+  }
+  async function adoptarSecreto(nombre, pin) {
+    if (!llave || (await secreto(nombre))) return false;
+    const v = await secretoDeOtra(nombre, pin);
+    if (v && llave) { await guardarSecreto(nombre, v); return true; }
+    return false;
+  }
   async function guardarSecreto(nombre, valor) {
     if (!llave) throw new Error("Desbloqueá la app primero.");
     const s = { ...(await leerSecretos()) };
@@ -117,6 +143,7 @@ const Almacen = (() => {
       throw new Error(f.n >= 5 ? "PIN incorrecto. Esperá antes de volver a intentar." : `PIN incorrecto (${f.n} de 5 intentos).`);
     }
     llave = k;
+    adoptarSecreto("groq", pin).catch(() => {});
     await idbEscribir({ fallos: undefined });
     await guardarSesion();
     await cargar();
@@ -648,7 +675,7 @@ const Almacen = (() => {
   return {
     iniciar, guardar, guardarVarios, guardarEnMemoria, confirmar, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, encolarMover, enlaceCarpeta, get registro() { return registro; },
     venceEn: () => (tokenMem?.vence || venceToken) - Date.now(), get errorAdjuntos() { return errorAdjuntos; },
-    adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, secreto, guardarSecreto, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, secreto, guardarSecreto, secretoDeOtra, otraApp: OTRA.nombre, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
     accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),

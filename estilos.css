@@ -203,3 +203,5 @@ body:has(#v-asistente:not([hidden])) #toast { bottom: 150px; }
 .cambio-ia del { color: var(--rojo, #b42318); }
 .cambio-ia ins { color: var(--verde, #15803d); text-decoration: none; }
 .aviso-ia { color: var(--ambar, #b45309); }
+#ia-inicio { padding: 8px 10px; }
+#ia-inicio-texto { flex: 1; resize: none; border-radius: 20px; padding: 10px 14px; }

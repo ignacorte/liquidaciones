@@ -1691,6 +1691,17 @@ async function guardarIA() {
     $("#ia-estado").textContent = "✓ Clave guardada en este dispositivo y probada.";
   } catch (e) { $("#ia-estado").textContent = "⚠️ " + e.message; }
 }
+// La clave ya cargada en la otra app (mismo sitio), abierta con el PIN de esa app
+async function traerClaveIA() {
+  const pin = prompt(`PIN de ${Almacen.otraApp} (para abrir la clave que guardaste ahí):`);
+  if (!pin) return;
+  $("#ia-estado").textContent = "Buscando la clave…";
+  const clave = await Almacen.secretoDeOtra("groq", pin);
+  if (!clave) { $("#ia-estado").textContent = `No encontré una clave de ${Almacen.otraApp} en este navegador con ese PIN.`; return; }
+  await Almacen.guardarSecreto("groq", clave);
+  await verIA();
+  $("#ia-estado").textContent = `✓ Se usa la misma clave que en ${Almacen.otraApp} (guardada acá cifrada con tu PIN).`;
+}
 async function borrarIA() {
   if (!confirm("¿Borrar la clave de Groq de este dispositivo?")) return;
   await Almacen.guardarSecreto("groq", null);
@@ -2974,6 +2985,11 @@ async function arrancar() {
   $("#v-asistente").addEventListener("click", (e) => { const a = e.target.closest("[data-ir-a]"); if (a) { e.preventDefault(); ir(a.dataset.irA); } });
   $("#ia-guardar").addEventListener("click", guardarIA);
   $("#ia-borrar").addEventListener("click", () => borrarIA().catch((e) => aviso(e.message)));
+  $("#ia-traer").addEventListener("click", () => traerClaveIA().catch((e) => aviso(e.message)));
+  // Desde Inicio: la pregunta pasa al asistente
+  const preguntarDesdeInicio = () => { const t = $("#ia-inicio-texto").value.trim(); if (!t) return ir("asistente"); $("#ia-inicio-texto").value = ""; ir("asistente"); $("#chat-texto").value = t; enviarChat().catch((e) => aviso(e.message)); };
+  $("#ia-inicio-enviar").addEventListener("click", preguntarDesdeInicio);
+  $("#ia-inicio-texto").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); preguntarDesdeInicio(); } });
   $("#version-app").textContent = "Versión " + VERSION_APP;
   $("#actualizar-app").addEventListener("click", (ev) => { ev.preventDefault(); aviso("Buscando la versión nueva…"); actualizarAhora(); });
   $("#copia-bajar").addEventListener("click", async () => {
@@ -3289,7 +3305,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "83"; // igual que VERSION en sw.js
+const VERSION_APP = "84"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)

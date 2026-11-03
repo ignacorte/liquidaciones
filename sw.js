@@ -2,7 +2,7 @@
 // App: con conexión, siempre la versión publicada (la copia guardada es solo para cuando no hay señal). Librerías de
 // vendor/ (versión fija, ~27 MB): se descargan una sola vez, la primera vez que se lee un documento.
 // Nunca se guardan respuestas de Google (datos del profesional) ni del asistente de IA (solo se atiende el propio origen).
-const VERSION = "liquidaciones-v83"; // igual que VERSION_APP en app.js
+const VERSION = "liquidaciones-v84"; // igual que VERSION_APP en app.js
 const LIBRERIAS = "liquidaciones-libs-2"; // aparte: no se vuelve a bajar en cada actualización de la app
 // Los .js y .css llevan «?v=N» en index.html (igual que VERSION): así nunca se mezcla un archivo viejo guardado en el
 // navegador con uno nuevo (le pasó a la app Pedidos: app.js nuevo con almacen.js viejo)
