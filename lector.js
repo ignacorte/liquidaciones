@@ -508,6 +508,8 @@ const Lector = (() => {
     const numeros = despues.split(/\s+/).map((t) => t.replace(/[^\dA-Za-z|]/g, "")).filter((t) => t.length >= 5 && (t.match(/\d/g) || []).length / t.length >= 0.6)
       .map(NUMERICO).map((t) => t.replace(/\D/g, ""));
     const nota = (despues.match(/[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ./]{2,}/) || [""])[0].trim();
+    // Un renglón del turnero tiene hora o código; si no, es texto en mayúsculas con una coma (la evolución de una HC)
+    if (!hora && !numeros.length) return null;
     let os = obraSocial(osTexto) || obraSocial(osTexto.replace(/^PAMI\S*/i, "PAMI")); // PAMIUC (y cómo lo lee el lector: PAMIIC, PAMILC…)
     const codigo = numeros.find((n) => n.length === 6 || n.length === 8) || "";
     if (!os && /^8201\d\d$/.test(codigo)) os = "PAMI"; // 820126: consulta de especialista, nomenclador PAMI
@@ -578,30 +580,74 @@ const Lector = (() => {
     for (const linea of texto.split(/\r?\n/)) {
       const m = linea.match(/^\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s+(.+)$/);
       if (!m) continue;
-      const cajas = m[3].split(/\s*#\s*|\s{3,}/).map((c) => c.trim()).filter(Boolean);
+      // Primero por «#» (el lector a veces lo lee «=»): «PAMIUC # ROMAGNOLI   ANTONIO JO = 820126   CITADO # PAMI OME» deja
+      // el nombre entero en una caja aunque apellido y nombre vengan separados por espacios; si no hay «#», por espacios
+      let cajas = m[3].split(/\s*[#=]\s*/).map((c) => c.replace(/\s+/g, " ").trim()).filter(Boolean);
+      if (cajas.length < 3) cajas = m[3].split(/\s*[#=]\s*|\s{3,}/).map((c) => c.trim()).filter(Boolean);
       if (cajas.length < 2) continue;
       const osTexto = cajas[0];
       const os = obraSocial(osTexto) || obraSocial(osTexto.replace(/^PAMI\S*/i, "PAMI")) || obraSocial(osTexto.replace(/^INSS\S*/i, "INSSJP"));
       const resto = cajas.slice(1);
-      const i = resto.findIndex((c) => /^[A-Za-zÁÉÍÓÚÑáéíóúñü' .]{4,}$/.test(c) && c.split(/\s+/).filter((w) => w.length > 1).length >= 2);
+      // Nombre: las palabras del principio de una caja, hasta el primer número («FICTICIA ANA MARIA la20126»)
+      const nombreDe = (c) => {
+        const w = c.split(/\s+/);
+        let k = 0;
+        while (k < w.length && /^[A-Za-zÁÉÍÓÚÑáéíóúñü'.]+$/.test(w[k])) k++;
+        const nombre = w.slice(0, k).join(" ");
+        return nombre.length >= 4 && w.slice(0, k).filter((x) => x.length > 1).length >= 2 ? { nombre, resto: w.slice(k) } : null;
+      };
+      const i = resto.findIndex(nombreDe);
       if (i < 0) continue;
-      const numeros = resto.slice(i + 1).map((c) => NUMERICO(c).replace(/\D/g, "")).filter((n) => n.length >= 5);
+      const { nombre, resto: cola } = nombreDe(resto[i]);
+      const despues = [...cola, ...resto.slice(i + 1).flatMap((c) => c.split(/\s+/))]; // «820126 CITADO PORD R»: cada palabra por separado
+      const numeros = despues.filter((c) => /\d/.test(c)).map((c) => NUMERICO(c).replace(/\D/g, "")).filter((n) => n.length >= 5);
       // 820126 (consulta de especialista PAMI) mal leído: «la20126», «8e012€»
-      const consultaPami = resto.slice(i + 1).some((c) => c.length >= 5 && c.length <= 7 && parecido(c.toLowerCase(), "820126") >= 0.6);
+      const consultaPami = despues.some((c) => c.length >= 5 && c.length <= 7 && parecido(c.toLowerCase(), "820126") >= 0.6);
       const codigo = numeros.find((n) => /^8201\d\d$/.test(n) || n.length === 8) || (consultaPami ? "820126" : numeros.find((n) => n.length === 6)) || "";
       if (!os && !numeros.length && !consultaPami) continue;
-      const nota = resto.slice(i + 1).filter((c) => /[A-Za-z]{3,}/.test(c) && !/^#?\s*PAMI\b|^OME$/i.test(c)).join(" ").trim();
-      filas.push({ fecha, hora: `${m[1].padStart(2, "0")}:${m[2]}`, paciente: resto[i].replace(/[.\s]+$/, "").toUpperCase(), dni: "", afiliado: "",
+      const nota = despues.filter((c) => /^[A-Za-zÁÉÍÓÚÑ.]{2,}$/.test(c) && !/^(PAMI\S*|OME)$/i.test(c)).join(" ").trim();
+      filas.push({ fecha, hora: `${m[1].padStart(2, "0")}:${m[2]}`, paciente: nombre.replace(/[.\s]+$/, "").toUpperCase(), dni: "", afiliado: "",
         tipo: "consulta", obra_social_texto: os || osTexto, codigo_os: codigo, atencion: "", notas: nota, ausente: false, detalle: "" });
     }
     return filas;
   }
+
+  // Historia clínica de UN paciente (pantalla de la HC, evolución ambulatoria o sus datos personales): es una sola consulta,
+  // no un renglón por paciente. Nombre de «Apellido y Nombre:  ROMAGNOLI   ANTONIO JOSE» o del título «Historia Clínica - …»
+  const ES_HC = /historia cl[ií]nica|h\.?\s?c\.?\s*ambulatori|datos personales|motivo de consulta/i;
+  const ES_TURNERO = /pacientes por d[ií]a|turnos libres|cronograma|informaci[oó]n del turno/i;
+  function consultaDeHC(texto, obraSocial, { conTurnero = false } = {}) {
+    if (!ES_HC.test(texto) || (!conTurnero && ES_TURNERO.test(texto))) return null;
+    const d = parte(texto, obraSocial);
+    const cajas = texto.match(/[Aa]pellido y [Nn]ombres?\s*:?\s*([A-ZÁÉÍÓÚÑ'][A-ZÁÉÍÓÚÑ' ]+?)\s{2,}([A-ZÁÉÍÓÚÑ'][A-ZÁÉÍÓÚÑ' ]+?)(?=\s{2,}|$)/m);
+    const titulo = (texto.match(/historia cl[ií]nica\s*[-–]\s*([A-ZÁÉÍÓÚÑ'][A-ZÁÉÍÓÚÑ' ]{4,}?)\s*$/im) || [])[1];
+    const paciente = cajas ? `${cajas[1].trim()}, ${cajas[2].trim()}` : titulo ? titulo.trim() : d.paciente;
+    if (!paciente || !(d.dni || d.afiliado || d.afiliadoPorForma)) return null;
+    return { fecha: d.fecha, hora: d.hora, paciente, dni: d.dni, afiliado: d.afiliado || d.afiliadoPorForma, tipo: "consulta",
+      obra_social_texto: obraSocial(d.obra_social_texto) || obraSocial((d.obra_social_texto || "").replace(/^(?:\d+\s*-\s*)?PAMI\S*/i, "PAMI")) || d.obra_social_texto,
+      codigo_os: "", atencion: d.atencion, notas: "", ausente: false, detalle: "" };
+  }
+  // Fotos del turnero y de la HC del mismo paciente cargadas juntas: el renglón del turnero (hora, código) se completa con
+  // el nombre entero, el DNI y el afiliado de la HC
+  function conDatosDeHC(filas, texto, obraSocial) {
+    const hc = ES_HC.test(texto) && consultaDeHC(texto, obraSocial, { conTurnero: true });
+    if (!hc) return filas;
+    const apellido = (t) => plano(t).replace(/[^a-z ]/g, " ").trim().split(/\s+/)[0] || "";
+    const f = filas.find((x) => parecido(apellido(x.paciente), apellido(hc.paciente)) >= 0.8);
+    if (!f) return filas;
+    Object.assign(f, { paciente: hc.paciente, dni: f.dni || hc.dni, afiliado: f.afiliado || hc.afiliado, obra_social_texto: f.obra_social_texto || hc.obra_social_texto });
+    return filas;
+  }
+  // Botones de las pantallas del sistema que el lector toma como texto («17:20   Cons. Medic.»)
+  const BOTONES = /cons\.? medic|diagn[oó]sticos|informar|copiar|llamar pac|hist\.? cl[ií]nica|saldo ate|actualizar|observac/i;
 
   function listado(texto, obraSocial, medico) {
     if (/prestaci\S*\s+\d{6}/i.test(texto) && /tipo de anestesia/i.test(texto)) {
       const p = programaQuirofano(texto, obraSocial, medico);
       if (p.length) return p;
     }
+    const hc = consultaDeHC(texto, obraSocial);
+    if (hc) return [{ ...hc, fecha: hc.fecha || "" }];
     const filas = [];
     const fecha = fechaISO(texto) || fechaProbable(texto);
     // Turnero de Geclisa: renglones con «#» (o lo que el lector haya hecho de ellos) y código de consulta
@@ -612,13 +658,14 @@ const Lector = (() => {
         filas.push({ fecha, hora: t.hora, paciente: t.paciente, dni: "", afiliado: "", tipo: "consulta", obra_social_texto: t.obra_social_texto,
           codigo_os: t.codigo_os, atencion: t.atencion, notas: t.nota, ausente: false, detalle: "" });
       }
-      if (filas.length) return sinRepetir(filas);
+      if (filas.length) return conDatosDeHC(sinRepetir(filas), texto, obraSocial);
       const porDia = turnosPorDia(texto, obraSocial, fecha);
-      if (porDia.length) return sinRepetir(porDia);
+      if (porDia.length) return conDatosDeHC(sinRepetir(porDia), texto, obraSocial);
     }
     for (const linea of texto.split(/\r?\n/)) {
       const p = plano(linea);
       if (!p.trim() || /\b(fecha|hora|paciente|apellido|obra social|turno)s?\b.*\b(obra social|paciente|dni|hora)\b/.test(p)) continue; // encabezado
+      if (BOTONES.test(linea) && !obraSocial(linea)) continue;
       const hora = (linea.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/) || [""])[0].replace(".", ":");
       const os = obraSocial(linea);
       const numeros = (linea.match(/\d[\d.\/-]{5,}\d/g) || []).map(soloDigitos);
@@ -851,6 +898,11 @@ const Lector = (() => {
       return listado(texto, obraSocial, medico).map((f) => ({ ...f, tipo: f.tipo, procedimiento: f.procedimiento || (f.tipo === "practica" ? f.detalle : ""),
         institucion: "", origen: "foto_listado", incluir: !f.ausente }));
     }
+    // Elegido «Parte» pero es la HC de una consulta (sin procedimiento ni protocolo quirúrgico): una consulta
+    const sinCirugia = !/protocolo quir|operaci[oó]n (?:efectuada|practicada|realizada)|cirug[ií]a (?:realizada|efectuada)|procedimiento|parte quir|foja quir/i.test(texto);
+    const hc = sinCirugia && consultaDeHC(texto, obraSocial, { conTurnero: true });
+    if (hc && !parte(texto, obraSocial).procedimientos.some(Boolean))
+      return [{ ...hc, procedimiento: "", institucion: lugarDe(texto), origen: "foto_parte", incluir: true }];
     const d = parte(texto, obraSocial);
     if (!d.afiliado && d.afiliadoPorForma) d.afiliado = d.afiliadoPorForma;
     if (!d.institucion) d.institucion = lugarDe(texto);
