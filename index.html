@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1f3a5f">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://www.googleapis.com https://script.google.com https://script.googleusercontent.com; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://www.googleapis.com https://script.google.com https://script.googleusercontent.com https://api.groq.com; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Liquidaciones</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icono.svg">
 <link rel="apple-touch-icon" href="icono-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="estilos.css">
+<link rel="stylesheet" href="estilos.css?v=83">
 </head>
 <body>
 <header>
@@ -20,6 +20,7 @@
     <button id="cambiar-rama" class="rama solo-admin" hidden></button></div></div>
   <button id="subir-ahora" class="boton chico" style="background:var(--oro);color:#1d2329;border-color:var(--oro)" hidden>Subir a Drive</button>
   <div class="fila" style="margin:0;flex-wrap:nowrap"><input type="month" id="mes" aria-label="Mes">
+  <button id="abrir-asistente" class="boton chico secundario campana" aria-label="Asistente de IA" title="Asistente de IA" hidden>✨</button>
   <button id="campana" class="boton chico secundario campana" aria-label="Notificaciones" title="Notificaciones" hidden>🔔<span class="insignia" id="campana-n" hidden></span></button>
   <button id="bloquear" class="boton chico secundario" style="background:transparent;color:inherit;border-color:currentColor" aria-label="Configuración" title="Configuración" hidden>⚙️</button></div>
 </header>
@@ -68,6 +69,26 @@
   </section>
 
   <!-- Cargar: fotos o a mano -->
+  <!-- Asistente de IA (asistente.js): preguntas y cambios en lenguaje común; nada de pacientes sale del celular -->
+  <section id="v-asistente" hidden>
+    <div id="chat-inicio">
+      <h2>¿En qué te ayudo?</h2>
+      <p class="ayuda">Preguntá por tus cobros o pedí cambios en tus prestaciones. Por ejemplo: ¿cuánto me falta cobrar?, ¿qué tengo vencido?, marcar como cobradas las de una obra social, corregir la obra social o el procedimiento de una cirugía. Con <b>+</b> cargás un listado, un parte o una liquidación (se lee dentro del celular).</p>
+      <p class="ayuda candado">🔒 A la IA nunca le llega el nombre, el DNI ni el afiliado de tus pacientes, y no guarda ni borra nada: te propone y vos aceptás.</p>
+      <div id="chat-sin-clave" class="alerta" hidden>Para usarlo, cargá tu clave gratuita de Groq en <a href="#" data-ir-a="valores">Valores › Mi cuenta › Asistente de IA</a>. Cargar con + funciona igual sin clave.</div>
+    </div>
+    <div id="chat-mensajes"></div>
+    <div class="fila" id="chat-nueva-fila" hidden><button class="boton chico secundario" id="chat-nueva">Empezar otra conversación</button></div>
+    <div id="chat-barra">
+      <div id="chat-adjuntos"></div>
+      <div class="chat-fila">
+        <label class="chat-mas" title="Cargar foto, PDF o captura">+<input type="file" id="chat-archivo" accept="image/*,application/pdf" multiple hidden></label>
+        <textarea id="chat-texto" rows="1" placeholder="Preguntá o pedí un cambio…" enterkeyhint="send"></textarea>
+        <button class="chat-enviar" id="chat-enviar" title="Enviar">➤</button>
+      </div>
+    </div>
+  </section>
+
   <section id="v-cargar" hidden>
     <div id="cargar-botones">
       <div class="card">
@@ -197,6 +218,22 @@
         <button class="boton chico secundario" id="planilla">Guardar Excel en Drive</button></div>
       <p class="ayuda" id="donde-drive"></p>
       <div class="fila"><a class="boton chico secundario" id="abrir-carpeta" target="_blank" rel="noopener" hidden>📁 Abrir mi carpeta en Drive</a></div>
+      <h3 style="margin-top:14px">Asistente de IA <span class="ayuda">(opcional)</span></h3>
+      <p class="ayuda">El botón ✨ de arriba abre un asistente para preguntar por tus cobros y pedir cambios. Usa modelos de código abierto en <b>Groq</b>, gratis; Groq no entrena con lo que recibe. A la IA nunca le llegan nombres, DNI ni afiliados de pacientes, y solo propone: vos aceptás cada cambio.</p>
+      <details class="avanzado"><summary class="ayuda">Cómo sacar tu clave gratuita (una sola vez)</summary>
+        <ol class="ayuda">
+          <li>Entrá a <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> con tu cuenta de Google.</li>
+          <li>Tocá «Create API Key», ponele de nombre «Liquidaciones» y copiá la clave (empieza con <code>gsk_</code>).</li>
+          <li>Recomendado: en <a href="https://console.groq.com/settings/data-controls" target="_blank" rel="noopener">Settings › Data Controls</a> activá <b>Zero Data Retention</b>.</li>
+          <li>Pegala acá abajo y tocá «Guardar y probar». Queda solo en este dispositivo, cifrada con tu PIN (no va a Drive).</li>
+        </ol></details>
+      <div class="grid">
+        <label class="ancho">Clave de Groq<input id="ia-clave" type="password" autocomplete="off" placeholder="gsk_…"></label>
+        <label class="ancho">Modelo<input id="ia-modelo" list="ia-modelos" autocomplete="off"></label>
+      </div>
+      <datalist id="ia-modelos"></datalist>
+      <div class="fila"><button class="boton chico" id="ia-guardar">Guardar y probar</button><button class="boton chico peligro" id="ia-borrar">Borrar la clave</button></div>
+      <p id="ia-estado" class="ayuda"></p>
       <details id="errores-drive" hidden><summary class="ayuda">⚠️ Problemas con el Drive en esta sesión</summary><ul class="ayuda" id="errores-drive-lista"></ul></details>
       <p class="ayuda solo-colega" id="especialidad-texto"></p>
       <label class="solo-admin">Especialidad (administrador)<select id="especialidad"><option value="cirugia">Cirugía</option><option value="anestesia">Anestesiología</option></select></label>
@@ -313,11 +350,12 @@
 
 <dialog id="dlg"><div class="card" id="dlg-cuerpo"></div></dialog>
 <div id="toast" hidden></div>
-<script src="config.js"></script>
-<script src="motor.js"></script>
-<script src="lector.js"></script>
-<script src="importar.js"></script>
-<script src="almacen.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=83"></script>
+<script src="motor.js?v=83"></script>
+<script src="lector.js?v=83"></script>
+<script src="importar.js?v=83"></script>
+<script src="almacen.js?v=83"></script>
+<script src="asistente.js?v=83"></script>
+<script src="app.js?v=83"></script>
 </body>
 </html>

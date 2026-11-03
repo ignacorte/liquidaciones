@@ -11,7 +11,7 @@
 <main style="padding-bottom:32px">
 <div class="card">
 <h2>Política de privacidad de «Liquidaciones»</h2>
-<p class="ayuda">Vigente desde el 1 de noviembre de 2026 (versión anterior: 21 de octubre de 2026). Ver también los <a href="terminos.html">términos y condiciones</a>.</p>
+<p class="ayuda">Vigente desde el 3 de noviembre de 2026 (versión anterior: 1 de noviembre de 2026). Ver también los <a href="terminos.html">términos y condiciones</a>.</p>
 
 <p>«Liquidaciones» es una aplicación gratuita para que profesionales de la salud registren sus prestaciones (consultas
 y cirugías), estimen honorarios por obra social y sigan sus cobros.</p>
@@ -35,6 +35,16 @@ referencia sale) y lo liquidado (monto cobrado o debitado, <b>mes</b> del cobro 
 del profesional. Esos datos se guardan en una planilla de Google del responsable, se usan solo para mostrar promedios a los usuarios y mejorar
 la app (con un mínimo de casos para que nadie pueda ser identificado), no se venden ni se ceden, y el profesional puede pedir su borrado
 desde la app en cualquier momento.</p>
+
+<h2>Asistente de IA (solo si el profesional lo activa)</h2>
+<p>El asistente (botón ✨) es opcional y solo funciona si el profesional carga <b>su propia</b> clave de Groq (servicio de modelos de IA de
+código abierto, con plan gratuito). La clave queda únicamente en su dispositivo, cifrada con su PIN. Cuando el profesional hace una pregunta
+o pide un cambio, la app le muestra antes el texto que sale y, si lo envía, a Groq le llegan solo ese texto y los datos de las prestaciones
+que hagan falta para responder (fecha, tipo, obra social, procedimiento, códigos, estado y montos), con cada paciente reemplazado por una
+referencia («#1», «#2»): <b>nunca</b> nombres, DNI, números de afiliado, notas ni documentos. Si en lo que va a salir aparece un DNI, un afiliado
+o un nombre de paciente, la app no lo envía. La IA no puede guardar ni borrar datos: solo propone cambios que el profesional acepta o
+descarta. Según sus condiciones, Groq no usa lo que recibe para entrenar modelos; el profesional puede además activar «Zero Data Retention»
+en su cuenta de Groq para que no guarde nada.</p>
 
 <h2>Uso de Google Drive</h2>
 <p>La aplicación solicita únicamente el permiso <code>drive.file</code>: solo puede ver y modificar los archivos que ella
@@ -63,7 +73,8 @@ conectó Drive, si aporta a la base común y qué versión de los términos acep
 Se guarda en una planilla del responsable, aparte de la base anónima.</p>
 
 <h2>Servicios de terceros</h2>
-<p>La app no se comunica con ningún servicio salvo Google Drive (cuando el profesional lo conecta) y, solo si el profesional aceptó
+<p>La app no se comunica con ningún servicio salvo Google Drive (cuando el profesional lo conecta), Groq (solo si el profesional
+activa el asistente de IA con su propia clave, en las condiciones descritas arriba) y, solo si el profesional aceptó
 aportar datos económicos anónimos, el receptor de esa base (Google Apps Script del responsable). Las librerías de
 código abierto que usa (PaddleOCR con ONNX Runtime, PDF.js y SheetJS) están alojadas junto con la app.</p>
 

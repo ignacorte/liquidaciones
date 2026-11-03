@@ -186,7 +186,7 @@ async function numerarAnestesias() {
 
 // ---------- Navegación ----------
 
-const TITULOS = { inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", analisis: "Análisis", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
+const TITULOS = { asistente: "Asistente", inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", analisis: "Análisis", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
 
 function ir(vista) {
   // Al entrar a Cargar con el acceso de Google por vencer (menos de 20 min), se renueva antes de empezar a cargar fotos
@@ -198,12 +198,13 @@ function ir(vista) {
   $("nav.abajo").hidden = afuera;
   $("#bloquear").hidden = afuera;
   $("#campana").hidden = afuera;
+  $("#abrir-asistente").hidden = afuera;
   if (!afuera) verCampana();
   $("#cambiar-rama").hidden = afuera;
   $("#mas").hidden = !["inicio", "prestaciones"].includes(vista);
   $("#titulo").textContent = TITULOS[vista];
   $("#mes").hidden = !["inicio", "prestaciones", "valores"].includes(vista);
-  ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, analisis: verAnalisis, valores: verValores }[vista] || (() => {}))();
+  ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, analisis: verAnalisis, valores: verValores, asistente: verAsistente }[vista] || (() => {}))();
 }
 const refrescar = () => {
   if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().then(() => Almacen.doc.cuenta && migrarCarpetas()).catch(() => {});
@@ -1663,6 +1664,265 @@ async function marcar(nuevo) {
   verPrestaciones();
 }
 
+// ---------- Asistente de IA (asistente.js) ----------
+// La clave queda solo en este dispositivo, cifrada con el PIN (Almacen.secreto); el modelo elegido sí se sincroniza
+async function confIA() { return { clave: await Almacen.secreto("groq"), modelo: ajuste("ia_modelo", "") || AsistenteLiq.MODELO }; }
+async function verIA() {
+  const c = await confIA();
+  $("#ia-clave").value = c.clave || "";
+  $("#ia-modelo").value = c.modelo;
+  $("#ia-estado").textContent = c.clave ? "Clave cargada en este dispositivo." : "Sin clave en este dispositivo.";
+}
+async function guardarIA() {
+  const clave = $("#ia-clave").value.trim().replace(/\s+/g, "");
+  let modelo = $("#ia-modelo").value.trim() || AsistenteLiq.MODELO;
+  if (!clave) return aviso("Pegá la clave de Groq (empieza con gsk_).");
+  $("#ia-estado").textContent = "Probando la clave…";
+  try {
+    const ids = await AsistenteLiq.modelos(clave);
+    $("#ia-modelos").innerHTML = ids.map((id) => `<option value="${esc(id)}">`).join("");
+    if (ids.length && !ids.includes(modelo)) {
+      const otro = AsistenteLiq.PREFERIDOS.find((m) => ids.includes(m)) || ids[0];
+      aviso(`El modelo «${modelo}» no está disponible en Groq: se eligió «${otro}».`);
+      modelo = otro; $("#ia-modelo").value = otro;
+    }
+    await Almacen.guardarSecreto("groq", clave);
+    await Almacen.ajuste("ia_modelo", modelo);
+    $("#ia-estado").textContent = "✓ Clave guardada en este dispositivo y probada.";
+  } catch (e) { $("#ia-estado").textContent = "⚠️ " + e.message; }
+}
+async function borrarIA() {
+  if (!confirm("¿Borrar la clave de Groq de este dispositivo?")) return;
+  await Almacen.guardarSecreto("groq", null);
+  verIA(); aviso("Clave borrada");
+}
+async function verAsistente() {
+  $("#chat-sin-clave").hidden = !!(await Almacen.secreto("groq").catch(() => null));
+  setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 0);
+}
+
+function burbuja(quien, html) {
+  const el = document.createElement("div");
+  el.className = "msg msg-" + quien;
+  el.innerHTML = html;
+  $("#chat-mensajes").append(el);
+  el.scrollIntoView({ behavior: "smooth", block: "end" });
+  $("#chat-nueva-fila").hidden = false;
+  return el;
+}
+function renderAdjuntosChat() {
+  const cont = $("#chat-adjuntos");
+  cont.innerHTML = "";
+  (estado.chatAdjuntos || []).forEach((f, i) => {
+    const c = document.createElement("span");
+    c.className = "chip-archivo";
+    c.innerHTML = `<span>${f.type === "application/pdf" ? "📄" : "🖼️"} ${esc(f.name || "foto")}</span><button title="Quitar">×</button>`;
+    $("button", c).onclick = () => { estado.chatAdjuntos.splice(i, 1); renderAdjuntosChat(); };
+    cont.append(c);
+  });
+}
+function nuevaConversacion() {
+  estado.chat = null;
+  $("#chat-mensajes").innerHTML = "";
+  $("#chat-nueva-fila").hidden = true;
+}
+
+// Nombres del paciente (solo en pantalla) para «#3» / «[paciente #3]» y para la referencia «P12» de una prestación
+function legible(texto) {
+  const c = estado.chat;
+  if (!c) return esc(texto);
+  const nombres = new Map(Almacen.doc.prestaciones.map((p) => [c.privado.clave(p), p.paciente]));
+  const porId = new Map(Almacen.doc.prestaciones.map((p) => [p.id, p]));
+  return esc(texto)
+    .replace(/\[paciente (#\d+)\]|(?<![\w#])(#\d+)\b/g, (m, a, b) => { const q = c.privado.pacientesDe(a || b); return q ? `<b>${esc([...q].map((k) => nombres.get(k) || "?").join(" / "))}</b>` : m; })
+    .replace(/\b(P\d+)\b/g, (m) => { const p = porId.get(c.privado.idDeRef.get(m)); return p ? `<b>${esc(p.paciente)}</b> (${fechaCorta(p.fecha)})` : m; });
+}
+
+// Herramientas que la IA puede usar: las ejecuta la app, sobre los datos del celular, y devuelven todo sin datos de pacientes
+function herramientasIA(priv) {
+  const fila = (p) => ({
+    ref: priv.ref(p), paciente: priv.tokenPaciente(priv.clave(p)), fecha: p.fecha, tipo: p.tipo, obra_social: p.obra_social || p.obra_social_texto || "",
+    procedimiento: procedimientosDe(p) || "", ...(esAnestesia() ? { complejidad: p.complejidad || "" } : { codigo_aac: codigosDe(p, "codigo_aac"), codigo_os: codigosDe(p, "codigo_os"),
+      rol: p.rol || "cirujano", abordaje: p.abordaje || "", urgencia: !!p.urgencia }), institucion: p.institucion || "",
+    estado: Motor.vencida(p, hoy()) ? "vencida" : p.estado, fecha_presentacion: p.fecha_presentacion || "", fecha_cobro: p.fecha_cobro || "",
+    fecha_cobro_estimada: p.fecha_cobro_estimada || "", valor_estimado: Math.round(p.valor_estimado || 0), monto_cobrado: p.monto_cobrado ?? null,
+  });
+  const buscarFilas = (a) => {
+    let l = datos().prestaciones;
+    const pl = (t) => Motor.plano(String(t || ""));
+    if (a.mes) l = l.filter((p) => p.fecha.slice(0, 7) === a.mes);
+    if (a.desde) l = l.filter((p) => p.fecha >= a.desde);
+    if (a.hasta) l = l.filter((p) => p.fecha <= a.hasta);
+    if (a.obra_social) { const os = pl(a.obra_social); l = l.filter((p) => pl(p.obra_social || p.obra_social_texto).includes(os)); }
+    if (a.tipo === "procedimientos") l = l.filter((p) => p.tipo !== "consulta"); else if (a.tipo) l = l.filter((p) => p.tipo === a.tipo);
+    if (a.estado === "vencida") l = l.filter((p) => Motor.vencida(p, hoy()));
+    else if (a.estado === "a_cobrar") l = l.filter((p) => ["pendiente", "presentada"].includes(p.estado) && !p.solo_registro);
+    else if (a.estado) l = l.filter((p) => p.estado === a.estado);
+    if (a.texto) { const q = pl(a.texto); l = l.filter((p) => pl([procedimientosDe(p), codigosDe(p, "codigo_aac"), codigosDe(p, "codigo_os")].join(" ")).includes(q)); }
+    if (a.paciente) { const q = priv.pacientesDe(a.paciente); if (!q) throw new Error(`no existe el paciente ${a.paciente}`); l = l.filter((p) => q.has(priv.clave(p))); }
+    return l.sort((x, y) => y.fecha.localeCompare(x.fecha));
+  };
+  const prestacion = (ref) => {
+    const id = priv.idDeRef.get(String(ref || "").trim()), p = id && datos().prestaciones.find((x) => x.id === id);
+    if (!p) throw new Error(`no existe la prestación ${ref} (buscala primero con buscar_prestaciones)`);
+    return p;
+  };
+  const ABORDAJES = ["laparoscopica", "convencional", "robotica", "percutanea", "endoscopica"];
+  const normalizar = (p, campo, v) => {
+    if (esAnestesia() && ["codigo_aac", "codigo_os", "abordaje", "rol"].includes(campo)) throw new Error(`en anestesiología no se usa «${campo}»`);
+    switch (campo) {
+      case "fecha": { const f = fechaDeTexto(String(v)); if (!f) throw new Error(`fecha inválida «${v}»`); return f; }
+      case "obra_social": { const os = Motor.obraSocialCanonica(datos(), String(v)); if (!os) throw new Error(`no reconozco la obra social «${v}»`); return os; }
+      case "tipo": if (!TIPOS[v]) throw new Error(`tipo inválido «${v}»`); return v;
+      case "rol": if (!["cirujano", "ayudante"].includes(v)) throw new Error(`rol inválido «${v}»`); return v;
+      case "abordaje": { const a = Motor.plano(String(v)); if (a && !ABORDAJES.includes(a)) throw new Error(`abordaje inválido «${v}»`); return a; }
+      case "urgencia": return v === true || /^(true|si|sí)$/i.test(String(v));
+      case "monto_cobrado": { const n = Number(String(v).replace(/[$.\s]/g, "").replace(",", ".")); if (!(n >= 0)) throw new Error(`monto inválido «${v}»`); return n; }
+      case "pct": { const n = Number(v); if (!(n >= 0 && n <= 100)) throw new Error(`porcentaje inválido «${v}»`); return n; }
+      default: { const t = String(v ?? "").trim(); if (!t && campo === "procedimiento") throw new Error("el procedimiento no puede quedar vacío"); return t; }
+    }
+  };
+  return {
+    buscar_prestaciones: (a) => {
+      const l = buscarFilas(a), lim = Math.min(60, Math.max(1, +a.limite || 30));
+      return { total: l.length, suma_estimado: Math.round(l.reduce((s, p) => s + (p.valor_estimado || 0), 0)),
+        suma_cobrado: Math.round(l.reduce((s, p) => s + (["cobrada", "debitada"].includes(p.estado) ? p.monto_cobrado || 0 : 0), 0)),
+        mostradas: Math.min(lim, l.length), prestaciones: l.slice(0, lim).map(fila) };
+    },
+    resumen_del_mes: (a) => {
+      if (!/^\d{4}-\d{2}$/.test(a.mes || "")) throw new Error("mes inválido (AAAA-MM)");
+      const r = Motor.resumen(datos(), a.mes, hoy(), +ajuste("inflacion_mensual", 0));
+      const red = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === "number" ? Math.round(v) : v]));
+      return { mes: a.mes, totales: red(r.totales), por_obra_social: r.por_obra_social.map(red) };
+    },
+    cobros_previstos: () => {
+      const c = Motor.cobros(datos(), hoy());
+      return { por_mes: c.meses.map((m) => ({ mes: m.mes, total: Math.round(m.total), prestaciones: m.n, por_obra_social: m.obras_sociales.map(([os, v]) => ({ obra_social: os, total: Math.round(v) })) })),
+        vencidas: { cantidad: c.vencidas.length, total: Math.round(c.vencidas.reduce((s, p) => s + (p.valor_estimado || 0), 0)), primeras: c.vencidas.slice(0, 15).map((p) => ({ ...fila(p), dias_atraso: p.dias_atraso })) },
+        a_presentar: c.a_presentar.map((x) => ({ obra_social: x.obra_social, prestaciones: x.n, total: Math.round(x.total), hasta: x.fecha })) };
+    },
+    proponer_cambios: (a, prop) => {
+      const errores = [];
+      for (const c of a.cambios || []) {
+        try {
+          if (!AsistenteLiq.EDITABLES.includes(c.campo)) throw new Error(`no se puede cambiar «${c.campo}»`);
+          const p = prestacion(c.ref), valor = normalizar(p, c.campo, c.valor);
+          if (String(p[c.campo] ?? "") === String(valor ?? "")) continue;
+          prop.cambios = prop.cambios.filter((x) => !(x.id === p.id && x.campo === c.campo));
+          prop.cambios.push({ id: p.id, campo: c.campo, valor, antes: p[c.campo] ?? "" });
+        } catch (e) { errores.push(`${c.ref} ${c.campo}: ${e.message}`); }
+      }
+      return { propuestos: prop.cambios.length, errores, aviso: "No se guardó nada: el médico ve la propuesta y decide." };
+    },
+    proponer_estado: (a, prop) => {
+      if (!AsistenteLiq.ESTADOS.includes(a.estado)) throw new Error(`estado inválido «${a.estado}»`);
+      const fecha = a.fecha ? fechaDeTexto(String(a.fecha)) : hoy();
+      if (!fecha) throw new Error(`fecha inválida «${a.fecha}»`);
+      const errores = [];
+      for (const r of a.refs || []) {
+        try { const p = prestacion(r); prop.estados = prop.estados.filter((x) => x.id !== p.id); if (p.estado !== a.estado) prop.estados.push({ id: p.id, estado: a.estado, fecha }); }
+        catch (e) { errores.push(e.message); }
+      }
+      return { propuestos: prop.estados.length, errores, aviso: "No se guardó nada: el médico ve la propuesta y decide." };
+    },
+  };
+}
+
+async function enviarChat() {
+  const caja = $("#chat-texto"), texto = caja.value.trim(), archivos = [...(estado.chatAdjuntos || [])];
+  if (!texto && !archivos.length) return;
+  burbuja("yo", esc(texto) + archivos.map((f) => `<br><span class="adjunto">📎 ${esc(f.name || "foto")}</span>`).join(""));
+  caja.value = ""; caja.style.height = ""; estado.chatAdjuntos = []; renderAdjuntosChat();
+  // Archivos: se leen dentro del celular con la carga de siempre (revisás antes de guardar)
+  if (archivos.length) {
+    const b = burbuja("app", `¿Qué es? <div class="fila"><button class="boton chico" data-tipo="listado">📋 Listado diario</button><button class="boton chico" data-tipo="parte">🩺 Parte quirúrgico</button>
+      <button class="boton chico" data-tipo="liquidacion">💰 Liquidación de la obra social</button></div>`);
+    $$("[data-tipo]", b).forEach((x) => (x.onclick = () => {
+      b.innerHTML = `Lo leo dentro del celular y te muestro la revisión en «Cargar» (${esc(x.textContent.trim())}).`;
+      ir("cargar");
+      if (x.dataset.tipo === "liquidacion") leerLiquidacion(archivos); else leer(x.dataset.tipo, archivos);
+    }));
+    if (!texto) return;
+  }
+  const conf = await confIA();
+  if (!conf.clave) return burbuja("app", 'Para responder preguntas y proponer cambios falta tu clave gratuita de Groq: cargala en <a href="#" data-ir-a="valores">Valores › Mi cuenta › Asistente de IA</a>.');
+  if (!estado.chat) estado.chat = { privado: AsistenteLiq.crearPrivado(datos().prestaciones, Motor.plano), historial: [] };
+  estado.chat.privado.indexar(datos().prestaciones);
+  const tapado = estado.chat.privado.taparTexto(texto);
+  // Antes de mandar: la indicación tal como sale
+  const b = burbuja("app", `<b>🔒 Esto es lo que sale:</b> «${esc(tapado)}»<br><small>La IA consulta tus prestaciones sin nombres, DNI ni afiliados (los pacientes van como #1, #2…) y no puede guardar ni borrar nada.</small>
+    <div class="fila"><button class="boton chico enviar-ia">Enviar a la IA</button><button class="boton chico secundario cancelar-ia">Cancelar</button></div>`);
+  $(".cancelar-ia", b).onclick = () => { b.innerHTML = "Cancelado: no se mandó nada."; };
+  $(".enviar-ia", b).onclick = async () => {
+    b.innerHTML = '<span class="cargando">Pensando… (consulta tus datos sin nombres)</span>';
+    try {
+      const ctx = { conf, hoy: fechaLarga(hoy()), rama: esAnestesia() ? "anestesia" : "cirugia", privado: estado.chat.privado, herramientas: herramientasIA(estado.chat.privado), historial: estado.chat.historial };
+      const r = await AsistenteLiq.preguntar(ctx, tapado);
+      estado.chat.historial = r.historial.slice(-16);
+      estado.reporteIA = { version: VERSION_APP, modelo: conf.modelo, conversacion: r.enviado };
+      b.innerHTML = `<div class="texto-ia">${legible(r.texto) || "(sin respuesta)"}</div>
+        <details style="margin-top:6px"><summary class="ayuda">Ver todo lo que se envió y recibió (sin datos de pacientes)</summary><pre>${esc(JSON.stringify(r.enviado, null, 1))}</pre></details>
+        <p class="ayuda" style="margin:6px 0 0">¿Respondió mal? <a href="#" class="reportar-ia">Copiar para reportar</a> (sin datos de pacientes)</p>`;
+      $(".reportar-ia", b).onclick = async (e) => { e.preventDefault(); try { await navigator.clipboard.writeText(JSON.stringify(estado.reporteIA, null, 1)); aviso("Copiado: pegalo en el mensaje para quien te ayuda con la app."); } catch { aviso("No se pudo copiar."); } };
+      if (r.propuestas.cambios.length || r.propuestas.estados.length) mostrarPropuestaLiq(r.propuestas);
+    } catch (e) { b.innerHTML = `<span class="aviso-ia">⚠️ ${esc(e.message)}</span>`; }
+  };
+}
+
+// Propuesta de la IA: cada cambio con el nombre del paciente (solo en pantalla), con su casilla; se guarda solo lo marcado
+function mostrarPropuestaLiq(prop) {
+  const porId = new Map(datos().prestaciones.map((p) => [p.id, p]));
+  const items = [...prop.cambios.map((c) => ({ ...c, tipo: "cambio" })), ...prop.estados.map((c) => ({ ...c, tipo: "estado" }))].filter((c) => porId.has(c.id));
+  if (!items.length) return;
+  const valorTexto = (campo, v) => (campo === "fecha" ? fechaCorta(v) : campo === "urgencia" ? (v ? "Sí" : "No") : campo === "monto_cobrado" ? pesos(v) : String(v ?? "") || "(vacío)");
+  const b = burbuja("app", `<b>Cambios propuestos</b> (no se guardó nada; marcá los que querés):
+    ${items.map((c, i) => { const p = porId.get(c.id); return `<label class="cambio-ia"><input type="checkbox" data-item="${i}" checked><span>
+      <b>${esc(p.paciente)}</b> · ${fechaCorta(p.fecha)} · ${esc(procedimientosDe(p) || TIPOS[p.tipo] || "")}<br>${c.tipo === "estado"
+        ? `Marcar como <ins>${esc(ESTADOS[c.estado].toLowerCase())}</ins>${c.estado === "pendiente" ? "" : " el " + fechaCorta(c.fecha)}${c.estado === "cobrada" && p.monto_cobrado == null ? ` (con el estimado, ${pesos(p.valor_estimado)})` : ""}`
+        : `${esc(AsistenteLiq.NOMBRES[c.campo])}: <del>${esc(valorTexto(c.campo, c.antes))}</del> → <ins>${esc(valorTexto(c.campo, c.valor))}</ins>`}</span></label>`; }).join("")}
+    <div class="fila"><button class="boton chico aplicar-ia">Aplicar los marcados</button><button class="boton chico secundario descartar-ia">Descartar</button></div>`);
+  $(".descartar-ia", b).onclick = () => { $$("input", b).forEach((x) => (x.disabled = true)); $(".fila", b).remove(); burbuja("app", "Descartado: no se cambió nada."); };
+  $(".aplicar-ia", b).onclick = async () => {
+    const elegidos = $$("[data-item]", b).filter((x) => x.checked).map((x) => items[+x.dataset.item]);
+    if (!elegidos.length) return aviso("No marcaste ningún cambio.");
+    const ids = [...new Set(elegidos.map((c) => c.id))];
+    if (ids.length > 30 && !confirm(`Vas a cambiar ${ids.length} prestaciones. ¿Seguro?`)) return;
+    const antes = ids.map((id) => ({ ...datos().prestaciones.find((p) => p.id === id) }));
+    try {
+      await guardarEnLote(async () => {
+        for (const original of antes) {
+          const p = { ...original };
+          for (const c of elegidos.filter((x) => x.id === p.id)) {
+            if (c.tipo === "cambio") {
+              p[c.campo] = c.valor;
+              // Otro procedimiento: el código AAC se vuelve a sugerir (salvo que la IA también lo haya cambiado)
+              if (c.campo === "procedimiento" && !elegidos.some((x) => x.id === p.id && x.campo === "codigo_aac")) p.codigo_aac = null;
+              if (c.campo === "obra_social") p.obra_social_texto = c.valor;
+            } else {
+              p.estado = c.estado;
+              if (c.estado === "presentada") p.fecha_presentacion = c.fecha;
+              else if (c.estado === "cobrada") { p.fecha_cobro = c.fecha; p.monto_cobrado ??= p.valor_estimado; }
+              else Object.assign(p, { fecha_presentacion: null, fecha_cobro: null, monto_cobrado: null });
+            }
+          }
+          await guardarPrestacion(p);
+        }
+      });
+    } catch (e) { return aviso("No se pudo guardar: " + e.message); }
+    $$("input", b).forEach((x) => (x.disabled = true)); $(".fila", b).remove();
+    refrescar();
+    const r = burbuja("app", `✓ Guardé ${elegidos.length === 1 ? "el cambio" : elegidos.length + " cambios"} en ${ids.length === 1 ? "1 prestación" : ids.length + " prestaciones"}.
+      <div class="fila"><button class="boton chico secundario deshacer-ia">↶ Deshacer</button><button class="boton chico secundario ver-prest">Ver en Prestaciones</button></div>`);
+    $(".ver-prest", r).onclick = () => ir("prestaciones");
+    $(".deshacer-ia", r).onclick = async () => {
+      try { await guardarEnLote(async () => { for (const p of antes) await guardarPrestacion(p); }); }
+      catch (e) { return aviso("No se pudo deshacer: " + e.message); }
+      $(".deshacer-ia", r).remove(); refrescar();
+      burbuja("app", "Listo: las prestaciones volvieron a como estaban.");
+    };
+  };
+}
+
 // ---------- Cobros ----------
 
 // Antigüedad de lo que falta cobrar (días desde la prestación), como en los tableros de cuentas por cobrar
@@ -1855,6 +2115,7 @@ function verAnalisis() {
 // ---------- Valores y cuenta ----------
 
 function verValores() {
+  verIA().catch(() => {});
   const d = datos();
   const uq = [...d.uq].sort((a, b) => b.vigencia.localeCompare(a.vigencia));
   $("#uq-valor").value = uq[0]?.valor ?? "";
@@ -2584,6 +2845,12 @@ function renovarAcceso() {
 }
 
 async function arrancar() {
+  // Archivos de versiones distintas (caché del navegador): se fuerza una vez la versión nueva completa
+  if (typeof Almacen.secreto !== "function" || typeof AsistenteLiq === "undefined") {
+    if (!sessionStorage.getItem("liq_recarga")) { sessionStorage.setItem("liq_recarga", "1"); return actualizarAhora(); }
+    throw new Error("la app quedó a medio actualizar. Cerrala y abrila de nuevo (en la computadora: Ctrl + Shift + R).");
+  }
+  sessionStorage.removeItem("liq_recarga");
   $("#mes").value = hoy().slice(0, 7);
   const vuelta = Almacen.recibirToken(); // {ok} | {error} | null
   await Promise.all([Almacen.iniciar(), Motor.cargarCatalogos(), cargarBase()]);
@@ -2697,6 +2964,16 @@ async function arrancar() {
   });
   $("#modo").addEventListener("change", async () => { await Almacen.ajuste("modo", $("#modo").value); aplicarModo(); aviso("Guardado"); });
   $("#sin-copia").addEventListener("click", (ev) => { if (ev.target.matches("[data-ir]")) { ev.preventDefault(); ir(ev.target.dataset.ir); } });
+  // Asistente de IA
+  $("#abrir-asistente").addEventListener("click", () => ir("asistente"));
+  $("#chat-archivo").addEventListener("change", (e) => { estado.chatAdjuntos = [...(estado.chatAdjuntos || []), ...e.target.files]; e.target.value = ""; renderAdjuntosChat(); $("#chat-texto").focus(); });
+  $("#chat-enviar").addEventListener("click", () => enviarChat().catch((e) => aviso(e.message)));
+  $("#chat-texto").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); enviarChat().catch((x) => aviso(x.message)); } });
+  $("#chat-texto").addEventListener("input", (e) => { e.target.style.height = ""; e.target.style.height = Math.min(e.target.scrollHeight, 140) + "px"; });
+  $("#chat-nueva").addEventListener("click", nuevaConversacion);
+  $("#v-asistente").addEventListener("click", (e) => { const a = e.target.closest("[data-ir-a]"); if (a) { e.preventDefault(); ir(a.dataset.irA); } });
+  $("#ia-guardar").addEventListener("click", guardarIA);
+  $("#ia-borrar").addEventListener("click", () => borrarIA().catch((e) => aviso(e.message)));
   $("#version-app").textContent = "Versión " + VERSION_APP;
   $("#actualizar-app").addEventListener("click", (ev) => { ev.preventDefault(); aviso("Buscando la versión nueva…"); actualizarAhora(); });
   $("#copia-bajar").addEventListener("click", async () => {
@@ -3012,7 +3289,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "82"; // igual que VERSION en sw.js
+const VERSION_APP = "83"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
@@ -3025,7 +3302,8 @@ function registrarActualizaciones() {
     ultimaBusqueda = Date.now();
     reg.update().catch(() => {});
   };
-  const ocupado = () => $("#dlg").open || $("#dlg-terminos").open || !$("#revision").hidden || !$("#leyendo").hidden;
+  const ocupado = () => $("#dlg").open || $("#dlg-terminos").open || !$("#revision").hidden || !$("#leyendo").hidden ||
+    !!$("#chat-texto").value.trim() || (!$("#v-asistente").hidden && !!$("#chat-mensajes").children.length);
   // Al abrir la app o al volver a ella se aplica sola mientras no haya empezado a usarla (no tocó la pantalla, hasta 1 minuto,
   // aunque la descarga tarde por mala señal); si ya la está usando, solo se avisa (🔔) y se aplica la próxima vez que entre
   let volvio = Date.now(), toco = 0;

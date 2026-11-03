@@ -69,13 +69,33 @@ const Almacen = (() => {
   const bloqueada = () => tienePin() && !llave;
 
   async function crearPin(pin) {
+    // Las fojas pendientes de subir y los secretos están cifrados con la llave anterior: se leen antes de cambiarla y se
+    // vuelven a cifrar con la nueva (antes, al cambiar el PIN, las fojas sin subir quedaban ilegibles)
+    if (llave) { await leerAdjuntos(); await leerSecretos(); }
     const sal = crypto.getRandomValues(new Uint8Array(16));
     llave = await derivar(pin, sal, ITERACIONES);
     meta = { sal, iteraciones: ITERACIONES, verificador: await cifrar(PRUEBA) };
     await idbEscribir({ pin: meta });
     await escribirLocal(); // lo que hubiera sin cifrar (versión anterior) queda cifrado
+    if (adjuntos) await guardarAdjuntos();
+    if (secretos) await idbEscribir({ secretos: await cifrar(secretos) });
     await guardarSesion();
     if (tokenMem) await guardarToken();
+  }
+
+  // Secretos del profesional (clave del asistente de IA): solo en este dispositivo, cifrados con el PIN; nunca van a Drive
+  let secretos = null;
+  async function leerSecretos() {
+    if (!secretos) { const s = await idbLeer("secretos"); secretos = s ? await descifrar(s).catch(() => ({})) : {}; }
+    return secretos;
+  }
+  const secreto = async (nombre) => (llave ? (await leerSecretos())[nombre] ?? null : null);
+  async function guardarSecreto(nombre, valor) {
+    if (!llave) throw new Error("Desbloqueá la app primero.");
+    const s = { ...(await leerSecretos()) };
+    if (valor == null) delete s[nombre]; else s[nombre] = valor;
+    secretos = s;
+    await idbEscribir({ secretos: await cifrar(s) });
   }
 
   // Intentos fallidos: espera creciente (30 s, 1 min, 2 min…) después del quinto, también entre reinicios de la app
@@ -108,6 +128,7 @@ const Almacen = (() => {
   async function bloquear() {
     llave = null;
     adjuntos = null; // las fojas descifradas no quedan en memoria
+    secretos = null;
     doc = vacio();
     tokenMem = null;
     clearTimeout(temporizador);
@@ -121,7 +142,7 @@ const Almacen = (() => {
     const viejo = await idbLeer(CLAVE);
     if (viejo) await idbEscribir({ ["olvidado_" + Date.now()]: viejo });
     meta = null;
-    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined, pendiente: undefined });
+    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined, pendiente: undefined, secretos: undefined });
   }
 
   // ---------- Copia de seguridad (archivo cifrado con una clave propia: sirve en otro celular) ----------
@@ -627,7 +648,7 @@ const Almacen = (() => {
   return {
     iniciar, guardar, guardarVarios, guardarEnMemoria, confirmar, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, encolarMover, enlaceCarpeta, get registro() { return registro; },
     venceEn: () => (tokenMem?.vence || venceToken) - Date.now(), get errorAdjuntos() { return errorAdjuntos; },
-    adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
+    adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, secreto, guardarSecreto, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
     accesoVencido: () => venceToken < Date.now() + 5 * 60e3, set planilla(f) { planilla = f; }, set minutosBloqueo(m) { minutosBloqueo = m; }, get estado() { return estadoSync; }, set alCambiar(f) { alCambiar = f; }, tieneToken: () => !!token(),

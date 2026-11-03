@@ -1,10 +1,13 @@
 // Funciona sin señal (quirófano): la app y el lector de texto quedan guardados en el celular.
 // App: con conexión, siempre la versión publicada (la copia guardada es solo para cuando no hay señal). Librerías de
 // vendor/ (versión fija, ~27 MB): se descargan una sola vez, la primera vez que se lee un documento.
-// Nunca se guardan respuestas de Google (datos del profesional).
-const VERSION = "liquidaciones-v82"; // igual que VERSION_APP en app.js
+// Nunca se guardan respuestas de Google (datos del profesional) ni del asistente de IA (solo se atiende el propio origen).
+const VERSION = "liquidaciones-v83"; // igual que VERSION_APP en app.js
 const LIBRERIAS = "liquidaciones-libs-2"; // aparte: no se vuelve a bajar en cada actualización de la app
-const APP = ["./", "index.html", "estilos.css", "config.js", "motor.js", "lector.js", "importar.js", "almacen.js", "app.js", "manifest.webmanifest",
+// Los .js y .css llevan «?v=N» en index.html (igual que VERSION): así nunca se mezcla un archivo viejo guardado en el
+// navegador con uno nuevo (le pasó a la app Pedidos: app.js nuevo con almacen.js viejo)
+const V = "?v=" + VERSION.split("-v")[1];
+const APP = ["./", "index.html", "estilos.css" + V, ...["config", "motor", "lector", "importar", "almacen", "asistente", "app"].map((n) => n + ".js" + V), "manifest.webmanifest",
   "icono.svg", "icono-192.png", "logo-quiron.svg", "privacidad.html", "terminos.html", "ayuda.html", "datos/aac_2026_08.json", "datos/pami_2024_02.json", "datos/obras_sociales.json", "datos/valores.json", "datos/pami_nomenclador_2026_10.json", "datos/pami_unidades.json", "datos/anestesia_nomenclador_2019.json"];
 
 // cache: "reload": directo del servidor (GitHub Pages deja los archivos 10 min en la caché del navegador y se guardaba
