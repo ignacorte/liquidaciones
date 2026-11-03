@@ -1859,25 +1859,19 @@ async function enviarChat() {
   if (!conf.clave) return burbuja("app", 'Para responder preguntas y proponer cambios falta tu clave gratuita de Groq: cargala en <a href="#" data-ir-a="valores">Valores › Mi cuenta › Asistente de IA</a>.');
   if (!estado.chat) estado.chat = { privado: AsistenteLiq.crearPrivado(datos().prestaciones, Motor.plano), historial: [] };
   estado.chat.privado.indexar(datos().prestaciones);
+  // Los nombres se tapan solos y el control de fugas frena el envío si se colara un dato: el médico solo pregunta y lee
   const tapado = estado.chat.privado.taparTexto(texto);
-  // Antes de mandar: la indicación tal como sale
-  const b = burbuja("app", `<b>🔒 Esto es lo que sale:</b> «${esc(tapado)}»<br><small>La IA consulta tus prestaciones sin nombres, DNI ni afiliados (los pacientes van como #1, #2…) y no puede guardar ni borrar nada.</small>
-    <div class="fila"><button class="boton chico enviar-ia">Enviar a la IA</button><button class="boton chico secundario cancelar-ia">Cancelar</button></div>`);
-  $(".cancelar-ia", b).onclick = () => { b.innerHTML = "Cancelado: no se mandó nada."; };
-  $(".enviar-ia", b).onclick = async () => {
-    b.innerHTML = '<span class="cargando">Pensando… (consulta tus datos sin nombres)</span>';
-    try {
-      const ctx = { conf, hoy: fechaLarga(hoy()), rama: esAnestesia() ? "anestesia" : "cirugia", privado: estado.chat.privado, herramientas: herramientasIA(estado.chat.privado), historial: estado.chat.historial };
-      const r = await AsistenteLiq.preguntar(ctx, tapado);
-      estado.chat.historial = r.historial.slice(-16);
-      estado.reporteIA = { version: VERSION_APP, modelo: conf.modelo, conversacion: r.enviado };
-      b.innerHTML = `<div class="texto-ia">${legible(r.texto) || "(sin respuesta)"}</div>
-        <details style="margin-top:6px"><summary class="ayuda">Ver todo lo que se envió y recibió (sin datos de pacientes)</summary><pre>${esc(JSON.stringify(r.enviado, null, 1))}</pre></details>
-        <p class="ayuda" style="margin:6px 0 0">¿Respondió mal? <a href="#" class="reportar-ia">Copiar para reportar</a> (sin datos de pacientes)</p>`;
-      $(".reportar-ia", b).onclick = async (e) => { e.preventDefault(); try { await navigator.clipboard.writeText(JSON.stringify(estado.reporteIA, null, 1)); aviso("Copiado: pegalo en el mensaje para quien te ayuda con la app."); } catch { aviso("No se pudo copiar."); } };
-      if (r.propuestas.cambios.length || r.propuestas.estados.length) mostrarPropuestaLiq(r.propuestas);
-    } catch (e) { b.innerHTML = `<span class="aviso-ia">⚠️ ${esc(e.message)}</span>`; }
-  };
+  const b = burbuja("app", '<span class="cargando">Pensando…</span>');
+  try {
+    const ctx = { conf, hoy: fechaLarga(hoy()), rama: esAnestesia() ? "anestesia" : "cirugia", privado: estado.chat.privado, herramientas: herramientasIA(estado.chat.privado), historial: estado.chat.historial };
+    const r = await AsistenteLiq.preguntar(ctx, tapado);
+    estado.chat.historial = r.historial.slice(-16);
+    estado.reporteIA = { version: VERSION_APP, modelo: conf.modelo, conversacion: r.enviado };
+    b.innerHTML = `<div class="texto-ia">${legible(r.texto) || "(sin respuesta)"}</div>
+      <p class="ayuda" style="margin:6px 0 0"><a href="#" class="reportar-ia">¿Respondió mal? Avisame</a></p>`;
+    $(".reportar-ia", b).onclick = async (e) => { e.preventDefault(); try { await navigator.clipboard.writeText(JSON.stringify(estado.reporteIA, null, 1)); aviso("Copiado: pegalo en el mensaje para quien te ayuda con la app (no tiene datos de pacientes)."); } catch { aviso("No se pudo copiar."); } };
+    if (r.propuestas.cambios.length || r.propuestas.estados.length) mostrarPropuestaLiq(r.propuestas);
+  } catch (e) { b.innerHTML = `<span class="aviso-ia">⚠️ ${esc(e.message)}</span>`; }
 }
 
 // Propuesta de la IA: cada cambio con el nombre del paciente (solo en pantalla), con su casilla; se guarda solo lo marcado
@@ -3305,7 +3299,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "84"; // igual que VERSION en sw.js
+const VERSION_APP = "85"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
