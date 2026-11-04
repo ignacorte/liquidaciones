@@ -575,6 +575,7 @@ const Lector = (() => {
 
   // «Pacientes por Día por Profesional»: «14:45  APROSS URO  # Lenardon Ines  # 42010101  # CONTROL DE CIRUGIA»
   // (nombre sin coma). Solo renglones con hora y obra social o código: los botones de la pantalla («15:00 Cons. Medic.») no.
+  const ESTADO_TURNO = /^(?:pami\S*|ome|citad[oa]|atendid[oa]|ausente|recepcionad[oa]|confirmad[oa]|cancelad[oa]|presente|control|cirugia|deriva|dr|dra|pord|sacar|puntos|consulta|primera|vez|ulterior|libre|sobreturno)\.?$/i;
   function turnosPorDia(texto, obraSocial, fecha) {
     const filas = [];
     for (const linea of texto.split(/\r?\n/)) {
@@ -594,6 +595,8 @@ const Lector = (() => {
         let k = 0;
         while (k < w.length && /^[A-Za-zÁÉÍÓÚÑáéíóúñü'.]+$/.test(w[k])) k++;
         const nombre = w.slice(0, k).join(" ");
+        // La obra social («PAMI OME») o el estado del turno («CITADO PORD R») no son el paciente
+        if (obraSocial(nombre) || w.slice(0, k).some((x) => ESTADO_TURNO.test(x))) return null;
         return nombre.length >= 4 && w.slice(0, k).filter((x) => x.length > 1).length >= 2 ? { nombre, resto: w.slice(k) } : null;
       };
       const i = resto.findIndex(nombreDe);
@@ -662,6 +665,9 @@ const Lector = (() => {
       const porDia = turnosPorDia(texto, obraSocial, fecha);
       if (porDia.length) return conDatosDeHC(sinRepetir(porDia), texto, obraSocial);
     }
+    // Turnero ilegible junto con la HC del paciente: la consulta sale de la HC (no se lee renglón por renglón)
+    const soloHC = consultaDeHC(texto, obraSocial, { conTurnero: true });
+    if (soloHC) return [{ ...soloHC, fecha: soloHC.fecha || "" }];
     for (const linea of texto.split(/\r?\n/)) {
       const p = plano(linea);
       if (!p.trim() || /\b(fecha|hora|paciente|apellido|obra social|turno)s?\b.*\b(obra social|paciente|dni|hora)\b/.test(p)) continue; // encabezado

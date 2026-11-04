@@ -3019,13 +3019,25 @@ async function arrancar() {
   });
   $("#sincronizar").addEventListener("click", () => (Almacen.tieneToken() ? Almacen.sincronizar().then(refrescar).catch((e) => aviso(e.message)) : renovarAcceso()));
   $("#subir-ahora").addEventListener("click", () => renovarAcceso() || aviso("Terminá de cargar lo que estás editando y volvé a tocar «Subir a Drive»."));
-  // Al volver a la app con cambios sin subir y el acceso vencido: renovarlo y subir
+  // Lo cargado en otros dispositivos (la PC) se trae solo: al volver a la app y cada 5 minutos mientras está abierta.
+  // (Antes solo se subía lo propio: lo de la PC aparecía recién al reabrir la app o al tocar «Sincronizar».)
+  // El acceso a Drive dura 1 hora: al volver a la app se renueva sin pedir nada, si no hay nada a medio cargar.
+  let ultimaTraida = Date.now();
+  const enCurso = () => !!$("#chat-texto").value.trim() || !!$("#chat-mensajes").children.length && !$("#v-asistente").hidden;
+  const traer = ({ renovar = false } = {}) => {
+    if (Almacen.bloqueada() || !Almacen.doc.cuenta || !navigator.onLine) return;
+    if (Almacen.tieneToken()) {
+      if (Date.now() - ultimaTraida < 60e3 && !Almacen.pendiente) return;
+      ultimaTraida = Date.now();
+      Almacen.sincronizar().then(refrescar).catch(() => {});
+    } else if (renovar && !enCurso()) renovarAcceso();
+  };
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && !Almacen.bloqueada()) programarEnvio(3000);
-    if (document.visibilityState !== "visible" || Almacen.bloqueada() || !Almacen.doc.cuenta) return;
-    if (Almacen.tieneToken()) { if (Almacen.pendiente) Almacen.sincronizar().then(refrescar).catch(() => {}); }
-    else if (Almacen.pendiente) renovarAcceso();
+    if (document.visibilityState !== "visible" || Almacen.bloqueada()) return;
+    programarEnvio(3000);
+    traer({ renovar: true });
   });
+  setInterval(() => document.visibilityState === "visible" && traer(), 5 * 60e3);
   $("#salir").addEventListener("click", async (ev) => {
     ev.preventDefault();
     await cerrarCuenta();
@@ -3299,7 +3311,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "86"; // igual que VERSION en sw.js
+const VERSION_APP = "87"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
