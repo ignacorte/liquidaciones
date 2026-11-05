@@ -927,6 +927,7 @@ const Lector = (() => {
       codigo_os: i === 0 ? d.codigo_os : "", codigos_os: i === 0 ? d.codigos_os : [],
       obra_social_texto: d.obra_social_texto, institucion: d.institucion, diagnostico: d.diagnostico, procedimiento: proc,
       abordaje: d.abordaje, urgencia: d.urgencia, rol, pct: i === 0 ? 100 : pctMultiple, origen: "foto_parte", incluir: true,
+      ...(rol === "ayudante" && d.cirujano ? { notas: "Cirujano: " + d.cirujano } : {}), // para avisarle cuando cobre
       // Para anestesiología (si están en la foja o la historia clínica)
       edad_grupo: anest.edad_grupo, obesidad: anest.obesidad, suspendida: anest.suspendida,
       ...(endos[i] ? { tipo: "endoscopia", abordaje: "endoscopica", ...endos[i], observaciones: d.conclusion } : {}),

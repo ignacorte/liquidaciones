@@ -188,6 +188,17 @@ async function numerarAnestesias() {
 
 const TITULOS = { asistente: "Asistente", inicio: "Inicio", cargar: "Cargar", prestaciones: "Prestaciones", cobros: "Cobros", analisis: "Análisis", valores: "Valores", bienvenida: "Liquidaciones", pin: "Liquidaciones" };
 
+// Al recargar la página se vuelve a la misma pantalla y al mismo mes (solo en esta pestaña: al abrir la app de cero, Inicio)
+const VISTAS = ["inicio", "cargar", "prestaciones", "cobros", "analisis", "valores", "asistente"];
+function recordarVista() { try { sessionStorage.setItem("liq_vista", JSON.stringify({ vista: estado.vista, mes: $("#mes").value })); } catch { /* sin almacenamiento */ } }
+function vistaRecordada() {
+  try {
+    const v = JSON.parse(sessionStorage.getItem("liq_vista") || "null");
+    if (v && /^\d{4}-\d{2}$/.test(v.mes || "")) $("#mes").value = v.mes;
+    return v && VISTAS.includes(v.vista) ? v.vista : "inicio";
+  } catch { return "inicio"; }
+}
+
 function ir(vista) {
   // Al entrar a Cargar con el acceso de Google por vencer (menos de 20 min), se renueva antes de empezar a cargar fotos
   if (vista === "cargar" && estado.vista !== "cargar" && Almacen.doc.cuenta && Almacen.tieneToken() && Almacen.venceEn() < 20 * 60e3 && !Almacen.bloqueada() && renovarAcceso()) return;
@@ -195,6 +206,7 @@ function ir(vista) {
   $$("main > section").forEach((s) => (s.hidden = s.id !== "v-" + vista));
   $$("nav.abajo button").forEach((b) => b.classList.toggle("activa", b.dataset.vista === vista));
   const afuera = ["bienvenida", "pin"].includes(vista);
+  if (!afuera) recordarVista();
   $("nav.abajo").hidden = afuera;
   $("#bloquear").hidden = afuera;
   $("#campana").hidden = afuera;
@@ -304,12 +316,14 @@ function verParaHacer() {
     ["debitada", "", "Debitadas sin motivo anotado", lista.filter((p) => p.estado === "debitada" && !p.motivo_debito)],
     ["revisar", "", "Cobros para revisar (no figuran en su liquidación)", lista.filter((p) => p.revisar_cobro)],
     ...(esAnestesia() ? [] : [["sin_parte", "", "Parte sin guardar en el Drive (adjuntá la foto desde la galería)", datos().prestaciones.filter(sinParte)]]),
+    ["ayudantias", "", "💵 Ayudantías para pedirle al cirujano (tocá para ver)", ayudantiasParaCobrar().map((a) => a.p)],
   ].filter((x) => x[3].length);
   $("#para-hacer-card").hidden = modoRegistro();
   $("#para-hacer").innerHTML = !items.length ? `<p class="ayuda">✓ Nada pendiente: no hay cobros vencidos, documentación faltante ni débitos sin motivo.</p>` : `<table>${items.map(([est, os, t, l], i) => `<tr data-hacer="${i}"><td>${t}</td><td class="n">${l.length}</td>
     <td class="n economia">${pesos(l.reduce((s, p) => s + (["pendiente", "presentada"].includes(p.estado) ? p.valor_estimado || 0 : 0), 0))}</td></tr>`).join("")}</table>`;
   $$("#para-hacer tr[data-hacer]").forEach((tr) => tr.addEventListener("click", () => {
     const [est, os] = items[+tr.dataset.hacer];
+    if (est === "ayudantias") return abrirNotificaciones();
     $("#f-estado").value = est; $("#f-os").value = os; $("#f-tipo").value = ""; $("#f-q").value = ""; $("#f-periodo").value = "todos";
     ir("prestaciones");
   }));
@@ -2863,7 +2877,7 @@ async function arrancar() {
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
 
   $$("nav.abajo button").forEach((b) => b.addEventListener("click", () => ir(b.dataset.vista)));
-  $("#mes").addEventListener("change", () => { $("#f-periodo").value = "mes"; refrescar(); });
+  $("#mes").addEventListener("change", () => { $("#f-periodo").value = "mes"; recordarVista(); refrescar(); });
   $("#leer-planilla").addEventListener("change", (ev) => { leerPlanilla([...ev.target.files]); ev.target.value = ""; });
   $$("[data-leer]").forEach((i) => i.addEventListener("change", () => { leer(i.dataset.leer, [...i.files]); i.value = ""; }));
   $$("[data-pegado]").forEach((b) => b.addEventListener("click", () => {
@@ -3272,8 +3286,33 @@ function agregarNotificacion(texto, tipo = "mensaje") {
   guardarNotificaciones(l);
   verCampana();
 }
+// ---------- Ayudantías: cuándo pedirle el pago al cirujano ----------
+// La ayudantía la paga el cirujano cuando él cobra de la obra social. Señal más segura: ya cobraste tus propias prestaciones
+// de la misma obra social y del mismo mes (la obra social pagó ese período, también al cirujano). Si todavía no, la fecha
+// aproximada de cobro de la ayudantía (plazos de esa obra social).
+const cirujanoDe = (p) => ((p.notas || "").match(/Cirujano:\s*([^·\n]+)/i) || [])[1]?.trim() || "";
+function ayudantiasParaCobrar() {
+  try {
+    if (esAnestesia()) return [];
+    const todas = datos().prestaciones, h = hoy();
+    return todas.filter((p) => p.rol === "ayudante" && p.tipo !== "consulta" && ["pendiente", "presentada"].includes(p.estado) && !p.solo_registro && Number(p.pct ?? 100) !== 0)
+      .map((p) => {
+        const cobro = todas.filter((x) => x.id !== p.id && (x.rol || "cirujano") !== "ayudante" && x.obra_social && x.obra_social === p.obra_social &&
+          x.fecha.slice(0, 7) === p.fecha.slice(0, 7) && ["cobrada", "debitada"].includes(x.estado) && x.fecha_cobro).map((x) => x.fecha_cobro).sort()[0];
+        if (cobro) return { p, desde: cobro, motivo: `${p.obra_social} ya pagó ${nombreMes(p.fecha.slice(0, 7))}: cobraste lo tuyo el ${fechaCorta(cobro)}` };
+        if (p.fecha_cobro_estimada && p.fecha_cobro_estimada <= h) return { p, desde: p.fecha_cobro_estimada, motivo: `Fecha aproximada de cobro: ${fechaCorta(p.fecha_cobro_estimada)}` };
+        return null;
+      }).filter(Boolean).sort((a, b) => a.desde.localeCompare(b.desde));
+  } catch { return []; }
+}
+function mensajeAyudantia({ p }) {
+  const cir = cirujanoDe(p);
+  return `Hola${cir ? " " + cir : ""}, ¿cómo estás? Te escribo por la ayudantía de ${p.paciente} (${procedimientosDe(p) || "cirugía"}, ${fechaLarga(p.fecha)}, ${p.obra_social || p.obra_social_texto || "obra social"})` +
+    `${p.valor_estimado ? ": " + pesos(p.valor_estimado) : ""}. ¡Gracias!`;
+}
+
 function verCampana() {
-  const n = notificaciones().filter((x) => !x.leida).length + (estado.versionNueva ? 1 : 0);
+  const n = notificaciones().filter((x) => !x.leida).length + (estado.versionNueva ? 1 : 0) + ayudantiasParaCobrar().length;
   $("#campana-n").textContent = n > 9 ? "9+" : String(n);
   $("#campana-n").hidden = !n;
   $("#campana").classList.toggle("con-novedades", n > 0);
@@ -3286,7 +3325,7 @@ function pendientesParaHacer() {
   } catch { return []; }
 }
 function abrirNotificaciones() {
-  const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo"), l = notificaciones(), pend = pendientesParaHacer();
+  const dlg = $("#dlg"), cuerpo = $("#dlg-cuerpo"), l = notificaciones(), pend = pendientesParaHacer(), ayud = ayudantiasParaCobrar();
   cuerpo._actual = null;
   const fecha = (f) => new Date(f).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   cuerpo.innerHTML = `<h2>Notificaciones</h2>
@@ -3294,15 +3333,27 @@ function abrirNotificaciones() {
       <button class="boton chico" data-actualizar-ya>Actualizar ahora</button></div>` : ""}
     ${pend.length ? `<div class="notif"><b>📋 Para hacer</b><p class="ayuda" style="margin:2px 0 6px">${pend.map(([t, n]) => `${n} ${t}`).join(" · ")}</p>
       <button class="boton chico secundario" data-ir-inicio>Ver en Inicio</button></div>` : ""}
+    ${ayud.length ? `<div class="notif nueva"><b>💵 Ayudantías para pedirle al cirujano</b>${ayud.map((a, i) => `<div style="border-top:1px solid var(--borde);margin-top:6px;padding-top:6px">
+      <p style="margin:2px 0"><b>${esc(a.p.paciente)}</b> · ${fechaCorta(a.p.fecha)} · ${esc(procedimientosDe(a.p) || "cirugía")}${cirujanoDe(a.p) ? ` · cirujano: ${esc(cirujanoDe(a.p))}` : ""}<br>
+      <span class="ayuda">${esc(a.motivo)}${a.p.valor_estimado ? " · " + pesos(a.p.valor_estimado) : ""}</span></p>
+      <div class="fila" style="margin:4px 0"><button class="boton chico" data-ayud-copiar="${i}">Copiar mensaje</button><button class="boton chico secundario" data-ayud-pago="${i}">Ya me pagó</button></div></div>`).join("")}</div>` : ""}
     ${l.length ? l.map((n) => `<div class="notif ${n.leida ? "" : "nueva"}"><b>${n.tipo === "admin" ? "📣 Mensaje del administrador" : "ℹ️ Aviso"}</b>
       <p style="margin:2px 0">${esc(n.texto)}</p><small class="ayuda">${fecha(n.fecha)}</small></div>`).join("")
-      : !estado.versionNueva && !pend.length ? '<p class="ayuda">No hay notificaciones.</p>' : ""}
+      : !estado.versionNueva && !pend.length && !ayud.length ? '<p class="ayuda">No hay notificaciones.</p>' : ""}
     <div class="fila"><button class="boton secundario" data-cerrar>Cerrar</button>${l.length ? '<button class="boton chico secundario" data-borrar-notif>Borrar mensajes</button>' : ""}</div>`;
   cuerpo.onclick = (ev) => {
     if (ev.target.closest("[data-cerrar]")) dlg.close();
     if (ev.target.closest("[data-actualizar-ya]")) { dlg.close(); actualizarAhora(); }
     if (ev.target.closest("[data-ir-inicio]")) { dlg.close(); ir("inicio"); }
     if (ev.target.closest("[data-borrar-notif]")) { guardarNotificaciones([]); verCampana(); abrirNotificaciones(); }
+    const copiar = ev.target.closest("[data-ayud-copiar]"), pago = ev.target.closest("[data-ayud-pago]");
+    if (copiar) navigator.clipboard.writeText(mensajeAyudantia(ayud[+copiar.dataset.ayudCopiar])).then(() => aviso("Mensaje copiado: pegalo en el WhatsApp del cirujano."), () => aviso("No se pudo copiar."));
+    if (pago) {
+      const { p } = ayud[+pago.dataset.ayudPago];
+      if (!confirm(`¿Marcar como cobrada la ayudantía de ${p.paciente}${p.valor_estimado ? " por " + pesos(p.valor_estimado) : ""} (hoy)? Si te pagó otro monto, editalo en Prestaciones.`)) return;
+      guardarPrestacion({ ...p, estado: "cobrada", fecha_cobro: hoy(), monto_cobrado: p.monto_cobrado ?? p.valor_estimado })
+        .then(() => { aviso("Ayudantía marcada como cobrada."); refrescar(); verCampana(); abrirNotificaciones(); }, (e) => aviso(e.message));
+    }
   };
   // Abrirlas = leídas
   guardarNotificaciones(l.map((n) => ({ ...n, leida: true })));
@@ -3311,7 +3362,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "87"; // igual que VERSION en sw.js
+const VERSION_APP = "89"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
@@ -3389,7 +3440,7 @@ function entrar() {
   aplicarModo();
   $("#f-os").innerHTML = '<option value="">Todas</option>' + datos().obras.map((o) => `<option>${esc(o.nombre)}</option>`).join("") + '<option value="-">Sin reconocer</option>';
   mostrarSync(Almacen.estado);
-  ir("inicio");
+  ir(vistaRecordada());
   if (Almacen.tieneToken()) {
     // Al entrar: traer lo cargado en otros dispositivos y subir lo de este
     Almacen.sincronizar().then(() => { if (estado.volvioDeGoogle) aviso("Datos al día con Google Drive (" + Almacen.doc.cuenta + ")"); estado.volvioDeGoogle = false; refrescar(); })
