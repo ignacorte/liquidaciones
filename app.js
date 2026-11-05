@@ -219,6 +219,7 @@ function ir(vista) {
   ({ inicio: verInicio, prestaciones: verPrestaciones, cobros: verCobros, analisis: verAnalisis, valores: verValores, asistente: verAsistente }[vista] || (() => {}))();
 }
 const refrescar = () => {
+  llenarInstituciones();
   if (esAnestesia() && !Almacen.bloqueada()) numerarAnestesias().then(() => Almacen.doc.cuenta && migrarCarpetas()).catch(() => {});
   ir(estado.vista);
   programarEnvio();
@@ -746,7 +747,7 @@ function camposPrestacion(p, completo) {
     ${completo ? `
     ${quir && esAnestesia() ? "" : `<label>Hora<input type="time" name="hora" value="${esc(p.hora)}"></label>`}
     ${quir ? "" : `<label>DNI<input name="dni" value="${esc(p.dni)}" inputmode="numeric"></label>`}
-    ${quir && esAnestesia() ? "" : `<label>Institución<input name="institucion" value="${esc(p.institucion)}"></label>`}
+    ${quir && esAnestesia() ? "" : `<label>Institución<input name="institucion" list="lista-instituciones" value="${esc(p.institucion)}"></label>`}
     ${p.solo_registro || p.origen === "planilla" ? `<label class="check economia ancho"><input type="checkbox" name="solo_registro" ${p.solo_registro ? "checked" : ""}> Solo registro (ya liquidada antes: sin valor ni cobro esperado)</label>` : ""}
     <label class="economia">Valor a mano ($)<input type="number" name="valor_manual" value="${p.valor_manual ?? ""}" placeholder="vacío = estimado"></label>
     <label class="economia">Estado${sel("estado", ESTADOS, p.estado || "pendiente")}</label>
@@ -783,7 +784,7 @@ function camposAnestesia(p) {
         <div class="fila" style="margin:4px 0 0;flex-wrap:nowrap">${sel(`extra_comp_${i}`, complejidades, x.complejidad)}${sel(`extra_via_${i}`, VIAS, x.via || "misma")}</div></div>`).join("")}
       <button type="button" class="boton chico secundario" data-agregar-extra>+ Agregar otra intervención (mismo acto)</button></div>
     <label>Edad del paciente${sel("edad_grupo", EDADES, p.edad_grupo || "")}</label>
-    <label>Institución / lugar<input name="institucion" value="${esc(p.institucion)}"></label>
+    <label>Institución / lugar<input name="institucion" list="lista-instituciones" value="${esc(p.institucion)}"></label>
     <label>N° de circuito<input name="nro_circuito" value="${esc(p.nro_circuito)}" inputmode="numeric" placeholder="el de la asociación"></label>
     ${p.nro_ref ? `<p class="ancho ayuda" style="margin:0">Referencia: <b>Ref. ${refTexto(p)}</b> (va en el nombre de sus PDF en el Drive)${p.carpeta_docs?.link ? ` · <a href="${esc(p.carpeta_docs.link)}" target="_blank" rel="noopener">📁 Abrir la carpeta del paciente</a>` : ""}</p>` : ""}
     ${marca("feriado", "Feriado (+50 %)" + (Motor.feriadoNacional(p.fecha) ? " · es feriado nacional" : ""))}
@@ -1043,7 +1044,7 @@ async function leer(tipo, archivos, textoPegado) {
       aviso((rec.length ? "Reconocí: " + rec.map((c) => DOCS[c].corto).join(", ") + "." : "No reconocí fojas ni autorización: elegilas abajo en «Fotos cargadas».") +
         (datosSolo && rec.length ? ` ${datosSolo === 1 ? "Otra foto quedó" : datosSolo + " fotos quedaron"} solo para datos del paciente.` : ""));
     }
-    const conFecha = filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha }));
+    const conFecha = filas.map((f) => ({ ...f, fecha: f.fecha || hoy(), fecha_leida: !!f.fecha, institucion: institucionCanonica(f.institucion) }));
     if (marcarRepetidas(conFecha)) aviso("Hay cirugías que ya estaban cargadas (mismo paciente y día): quedaron destildadas.");
     mostrarRevision(conFecha.map((f) => ({ ...f, ...Motor.estimar(d, f) })),
       tipo === "parte" ? "Parte quirúrgico" : "Listado" + (filas[0].fecha ? " del " + fechaCorta(filas[0].fecha) : ""));
@@ -2120,7 +2121,7 @@ function verAnalisis() {
     top.map(([k, x]) => `<tr><td>${esc(comoFigura[k])}</td><td class="n">${x.n}</td><td class="n economia">${x.ncob ? pesos(x.cob / x.ncob) : "—"}</td></tr>`).join("") + "</table>" : "";
   // Otros: instituciones, rol, urgencias
   const contar = (f) => { const c = {}; for (const p of cx) { const k = f(p); if (k) c[k] = (c[k] || 0) + 1; } return Object.entries(c).sort((a, b) => b[1] - a[1]); };
-  const bloques = [["Institución", contar((p) => (p.institucion || "").trim().toUpperCase() || "Sin dato")],
+  const bloques = [["Institución", contar((p) => (institucionValida(p) ? institucionCanonica(institucionValida(p)) : "").toUpperCase() || "Sin dato")],
     ...(anest ? [] : [["Rol", contar((p) => (p.rol === "ayudante" ? "Ayudante" : "Cirujano"))]]),
     ["Urgencia", contar((p) => (p.urgencia ? "De urgencia" : "Programada"))]];
   $("#an-otros").innerHTML = cx.length ? bloques.filter(([, l]) => !(l.length === 1 && l[0][0] === "Sin dato")).map(([t, l]) => `<table><tr><th>${t}</th><th class="n">#</th><th class="n">%</th></tr>` +
@@ -3286,6 +3287,30 @@ function agregarNotificacion(texto, tipo = "mensaje") {
   guardarNotificaciones(l);
   verCampana();
 }
+// ---------- Instituciones: las que aparecen en las fojas y las que escribe el profesional ----------
+// Se ofrecen como sugerencias al cargar y sirven para completar un nombre leído a medias («Instituto Médico» → «Instituto
+// Médico Río Cuarto»). Nunca cuenta como institución el nombre del propio paciente (lectura equivocada de la HC).
+const institucionValida = (p) => { const v = (p.institucion || "").trim(); return v && Lector.institucionDe(v, p.paciente, v) ? v : ""; };
+function instituciones() {
+  const c = new Map();
+  for (const p of Almacen.doc.prestaciones) {
+    if (p.borrada) continue;
+    const v = institucionValida(p), k = Motor.plano(v);
+    if (!v) continue;
+    const x = c.get(k) || c.set(k, { nombre: v, n: 0 }).get(k);
+    x.n++;
+  }
+  const lista = [...c.values()].sort((a, b) => b.n - a.n || b.nombre.length - a.nombre.length);
+  // Si una es el comienzo de otra más larga («Instituto Médico» / «Instituto Médico Río Cuarto»), queda la completa
+  return lista.filter((x) => !lista.some((y) => y !== x && y.nombre.length > x.nombre.length && Motor.plano(y.nombre).startsWith(Motor.plano(x.nombre)))).map((x) => x.nombre);
+}
+function institucionCanonica(v) {
+  const t = Motor.plano((v || "").trim());
+  if (!t) return (v || "").trim();
+  return instituciones().find((x) => Motor.plano(x) === t || Motor.plano(x).startsWith(t)) || v.trim();
+}
+const llenarInstituciones = () => { const d = $("#lista-instituciones"); if (d) d.innerHTML = instituciones().map((x) => `<option value="${esc(x)}">`).join(""); };
+
 // ---------- Ayudantías: cuándo pedirle el pago al cirujano ----------
 // La ayudantía la paga el cirujano cuando él cobra de la obra social. Señal más segura: ya cobraste tus propias prestaciones
 // de la misma obra social y del mismo mes (la obra social pagó ese período, también al cirujano). Si todavía no, la fecha
@@ -3362,7 +3387,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "89"; // igual que VERSION en sw.js
+const VERSION_APP = "90"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)

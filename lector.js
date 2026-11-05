@@ -829,7 +829,23 @@ const Lector = (() => {
   // Lugar: la institución del renglón (sanatorio, clínica, instituto…), si la etiqueta no la dio
   function lugarDe(texto) {
     const m = texto.match(/\b((?:Sanatorio|Cl[ií]nica|Instituto|Hospital|Policl[ií]nico|Maternidad|Centro M[eé]dico) (?!M[eé]dica\b)[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.]*(?: (?:de |del )?[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.]*){0,3})/); // (las cajas se separan con 3 espacios)
-    return m ? m[1].trim() : "";
+    if (!m) return "";
+    let lugar = m[1].trim();
+    // El nombre partido en dos renglones del logo («Instituto Médico» / «Río Cuarto»)
+    const fin = m.index + m[0].length, resto = texto.slice(fin);
+    const siguiente = resto.match(/^[ \t]*\r?\n[ \t]*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?: (?:de |del )?[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})[ \t]*(?:\r?\n|$)/);
+    if (siguiente && lugar.split(" ").length <= 3) lugar += " " + siguiente[1];
+    return lugar;
+  }
+  // Institución leída: nunca el paciente («Historia Clínica - PEREZ JUAN»: ahí «Clínica» no es la etiqueta de la institución)
+  function institucionDe(valor, paciente, texto) {
+    const v = (valor || "").trim();
+    if (!v) return "";
+    const pal = (t) => new Set(plano(t || "").split(/[^a-z]+/).filter((w) => w.length >= 4));
+    const delPaciente = pal(paciente);
+    if ([...pal(v)].some((w) => delPaciente.has(w))) return "";
+    const linea = texto.split(/\r?\n/).find((l) => l.includes(v)) || "";
+    return /historia cl[ií]nica\s*[-–]/i.test(linea) ? "" : v;
   }
 
   // ¿Es la foja quirúrgica completa del procedimiento? Título de foja / protocolo / parte quirúrgico, el equipo, y los
@@ -908,10 +924,10 @@ const Lector = (() => {
     const sinCirugia = !/protocolo quir|operaci[oó]n (?:efectuada|practicada|realizada)|cirug[ií]a (?:realizada|efectuada)|procedimiento|parte quir|foja quir/i.test(texto);
     const hc = sinCirugia && consultaDeHC(texto, obraSocial, { conTurnero: true });
     if (hc && !parte(texto, obraSocial).procedimientos.some(Boolean))
-      return [{ ...hc, procedimiento: "", institucion: lugarDe(texto), origen: "foto_parte", incluir: true }];
+      return [{ ...hc, procedimiento: "", institucion: institucionDe(lugarDe(texto), hc.paciente, texto), origen: "foto_parte", incluir: true }];
     const d = parte(texto, obraSocial);
     if (!d.afiliado && d.afiliadoPorForma) d.afiliado = d.afiliadoPorForma;
-    if (!d.institucion) d.institucion = lugarDe(texto);
+    d.institucion = institucionDe(d.institucion, d.paciente, texto) || institucionDe(lugarDe(texto), d.paciente, texto);
     const anest = { edad_grupo: grupoEdad(texto, d.fecha), obesidad: obesidadMorbida(texto), suspendida: suspendida(texto) };
     const rol = rolDe(medico, d, texto);
     // VEDA + VCC en el mismo acto: una sola endoscopía «alta y baja»
@@ -934,5 +950,5 @@ const Lector = (() => {
     }));
   }
 
-  return { textoDe, aPrestaciones, parte, listado, liquidacion, numeroLiq, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento, puntajeDocumento, lienzosPDF };
+  return { institucionDe, textoDe, aPrestaciones, parte, listado, liquidacion, numeroLiq, fechaISO, porEtiqueta, esEstudio, figura, grupoEdad, obesidadMorbida, suspendida, lugarDe, esFojaCompleta, esFojaAnestesia, esAutorizacion, tipoDocumento, puntajeDocumento, lienzosPDF };
 })();
