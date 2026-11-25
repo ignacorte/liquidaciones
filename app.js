@@ -121,7 +121,7 @@ async function cargarBase() {
   estado.base = { obras: os.obras_sociales.concat(valores.payers_extra.map((p) => ({ nombre: p.name, categoria: p.category, alias: p.aliases,
       dias_pago: 60, dia_presentacion: 18, notas: p.notes }))),
     valores: valores.fees.map((f, i) => ({ id: "base-" + i, base: true, obra_social: f.payer, codigo: String(f.code), descripcion: f.description,
-      monto: f.amount, vigencia: f.valid_from.slice(0, 7) + "-01", tipo: f.kind || "honorario", codigo_aac: f.aac_code, fuente: f.source, confianza: f.confianza })),
+      monto: f.amount, vigencia: f.valid_from.slice(0, 7) + "-01", tipo: f.kind || "honorario", codigo_aac: f.aac_code, codigos_aac: f.aac_codes, fuente: f.source, confianza: f.confianza })),
     uq: valores.uq_aac.map((u) => ({ valor: u.valor, vigencia: u.vigencia.slice(0, 7) + "-01", fuente: u.fuente, base: true })) };
 }
 
@@ -3421,7 +3421,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "95"; // igual que VERSION en sw.js
+const VERSION_APP = "96"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)

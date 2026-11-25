@@ -9,7 +9,27 @@ const Motor = (() => {
   // ---------- Sugerencia de código ----------
   const STOPWORDS = new Set(["de", "del", "la", "el", "los", "las", "y", "o", "con", "por", "para", "en", "un", "una", "incluye",
     "colocacion", "tratamiento", "como", "unico", "procedimiento", "cirugia", "modulo", "guiada", "guia", "bajo", "control",
-    "realizacion", "especificados"]);
+    "realizacion", "especificados", "abierta", "abierto", "simple"]);
+  // Cómo se escribe en un parte → cómo lo dice el nomenclador (abreviaturas, conversión, lateralidad, sinónimos).
+  // Igual en app/codigos.py (normalizar).
+  const NORMALIZAR = [
+    [/\bcvl\b/g, "colecistectomia laparoscopica"],
+    [/\b(?:x|por|via)?\s*\b(vlp|vl|lap|lpc|vlc)\b/g, " laparoscopica"],
+    [/\b(izquierd[ao]s?\s+(?:y|e)\s+derech[ao]s?|derech[ao]s?\s+(?:y|e)\s+izquierd[ao]s?|ambos\s+lados|bilat)\b/g, "bilateral"],
+    [/\b(derech[ao]|izquierd[ao])\b/g, " "],
+    [/\b(hernia|hernioplastia)\s+incisional\b/g, "eventroplastia"], [/\bincisional\b/g, "eventroplastia"],
+    [/\b(quiste\s+)?pilonidal\b/g, "quiste dermoideo sacro coccigeo"],
+    [/\bsigmoidectomia\b/g, "colectomia segmentaria"],
+    [/\bhemorroidectomia\b/g, "hemorroides"],
+    [/\blobectomia\s+(de\s+(la\s+)?)?tiroide?[ao]?s?\b/g, "lobectomia hemitiroidectomia"],
+  ];
+  function normalizar(texto) {
+    let t = plano(texto);
+    // Convertida a abierta: vale la vía convencional (lo laparoscópico del nombre no cuenta)
+    if (/\bconvert/.test(t)) t = t.replace(/\b(video\w*|videolaparosc\w*|laparosc\w*|vlp|vl|lap)\b/g, " ").replace(/\bconvert\w*(\s+a\s+(cielo\s+abierto|abierta|convencional|laparotomia))?/g, " convencional ");
+    for (const [re, por] of NORMALIZAR) t = t.replace(re, por);
+    return t.replace(/\s+/g, " ").trim();
+  }
   const SYNONYMS = { tc: "tomografico", tac: "tomografico", tomografia: "tomografico", eco: "ecografico", ecografia: "ecografico",
     eventracion: "eventroplastia", videolaparoscopica: "laparoscopica", abseso: "absceso", abceso: "absceso", abscesos: "absceso",
     // «hernia umbilical» en un parte = hernioplastia (sin esto gana «hernia hiatal», módulo esofágico)
@@ -29,8 +49,8 @@ const Motor = (() => {
 
   // Órganos: un procedimiento sobre un órgano nunca se codifica con una práctica de otro (biopsia renal ≠ biopsia de páncreas)
   const ORGANOS = [["renal", /\b(renal|renales|rinon|nefr[a-z]*)\b/], ["suprarrenal", /\b(suprarrenal[a-z]*|adrenal[a-z]*)\b/],
-    ["higado", /\b(hepat[a-z]*|higado)\b/], ["pancreas", /\bpancrea[a-z]*/], ["tiroides", /\btiroid[a-z]*/], ["bazo", /\b(esplen[a-z]*|bazo)\b/],
-    ["pulmon", /\b(pulmon[a-z]*|pleur[a-z]*)\b/], ["mama", /\bmama[a-z]*/], ["prostata", /\bprostat[a-z]*/],
+    ["higado", /\b(hepat[a-z]*|higado)\b/], ["pancreas", /\bpancrea[a-z]*/], ["tiroides", /tiroid[a-z]*/], ["bazo", /\b(esplen[a-z]*|bazo)\b/],
+    ["pulmon", /\b(pulmon[a-z]*|pleur[a-z]*)\b/], ["mama", /\b(mama[a-z]*|mastect[a-z]*|cuadrantect[a-z]*|tumorect[a-z]*)/], ["prostata", /\bprostat[a-z]*/],
     ["vejiga", /\b(vesical[a-z]*|vesico[a-z]*|vejiga)\b/], ["salival", /\b(salival[a-z]*|parotid[a-z]*)\b/]];
   const organos = (t) => new Set(ORGANOS.filter(([, re]) => re.test(t)).map(([o]) => o));
 
@@ -68,7 +88,7 @@ const Motor = (() => {
     const data = catalogos[nombre];
     if (!data || !(procedimiento || "").trim()) return [];
     // «VIDEOCOLECISTECTOMIA», «videolaparoscópica»: el prefijo pegado se separa
-    procedimiento = procedimiento.replace(/\b(video)(?=[a-záéíóúñ]{6,})/gi, "$1 ");
+    procedimiento = normalizar(procedimiento.replace(/\b(video)(?=[a-záéíóúñ]{6,})/gi, "$1 "));
     const pesos = idf(nombre), wanted = palabras(procedimiento);
     let plain = plano(procedimiento);
     if (wanted.has("antirr")) plain += " diafragm"; // la cirugía antirreflujo lleva plástica diafragmática
@@ -90,7 +110,7 @@ const Motor = (() => {
         const itemPlain = plano(item + " " + code.name);
         score -= 6 * EXCLUSIVE_TERMS.filter((t) => itemPlain.includes(t) && !plain.includes(t)).length;
         if (wanted.has("percut") && !words.has("percut") && OTHER_ROUTES.some((t) => itemPlain.includes(t))) score -= 4;
-        for (const q of ["bilateral", "recidivad", "diafragm", "coledocotom"]) if (plano(item).includes(q) && !plain.includes(q)) score -= 3;
+        for (const q of ["bilateral", "recidivad", "diafragm", "coledocotom", "vaciamiento", "radical", "complej", "whitehead", "conversion"]) if (plano(item).includes(q) && !plain.includes(q)) score -= 3;
         const delCodigo = organos(itemPlain);
         if (organosPedidos.size && delCodigo.size && ![...delCodigo].some((o) => organosPedidos.has(o))) score -= 20;
         else if (organosPedidos.size && !delCodigo.size) score -= 4; // el procedimiento nombra un órgano y el código no
@@ -188,15 +208,18 @@ const Motor = (() => {
     return v ? v.valor : catalogos.AAC.uq_value;
   }
 
+  // % de un procedimiento extra: el cargado (0 = no se cobra), o el de operación múltiple
+  const pctExtra = (x, def) => (x.pct === 0 || x.pct === "0" ? 0 : x.pct || def);
   // «08.02.03» = «080203» (las listas importadas traen los códigos con o sin puntos)
   const mismoCodigo = (a, b) => String(a ?? "").replace(/[.\-\s]/g, "") === String(b ?? "").replace(/[.\-\s]/g, "");
   // Vía de una práctica por su nombre («VIDEOCOLECISTECTOMIA», «apendicectomía por video» → laparoscópica); "" = no lo dice
   function viaDe(texto) {
-    const t = plano(texto || "");
+    const t = normalizar(texto || "");
     if (/endosc/.test(t)) return "endoscopica";
-    if (/video|laparosc|robot/.test(t)) return "laparoscopica";
+    if (/\bconvencional\b/.test(t) && /\bconvert/.test(plano(texto))) return "convencional"; // convertida a abierta
+    if (/video|laparosc|robot|\b(tep|etep|tapp|ipom)\b/.test(t)) return "laparoscopica";
     if (/percut/.test(t)) return "percutanea";
-    if (/convencional|abiert|laparotom/.test(t)) return "convencional";
+    if (/convencional|abiert|laparotom|\b(lichtenstein|shouldice|rives|stoppa)\b/.test(t)) return "convencional";
     return "";
   }
   const viaParecida = (a, b) => a === b || (a === "laparoscopica" && b === "robotica") || (a === "robotica" && b === "laparoscopica");
@@ -208,7 +231,7 @@ const Motor = (() => {
     const directo = (v) => codigoOS && mismoCodigo(v.codigo, codigoOS);
     const via = (v) => v.abordaje ?? viaDe(v.descripcion);
     const c = datos.valores.filter((v) => v.obra_social === os && v.vigencia <= fecha &&
-      (directo(v) || (codigoAAC && v.codigo_aac === codigoAAC && !(via(v) && abordaje && !viaParecida(via(v), abordaje)))));
+      (directo(v) || (codigoAAC && (v.codigo_aac === codigoAAC || (v.codigos_aac || []).includes(codigoAAC)) && !(via(v) && abordaje && !viaParecida(via(v), abordaje)))));
     const coincide = (v) => (abordaje && via(v) && viaParecida(via(v), abordaje) ? 2 : !via(v) ? 1 : 0);
     c.sort((a, b) => directo(b) - directo(a) || coincide(b) - coincide(a) || (b.tipo === "honorario") - (a.tipo === "honorario") || b.vigencia.localeCompare(a.vigencia));
     return c[0] || null;
@@ -497,8 +520,8 @@ const Motor = (() => {
       const pct = catalogos.AAC.rules.multiple_same_approach_pct;
       out.extras = p.extras.map((x) => {
         const e = estimar(datos, { ...p, extras: null, procedimiento: x.procedimiento, codigo_aac: x.codigo_aac || null, codigo_os: x.codigo_os || null,
-          pct: x.pct || pct, valor_manual: null });
-        return { procedimiento: x.procedimiento || "", codigo_aac: e.codigo_aac, codigo_os: e.codigo_os || x.codigo_os || null, pct: x.pct || pct,
+          pct: pctExtra(x, pct), valor_manual: null });
+        return { procedimiento: x.procedimiento || "", codigo_aac: e.codigo_aac, codigo_os: e.codigo_os || x.codigo_os || null, pct: pctExtra(x, pct),
                  valor: e.valor_estimado, sugerencias: e.sugerencias };
       });
       const suma = out.extras.reduce((t, x) => t + (x.valor || 0), 0);
