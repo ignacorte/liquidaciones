@@ -373,9 +373,18 @@ const Almacen = (() => {
       if (r.status === 401) { tokenMem = null; guardarToken(); anotar("Venció el acceso de Google"); throw Object.assign(new Error("Volvé a conectar Google Drive"), { reconectar: true }); }
       if ((r.status === 429 || r.status >= 500) && intento < 3) { await new Promise((ok) => setTimeout(ok, 1000 * 2 ** intento)); continue; }
       if (!r.ok) {
-        const detalle = await r.json().then((j) => j.error?.message || "").catch(() => "");
+        const j = await r.json().catch(() => ({}));
+        const detalle = j.error?.message || "", motivo = j.error?.errors?.[0]?.reason || "";
+        // Límite de pedidos por minuto: se espera y se reintenta
+        if (r.status === 403 && /ratelimit/i.test(motivo) && intento < 3) { await new Promise((ok) => setTimeout(ok, 2000 * 2 ** intento)); continue; }
         anotar(`Google Drive respondió ${r.status}${detalle ? ": " + detalle : ""} (${(opciones.method || "GET")} ${url.replace(/\?.*/, "").split("/").slice(-2).join("/")})`);
-        throw Object.assign(new Error("Google Drive respondió " + r.status + (detalle ? ": " + detalle : "")), { status: r.status });
+        // Al usuario, en castellano y sin tecnicismos (el detalle queda en Valores › Mi cuenta)
+        const texto = /storageQuota|quotaExceeded/i.test(motivo + detalle) ? "tu Google Drive está lleno: liberá espacio para que se siga guardando"
+          : r.status === 404 ? "no se encontró un archivo en tu Drive (¿se borró o se movió?)"
+          : r.status === 403 ? "Google Drive no dio permiso para esta acción"
+          : r.status === 400 ? "Google Drive no aceptó el archivo"
+          : `Google Drive no respondió bien (error ${r.status}); se reintenta solo`;
+        throw Object.assign(new Error(texto), { status: r.status, detalle });
       }
       return r;
     }

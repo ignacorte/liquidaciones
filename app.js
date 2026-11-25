@@ -384,6 +384,8 @@ function aplicarModo() {
   $("#especialidad").value = anest ? "anestesia" : "cirugia";
   $("#cambiar-rama").textContent = "⇄ " + (anest ? "Anestesiología" : "Cirugía");
   $("#especialidad-texto").textContent = "Especialidad: " + ESPECIALIDADES[anest ? "anestesia" : "cirugia"];
+  // Mientras no haya nada cargado, el colega puede corregir la especialidad elegida
+  $("#corregir-especialidad").hidden = Almacen.doc.prestaciones.some((p) => !p.borrada);
   $("[data-marcar=presentada]").textContent = anest ? "Cargadas" : "Presentadas";
   $("[data-marcar=cobrada]").textContent = anest ? "Liquidadas" : "Cobradas";
   $("#titulo-presentar").textContent = anest ? "Para cargar" : "Para presentar";
@@ -671,7 +673,7 @@ async function preguntarEspecialidad() {
     <div class="fila"><button class="boton chico secundario" data-cerrar-sesion>🔒 Cerrar sesión</button></div>`
     : `<h2>¿Cuál es tu especialidad?</h2>
     <p class="ayuda">La app se adapta a cómo se liquida cada una. En anestesiología: complejidad del nomenclador de anestesiólogos,
-      documentación (foja quirúrgica, foja de anestesia y autorización) y carga en la asociación. <b>Se elige una sola vez.</b></p>
+      documentación (foja quirúrgica, foja de anestesia y autorización) y carga en la asociación. <b>Se elige una sola vez</b> (si te equivocás, se corrige en Valores mientras no hayas cargado nada).</p>
     <div class="fila"><button class="boton" data-especialidad="cirugia">Cirugía</button><button class="boton" data-especialidad="anestesia">Anestesiología</button></div>`;
   cuerpo.onclick = async (ev) => {
     if (ev.target.closest("[data-volver]")) { estado.caminoElegido = false; dlg.close(); return preguntarEspecialidad(); }
@@ -680,7 +682,7 @@ async function preguntarEspecialidad() {
     if (!b) return;
     // Colegas: se confirma (no se puede cambiar después)
     if (!admin && b.dataset.especialidad) {
-      cuerpo.innerHTML = `<h2>${ESPECIALIDADES[b.dataset.especialidad]}</h2><p class="ayuda">¿Confirmás tu especialidad? No se puede cambiar después.</p>
+      cuerpo.innerHTML = `<h2>${ESPECIALIDADES[b.dataset.especialidad]}</h2><p class="ayuda">¿Confirmás tu especialidad? Después solo se puede corregir mientras no hayas cargado nada.</p>
         <div class="fila"><button class="boton" data-confirmar-especialidad="${b.dataset.especialidad}">Sí, confirmar</button>
         <button class="boton secundario" data-volver>Volver</button></div>`;
       return;
@@ -2888,7 +2890,7 @@ async function arrancar() {
   // Archivos de versiones distintas (caché del navegador): se fuerza una vez la versión nueva completa
   if (typeof Almacen.secreto !== "function" || typeof AsistenteLiq === "undefined") {
     if (!sessionStorage.getItem("liq_recarga")) { sessionStorage.setItem("liq_recarga", "1"); return actualizarAhora(); }
-    throw new Error("la app quedó a medio actualizar. Cerrala y abrila de nuevo (en la computadora: Ctrl + Shift + R).");
+    throw new Error("La app quedó a medio actualizar: cerrala del todo y volvé a abrirla.");
   }
   sessionStorage.removeItem("liq_recarga");
   $("#mes").value = hoy().slice(0, 7);
@@ -2993,6 +2995,14 @@ async function arrancar() {
     if (c && conciliacion) conciliacion.filas[+c.dataset.liqIncluir].incluir = c.checked;
   });
   $("#especialidad").addEventListener("change", () => cambiarRama($("#especialidad").value));
+  $("#corregir-especialidad").addEventListener("click", async () => {
+    if (Almacen.doc.prestaciones.some((p) => !p.borrada)) return aviso("Ya cargaste prestaciones: la especialidad no se cambia (pedíselo al administrador).");
+    const otra = esAnestesia() ? "cirugia" : "anestesia";
+    if (!confirm(`¿Cambiar la especialidad a ${ESPECIALIDADES[otra]}?`)) return;
+    await Almacen.ajuste("especialidad", otra);
+    aplicarModo(); await recalcularPendientes(); refrescar();
+    aviso("Especialidad: " + ESPECIALIDADES[otra]);
+  });
   $("#cambiar-rama").addEventListener("click", () => cambiarRama(esAnestesia() ? "cirugia" : "anestesia"));
   $("#cerrar-sesion").addEventListener("click", bloquearYa);
   $("#ane-os").addEventListener("change", verAranceles);
@@ -3051,6 +3061,8 @@ async function arrancar() {
   $("#conectar-inicio").addEventListener("click", conectar);
   $("#sin-drive").addEventListener("click", async (ev) => {
     ev.preventDefault();
+    // Sin cuenta en un iPhone sin instalar: los datos podrían borrarse solos (no hay copia en el Drive)
+    if (iphoneSinInstalar() && !confirm("Sin cuenta, los datos quedan solo en este iPhone y Safari puede borrarlos si pasan días sin usar la app. Agregala a la pantalla de inicio o entrá con Google. ¿Seguir igual?")) return;
     await Almacen.usarLocal();
     Almacen.tienePin() ? pedirPin("desbloquear") : pedirPin("crear");
   });
@@ -3421,7 +3433,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "97"; // igual que VERSION en sw.js
+const VERSION_APP = "98"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
@@ -3474,9 +3486,12 @@ async function actualizarAhora() {
   location.reload();
 }
 
+// iPhone en una pestaña de Safari (no instalada): Safari puede borrar los datos del sitio tras días sin uso
+const iphoneSinInstalar = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches;
 function bienvenida(mensaje) {
   $("#bienvenida-aviso").textContent = mensaje || "";
   $("#bienvenida-aviso").hidden = !mensaje;
+  $("#aviso-iphone").hidden = !iphoneSinInstalar();
   ir("bienvenida");
 }
 
@@ -3723,4 +3738,6 @@ async function bloquearYa() {
   location.reload();
 }
 
-arrancar().catch((e) => aviso(e.message));
+// Errores al abrir: en castellano (un «Failed to fetch» sin señal no le dice nada al usuario)
+arrancar().catch((e) => aviso(/fetch|network|load failed|json/i.test(e.message || "") && !/[áéíóúñ]/.test(e.message || "")
+  ? "No se pudo abrir la app completa: revisá la conexión a internet y volvé a abrirla." : e.message));
