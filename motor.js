@@ -21,6 +21,7 @@ const Motor = (() => {
     [/\b(quiste\s+)?pilonidal\b/g, "quiste dermoideo sacro coccigeo"],
     [/\bsigmoidectomia\b/g, "colectomia segmentaria"],
     [/\bhemorroidectomia\b/g, "hemorroides"],
+    [/\b(gastrectomia\s+(en\s+)?(manga|vertical|tubular)|(manga|sleeve)(\s+gastrica)?)\b/g, "gastrectomia en manga sleeve"],
     [/\blobectomia\s+(de\s+(la\s+)?)?tiroide?[ao]?s?\b/g, "lobectomia hemitiroidectomia"],
   ];
   function normalizar(texto) {
@@ -89,6 +90,8 @@ const Motor = (() => {
     if (!data || !(procedimiento || "").trim()) return [];
     // «VIDEOCOLECISTECTOMIA», «videolaparoscópica»: el prefijo pegado se separa
     procedimiento = normalizar(procedimiento.replace(/\b(video)(?=[a-záéíóúñ]{6,})/gi, "$1 "));
+    // Sin código propio en el nomenclador AAC (la manga no es una gastrectomía subtotal): mejor ninguno que uno equivocado
+    if (nombre === "AAC" && /\b(manga|sleeve)\b/.test(procedimiento)) return [];
     const pesos = idf(nombre), wanted = palabras(procedimiento);
     let plain = plano(procedimiento);
     if (wanted.has("antirr")) plain += " diafragm"; // la cirugía antirreflujo lleva plástica diafragmática
@@ -179,6 +182,14 @@ const Motor = (() => {
               130102: "13.01.02", 13010200: "13.01.02", 130104: "13.01.04", 130112: "13.01.12", 130113: "13.01.13" },
   };
   const CODIGOS_CONSULTA = new Set(["820125", "820126", "940100", "42010101", "420101", "42010100"]);
+  function pamiDeAAC(datos, aac, fecha) {
+    if (!aac) return null;
+    const eq = Object.entries(EQUIVALENCIAS.PAMI).find(([, v]) => v === aac);
+    if (eq) return eq[0];
+    const v = (datos.valores || []).find((x) => x.obra_social === "PAMI" && (!fecha || x.vigencia <= fecha) &&
+      (x.codigo_aac === aac || (x.codigos_aac || []).includes(aac)));
+    return v ? String(v.codigo) : null;
+  }
   const equivalenteAAC = (os, codigo) => (codigo ? EQUIVALENCIAS[os]?.[codigo] || (CODIGOS_CONSULTA.has(codigo) ? "CONSULTA" : null) : null);
 
   // ---------- Valuación ----------
@@ -497,7 +508,8 @@ const Motor = (() => {
       const deOtraVia = (c) => { const v = viaDe(c.name); return v && v !== "endoscopica" && v !== "percutanea" && (viaCirugia === "laparoscopica" ? v === "convencional" : v === "laparoscopica"); };
       const elegido = out.sugerencias.aac.find((c) => !deOtraVia(c)) || out.sugerencias.aac[0];
       if (elegido) out.codigo_aac = elegido.code;
-      if (!out.codigo_os && os === "PAMI" && out.sugerencias.pami.length) out.codigo_os = out.sugerencias.pami[0].code;
+      // PAMI: primero el módulo que corresponde al código AAC elegido (equivalencias y lista de valores); el parecido de texto, al final
+      if (!out.codigo_os && os === "PAMI") out.codigo_os = pamiDeAAC(datos, out.codigo_aac, p.fecha) || out.sugerencias.pami[0]?.code || null;
     }
     [out.valor_estimado, out.valor_origen] = valor(datos, p, os, out.codigo_aac, out.codigo_os);
     // El valor salió de la lista o del módulo de la obra social: su código queda en la prestación (antes APROSS 080524 se
