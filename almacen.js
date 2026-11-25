@@ -247,10 +247,13 @@ const Almacen = (() => {
     try { await navigator.storage?.persist?.(); } catch { /* el navegador decide */ }
   }
 
+  // Sello de cambio: siempre posterior al anterior del mismo registro. Si otro dispositivo con el reloj adelantado lo guardó
+  // «en el futuro», un cambio hecho después acá igual gana al combinar (si no, se perdería en silencio)
+  const sello = (previo, ahora = Date.now()) => Math.max(ahora, (previo?.actualizado || 0) + 1);
   // Guardar o borrar un registro; dispara la sincronización con Drive en segundo plano
   async function guardar(coleccion, registro) {
-    const r = { ...registro, id: registro.id || nuevoId(), actualizado: Date.now() };
-    const i = doc[coleccion].findIndex((x) => x.id === r.id);
+    const id = registro.id || nuevoId(), i = doc[coleccion].findIndex((x) => x.id === id);
+    const r = { ...registro, id, actualizado: sello(doc[coleccion][i]) };
     if (i >= 0) doc[coleccion][i] = r; else doc[coleccion].push(r);
     cambios++;
     await escribirLocal();
@@ -262,8 +265,8 @@ const Almacen = (() => {
   async function guardarVarios(coleccion, registros) {
     const ahora = Date.now();
     for (const registro of registros) {
-      const r = { ...registro, id: registro.id || nuevoId(), actualizado: ahora };
-      const i = doc[coleccion].findIndex((x) => x.id === r.id);
+      const id = registro.id || nuevoId(), i = doc[coleccion].findIndex((x) => x.id === id);
+      const r = { ...registro, id, actualizado: sello(doc[coleccion][i], ahora) };
       if (i >= 0) doc[coleccion][i] = r; else doc[coleccion].push(r);
     }
     cambios++;
@@ -273,8 +276,8 @@ const Almacen = (() => {
   }
   // Muchos cambios seguidos (aplicar una liquidación, recalcular): se cambian en memoria y se escriben una sola vez al final
   function guardarEnMemoria(coleccion, registro) {
-    const r = { ...registro, id: registro.id || nuevoId(), actualizado: Date.now() };
-    const i = doc[coleccion].findIndex((x) => x.id === r.id);
+    const id = registro.id || nuevoId(), i = doc[coleccion].findIndex((x) => x.id === id);
+    const r = { ...registro, id, actualizado: sello(doc[coleccion][i]) };
     if (i >= 0) doc[coleccion][i] = r; else doc[coleccion].push(r);
     cambios++;
     return r;
@@ -289,7 +292,7 @@ const Almacen = (() => {
     return r ? guardar(coleccion, { ...r, borrada: true }) : null;
   };
   async function ajuste(clave, valor) {
-    doc.ajustes[clave] = { valor, actualizado: Date.now() };
+    doc.ajustes[clave] = { valor, actualizado: sello(doc.ajustes[clave]) };
     cambios++;
     await escribirLocal();
     if (doc.cuenta && !pendiente) await marcarPendiente(true);
@@ -485,8 +488,14 @@ const Almacen = (() => {
         const archivo = await buscar(ARCHIVO);
         if (archivo) {
           await respaldoDiario(archivo).catch(() => {});
-          const remoto = await (await drive(`${API}/${archivo.id}?alt=media`)).json();
-          doc = combinar(doc, remoto);
+          // Si otro dispositivo subió mientras se combinaba, se vuelve a traer y combinar antes de subir (si no, pisaría lo suyo)
+          const version = async () => (await (await drive(`${API}/${archivo.id}?fields=version`)).json()).version;
+          for (let vuelta = 0; ; vuelta++) {
+            const antes = await version();
+            const remoto = await (await drive(`${API}/${archivo.id}?alt=media`)).json();
+            doc = combinar(doc, remoto);
+            if (vuelta >= 2 || (await version()) === antes) break;
+          }
           await drive(`${SUBIR}/${archivo.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(doc) });
         } else {
           await subirNuevo(ARCHIVO, JSON.stringify(doc), "application/json");
