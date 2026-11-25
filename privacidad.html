@@ -74,13 +74,20 @@ Se guarda en una planilla del responsable, aparte de la base anónima.</p>
 
 <h2>Servicios de terceros</h2>
 <p>La app no se comunica con ningún servicio salvo Google Drive (cuando el profesional lo conecta), Groq (solo si el profesional
-activa el asistente de IA con su propia clave, en las condiciones descritas arriba) y, solo si el profesional aceptó
-aportar datos económicos anónimos, el receptor de esa base (Google Apps Script del responsable). Las librerías de
+activa el asistente de IA con su propia clave, en las condiciones descritas arriba) y el receptor del responsable (Google Apps Script):
+siempre para los datos de administración de la cuenta descritos arriba, y para la base común anónima solo si el profesional aceptó aportar.
+Google y Groq pueden procesar los datos en servidores fuera de la Argentina (por ejemplo, en Estados Unidos). Las librerías de
 código abierto que usa (PaddleOCR con ONNX Runtime, PDF.js y SheetJS) están alojadas junto con la app.</p>
 
 <h2>Seguridad en el dispositivo</h2>
 <p>Los datos guardados en el dispositivo están cifrados (AES-256) con una clave que se obtiene del PIN del profesional; el
 PIN no se guarda. La app se bloquea sola tras 5 minutos sin uso.</p>
+
+<h2>Tus derechos</h2>
+<p>Podés pedir acceso, corrección o borrado de tus datos de cuenta en cualquier momento (Ley 25.326, arts. 14 y 16); los datos de tus
+pacientes están en tu celular y en tu Drive, bajo tu control. La AGENCIA DE ACCESO A LA INFORMACIÓN PÚBLICA, en su carácter de Órgano
+de Control de la Ley N° 25.326, tiene la atribución de atender las denuncias y reclamos que interpongan quienes resulten afectados en sus
+derechos por incumplimiento de las normas vigentes en materia de protección de datos personales.</p>
 
 <h2>Contacto</h2>
 <p>Dr. Ignacio Corteggiano — consultas en <a href="https://github.com/ignacorte/liquidaciones/issues">github.com/ignacorte/liquidaciones/issues</a></p>

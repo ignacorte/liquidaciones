@@ -11,7 +11,7 @@
 <link rel="icon" href="icono.svg">
 <link rel="apple-touch-icon" href="icono-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="estilos.css?v=94">
+<link rel="stylesheet" href="estilos.css?v=95">
 </head>
 <body>
 <header>
@@ -53,6 +53,7 @@
       <button class="boton-google" id="conectar-inicio"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg><span>Continuar con Google</span></button>
       <p class="acceso-ayuda">Tus datos quedan en <b>tu</b> Google Drive (carpeta «Liquidaciones») y en cada celular donde entres con tu cuenta: nadie más los ve. Después creás un PIN para este celular.</p>
       <div class="acceso-links"><a href="#" id="sin-drive">Usar sin cuenta (solo en este celular)</a><a href="ayuda.html">Cómo usarla</a></div>
+      <div class="acceso-links"><a href="terminos.html">Términos</a><a href="privacidad.html">Privacidad</a></div>
     </div>
   </section>
 
@@ -219,7 +220,7 @@
       <p class="ayuda" style="margin-top:-4px">Cerrar sesión pide el PIN para volver a entrar (los datos quedan en el celular y en tu Drive).</p>
       <div class="fila"><button class="boton chico" id="conectar">Conectar Google Drive</button>
         <button class="boton chico secundario" id="sincronizar">Sincronizar ahora</button>
-        <button class="boton chico secundario" id="planilla">Guardar Excel en Drive</button></div>
+        <button class="boton chico secundario" id="planilla">Actualizar planilla en Drive</button></div>
       <p class="ayuda" id="donde-drive"></p>
       <div class="fila"><a class="boton chico secundario" id="abrir-carpeta" target="_blank" rel="noopener" hidden>📁 Abrir mi carpeta en Drive</a></div>
       <h3 style="margin-top:14px">Asistente de IA <span class="ayuda">(opcional)</span></h3>
@@ -285,7 +286,7 @@
         <label class="solo-cirugia">la institución liquidaba (%)<input id="liq-anterior-pct" type="number" step="1" min="0" max="100"></label>
         <label class="solo-anestesia">Retención de la asociación (%)<input id="pct-asociacion" type="number" step="0.1" min="0" max="99"></label>
       </div>
-      <p class="ayuda solo-cirugia">Hasta el 31/12/2025 la institución liquidaba una parte de lo tuyo (alrededor del 65–70 %); desde 2026, el 100 %. Por eso los cobros de antes se llevan al 100 % para estimar lo nuevo.
+      <p class="ayuda solo-cirugia">«La institución liquidaba (%)»: solo si hasta cierta fecha tu institución te liquidaba una parte de lo tuyo y después el 100 % (vacío = no se usa). Los cobros de antes de esa fecha se llevan al 100 % para estimar lo nuevo.
         «Tu parte del módulo»: lo que te queda de las cirugías que la obra social paga por módulo a la institución (PAMI, APROSS…); 70 % hasta ver las liquidaciones. Se puede cambiar en cada cirugía o en la obra social.<br>
         «Cobro por ayudantía»: las ayudantías se cobran en forma particular al cirujano; cada una suma este monto fijo.<br>
         Los valores de referencia que cargaste (listas de cada obra social, PAMI, aranceles) <b>no se modifican</b>. Solo si una práctica no tiene valor de referencia, se usa <b>lo último cobrado</b> en las liquidaciones cargadas (y si tampoco hay, la referencia de la AAC).</p>
@@ -334,7 +335,8 @@
 <button id="mas" class="fab" hidden aria-label="Nueva cirugía de hoy" title="Nueva cirugía de hoy">+</button>
 <dialog id="dlg-terminos" aria-labelledby="terminos-titulo"><div class="card">
   <h2 id="terminos-titulo">Términos y condiciones</h2>
-  <p class="ayuda">Los datos de tus pacientes quedan <b>en tu celular, cifrados, y en tu Google Drive</b>: nadie más los ve. Los valores y fechas que
+  <p class="ayuda">Los datos de tus pacientes quedan <b>en tu celular, cifrados, y en tu Google Drive</b>: nadie más los ve. Para administrar las cuentas, el responsable de la app recibe tu
+    correo y cantidades de uso (nunca pacientes ni montos). Los valores y fechas que
     calcula la app son estimaciones. Leé los <a href="terminos.html" target="_blank" rel="noopener">términos y condiciones</a> y la
     <a href="privacidad.html" target="_blank" rel="noopener">política de privacidad</a>.</p>
   <label class="check"><input type="checkbox" id="acepto-terminos"> Leí y acepto los términos y condiciones y la política de privacidad.</label>
@@ -356,12 +358,12 @@
 <dialog id="dlg"><div class="card" id="dlg-cuerpo"></div></dialog>
 <datalist id="lista-instituciones"></datalist>
 <div id="toast" hidden></div>
-<script src="config.js?v=94"></script>
-<script src="motor.js?v=94"></script>
-<script src="lector.js?v=94"></script>
-<script src="importar.js?v=94"></script>
-<script src="almacen.js?v=94"></script>
-<script src="asistente.js?v=94"></script>
-<script src="app.js?v=94"></script>
+<script src="config.js?v=95"></script>
+<script src="motor.js?v=95"></script>
+<script src="lector.js?v=95"></script>
+<script src="importar.js?v=95"></script>
+<script src="almacen.js?v=95"></script>
+<script src="asistente.js?v=95"></script>
+<script src="app.js?v=95"></script>
 </body>
 </html>

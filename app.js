@@ -138,7 +138,7 @@ function datos(rama) {
   const esp = rama || ajuste("especialidad", "cirugia");
   const deLaRama = (v) => (esp === "anestesia") === String(v.codigo || "").startsWith("ANE-");
   return { obras, especialidad: esp, pct_asociacion: Number(ajuste("pct_asociacion", 0)) || 0, pct_modulo_general: Number(ajuste("pct_modulo_general", 70)) || 0, monto_ayudantia: Number(ajuste("monto_ayudantia", 0)) || 0,
-           liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: Number(ajuste("liq_anterior_pct", 70)) || 0 }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
+           liq_anterior: { hasta: ajuste("liq_anterior_hasta", "2025-12-31"), pct: liqAnteriorPct() }, valores: estado.base.valores.filter((v) => !tapados.has(clave(v))).concat(valoresPropios).filter(deLaRama),
            uq: estado.base.uq.concat(vivos(d.uq)), prestaciones: vivos(d.prestaciones).filter((p) => (p.especialidad || "cirugia") === esp) };
 }
 const ajuste = (k, porDefecto) => Almacen.doc.ajustes[k]?.valor ?? porDefecto;
@@ -412,7 +412,7 @@ async function esAdmin() {
   if (!cuenta || !crypto.subtle) return false;
   if (estado.admin?.cuenta === cuenta) return estado.admin.es;
   const huella = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  // Gmail no distingue puntos («dr.corteggiano@gmail.com» es la misma cuenta que «drcorteggiano@gmail.com»)
+  // Gmail no distingue puntos («nombre.apellido@gmail.com» es la misma cuenta que «nombreapellido@gmail.com»)
   const [u, dom] = cuenta.split("@"), gmail = /^(gmail|googlemail)\.com$/.test(dom || "") ? u.replace(/\./g, "") + "@gmail.com" : cuenta;
   const lista = CONFIG.ADMINS_SHA256 || [];
   estado.admin = { cuenta, es: lista.includes(await huella(cuenta)) || lista.includes(await huella(gmail)) };
@@ -2155,7 +2155,7 @@ function verValores() {
   verEstadoEnvio();
   $("#borrar-aportes").hidden = !Object.keys(ajuste("aportes_enviados", {})).length;
   $("#enviar-ahora").hidden = !CONFIG.ESTADISTICA_URL || !ajuste("compartir_economicos", false);
-  $("#liq-anterior-pct").value = ajuste("liq_anterior_pct", 70);
+  $("#liq-anterior-pct").value = liqAnteriorPct() || "";
   $("#liq-anterior-hasta").value = ajuste("liq_anterior_hasta", "2025-12-31");
   // Dónde está cada cosa en el Drive
   const rama = RAMA_DRIVE();
@@ -2508,7 +2508,7 @@ const claveNombre = (n) => {
   return { ap: ap.trim().replace(/\s+/g, " "), nom: nom.trim().split(/\s+/)[0] || "" };
 };
 // flojo (solo para relacionar liquidaciones con la lista propia): errores de tipeo en el nombre («Jennifer» / «Jenifer») o en
-// el apellido («ALBERTRNGO» / «ALBERTENGO») y nombre y apellido invertidos («NELVY, RAMSEYER» / «RAMSEYER, NELVI»)
+// el apellido («FICTISIO» / «FICTICIO») y nombre y apellido invertidos («ANA, PRUEBA» / «PRUEBA, ANNA»)
 function distancia(a, b) {
   if (Math.abs(a.length - b.length) > 2) return 9;
   let previa = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -2578,7 +2578,7 @@ function conciliar(liq) {
   for (const maxDias of [0, 1, 3, 7]) for (const r of out) {
     if (r.p) continue;
     const l = r.linea;
-    // El mismo día alcanza con el apellido («VILLAR, MARIA» en la liquidación y «VILLAR, ADRIANA» en la planilla)
+    // El mismo día alcanza con el apellido («PRUEBA, MARIA» en la liquidación y «PRUEBA, ANA» en la planilla)
     const p = d.prestaciones.filter((p) => !usadas.has(p.id) && p.estado !== "cobrada" && diasEntre(p.fecha, l.fecha) <= maxDias && mismoTipo(r, p) &&
       (mismoActo(l, p) || (maxDias === 0 && mismoApellido(l.paciente, p.paciente))) && (!l.emision || p.fecha <= l.emision))
       .sort((a, b) => diasEntre(a.fecha, l.fecha) - diasEntre(b.fecha, l.fecha) || (b.atencion === l.atencion) - (a.atencion === l.atencion) ||
@@ -2867,7 +2867,7 @@ function mostrarSync(e) {
     : "Solo en este dispositivo";
   Almacen.adjuntosPendientes().then((n) => { if (n) $("#sync").textContent += ` · ${n} ${n === 1 ? "documento" : "documentos"} por subir` +
     (Almacen.errorAdjuntos ? ` (${Almacen.errorAdjuntos})` : ""); }).catch(() => {});
-  if (cuenta && e === "al día" && Almacen.errorPlanilla) $("#sync").textContent += " · planilla sin actualizar (" + Almacen.errorPlanilla + ")";
+  if (cuenta && Almacen.errorPlanilla) $("#sync").textContent += " · planilla sin actualizar (" + Almacen.errorPlanilla + ")";
   // En un celular nuevo el correo llega con la primera sincronización: recién ahí se sabe si es el administrador
   if (cuenta && estado.admin?.cuenta !== cuenta.trim().toLowerCase())
     esAdmin().then((es) => { document.body.classList.toggle("admin", es); if (es && estado.vista === "valores") verAdministracion(); }).catch(() => {});
@@ -2974,8 +2974,10 @@ async function arrancar() {
   $("#planilla").addEventListener("click", async () => {
     try {
       if (!Almacen.tieneToken()) return Almacen.conectar();
-      await Almacen.subirPlanilla(await construirExcel());
-      aviso("Excel guardado en Drive › Liquidaciones › Liquidaciones.xlsx");
+      // Por la sincronización (las mismas planillas, cada rama en la suya, y sin dos subidas a la vez)
+      await Almacen.sincronizar();
+      if (Almacen.errorPlanilla) throw new Error("No se pudo actualizar la planilla: " + Almacen.errorPlanilla);
+      aviso(esAnestesia() ? "Planilla actualizada: Drive › Liquidaciones › Anestesiología › «Anestesiología – planilla»" : "Planilla actualizada: Drive › Liquidaciones › «Liquidaciones – planilla»");
     } catch (e) { aviso(e.message); }
   });
   Almacen.planilla = planillasDrive; // se actualizan en el Drive en cada sincronización
@@ -3072,7 +3074,8 @@ async function arrancar() {
     programarEnvio(3000);
     traer({ renovar: true });
   });
-  setInterval(() => document.visibilityState === "visible" && traer(), 5 * 60e3);
+  // Con la app abierta más de una hora: si hay cambios sin subir, se renueva el acceso (si no hay nada a medio cargar)
+  setInterval(() => document.visibilityState === "visible" && traer({ renovar: Almacen.pendiente }), 5 * 60e3);
   $("#salir").addEventListener("click", async (ev) => {
     ev.preventDefault();
     await cerrarCuenta();
@@ -3114,6 +3117,7 @@ async function arrancar() {
   // 1) Cuenta de Google primero (el PIN viene después)
   if (vuelta?.error) {
     sessionStorage.removeItem("liq_silencioso");
+    if (vuelta.error === "access_denied") return bienvenida("Google no dio acceso: si no aceptaste el permiso, probá de nuevo y tocá «Permitir». Si tu cuenta todavía no está habilitada, pedile acceso al administrador o tocá «Usar sin cuenta» (tus datos quedan en este celular).");
     if (!cuenta || (vuelta.error !== "interaction_required" && vuelta.error !== "login_required")) return bienvenida("No se pudo ingresar con Google. Probá de nuevo.");
     return bienvenida(`Tu sesión de Google venció: ingresá de nuevo con ${cuenta}.`);
   }
@@ -3154,7 +3158,7 @@ async function unificarActos() {
 // (se recuperan desde un respaldo). También las de planilla que quedaron con la fecha del día en que se cargaron
 // (versiones anteriores ponían la de hoy si no podían leerla) cuando la misma cirugía está con su fecha real.
 // Para unir sola (sin preguntar) hace falta más que para avisar: mismo tipo y mismo DNI, o el mismo nombre completo (o el de
-// la liquidación, que viene cortado: «PEREYRA,» con «PEREYRA, FRANCISCO»)
+// la liquidación, que viene cortado: «PRUEBA,» con «PRUEBA, JUAN»)
 function mismaParaUnir(a, b) {
   if (a.tipo !== b.tipo || a.fecha !== b.fecha) return false;
   const dni = (x) => String(x.dni || "").replace(/\D/g, "");
@@ -3267,6 +3271,16 @@ async function arreglarLiquidaciones() {
   if (n) { aviso(`Se unieron ${n} cirugías que las liquidaciones habían agregado repetidas (quedan con su procedimiento y el cobro).`); refrescar(); }
 }
 
+// «Hasta el … la institución liquidaba el N %» es una regla de la institución del responsable: rige para las cuentas que ya
+// existían (con datos cargados antes de la v95), salvo que la hayan cambiado; en una cuenta nueva empieza apagada (0 = no se usa)
+let cacheCuentaVieja = null;
+function liqAnteriorPct() {
+  const v = ajuste("liq_anterior_pct", null);
+  if (v !== null && v !== undefined && v !== "") return Number(v) || 0;
+  const ps = Almacen.doc.prestaciones;
+  if (cacheCuentaVieja?.n !== ps.length) cacheCuentaVieja = { n: ps.length, vieja: ps.some((p) => (p.actualizado || 0) < Date.parse("2026-11-26")) };
+  return cacheCuentaVieja.vieja ? 70 : 0;
+}
 const planillaVieja = (fecha) => (fecha || "") <= ajuste("liq_anterior_hasta", "2025-12-31");
 // v71: las cirugías de ahora cargadas desde la planilla (2026) no son «solo registro»: se estiman (antes quedaban en $0)
 async function planillasActuales() {
@@ -3407,7 +3421,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "94"; // igual que VERSION en sw.js
+const VERSION_APP = "95"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)

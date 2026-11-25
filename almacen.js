@@ -169,7 +169,11 @@ const Almacen = (() => {
     const viejo = await idbLeer(CLAVE);
     if (viejo) await idbEscribir({ ["olvidado_" + Date.now()]: viejo });
     meta = null;
-    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined, pendiente: undefined, secretos: undefined });
+    // Los documentos por subir están cifrados con el PIN viejo: se apartan igual (no se destruyen) y se empieza sin ninguno
+    const docsViejos = await idbLeer("adjuntos");
+    if (docsViejos) await idbEscribir({ ["olvidado_adjuntos_" + Date.now()]: docsViejos });
+    adjuntos = null;
+    await idbEscribir({ [CLAVE]: undefined, pin: undefined, token: undefined, fallos: undefined, sesion: undefined, pendiente: undefined, secretos: undefined, adjuntos: undefined });
   }
 
   // ---------- Copia de seguridad (archivo cifrado con una clave propia: sirve en otro celular) ----------
@@ -312,7 +316,7 @@ const Almacen = (() => {
   // Cuenta de Google y vencimiento del acceso: sin cifrar (no son datos de pacientes), para saber al abrir la app si hay que
   // renovar el acceso antes de pedir el PIN. El acceso de Google dura 1 hora: se renueva sin pedir nada (prompt=none)
   // mientras el profesional siga con su sesión de Google abierta en el navegador.
-  let cuentaPlano = null, venceToken = 0, pendiente = false, local = false, cambios = 0; // cambios: para no perder lo hecho durante una subida
+  let cuentaPlano = null, venceToken = 0, pendiente = false, local = false, cambios = 0, cuentaVerificada = false; // cambios: para no perder lo hecho durante una subida
   async function leerMeta() {
     cuentaPlano = (await idbLeer("cuenta")) || null;
     local = !!(await idbLeer("local"));
@@ -325,6 +329,7 @@ const Almacen = (() => {
     if (!CONFIG.GOOGLE_CLIENT_ID) throw new Error("Falta configurar GOOGLE_CLIENT_ID en config.js");
     const estado = nuevoId();
     sessionStorage.setItem("liq_estado", estado);
+    try { localStorage.setItem("liq_estado", estado); } catch { /* nada */ } // la app instalada puede volver de Google en otra pestaña
     const p = new URLSearchParams({ client_id: CONFIG.GOOGLE_CLIENT_ID, redirect_uri: location.origin + location.pathname,
       response_type: "token", scope: "https://www.googleapis.com/auth/drive.file", include_granted_scopes: "true", state: estado });
     const cuenta = elegir ? "" : doc.cuenta || cuentaPlano;
@@ -340,7 +345,10 @@ const Almacen = (() => {
     if (!/access_token|error=/.test(location.hash)) return null;
     const h = new URLSearchParams(location.hash.slice(1));
     history.replaceState(null, "", location.pathname);
-    if (h.get("state") !== sessionStorage.getItem("liq_estado")) return null;
+    let otro = null;
+    try { otro = localStorage.getItem("liq_estado"); localStorage.removeItem("liq_estado"); } catch { /* nada */ }
+    if (!h.get("state") || ![sessionStorage.getItem("liq_estado"), otro].includes(h.get("state"))) return null;
+    cuentaVerificada = false;
     if (h.get("error")) return { error: h.get("error") };
     tokenMem = { valor: h.get("access_token"), vence: Date.now() + (+h.get("expires_in") || 3600) * 1000 }; // se guarda cifrado al desbloquear
     venceToken = tokenMem.vence;
@@ -378,9 +386,11 @@ const Almacen = (() => {
 
   async function buscar(nombre, tipo) {
     const q = `name='${comillas(nombre)}' and trashed=false` + (tipo ? ` and mimeType='${tipo}'` : "");
-    const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id,modifiedTime)&spaces=drive`)).json();
+    // Si hubiera dos con el mismo nombre, todos los dispositivos usan el mismo: el más antiguo
+    const r = await (await drive(`${API}?q=${encodeURIComponent(q)}&fields=files(id,modifiedTime)&spaces=drive&orderBy=createdTime`)).json();
     return r.files[0] || null;
   }
+  const papelera = (id) => drive(`${API}/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) });
   async function carpeta() {
     const tipo = "application/vnd.google-apps.folder";
     const c = await buscar(CARPETA, tipo);
@@ -407,7 +417,8 @@ const Almacen = (() => {
     if (!(await buscar(nombre))) {
       await drive(`${API}/${archivo.id}/copy`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nombre, parents: [await carpeta()] }) });
       const limite = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-      for (const f of await respaldos()) if (f.dia < limite) await drive(`${API}/${f.id}`, { method: "DELETE" }).catch(() => {});
+      // Los viejos van a la papelera del Drive (no se borran), y siempre quedan los 30 más nuevos aunque la fecha del celular esté mal
+      for (const f of (await respaldos()).slice(30)) if (f.dia < limite) await papelera(f.id).catch(() => {});
     }
     respaldoDe = dia;
   }
@@ -448,9 +459,17 @@ const Almacen = (() => {
     sincronizando = (async () => {
       avisar("sincronizando…");
       try {
-        if (!doc.cuenta) {
+        // Una vez por sesión: que el acceso de Google sea de la cuenta de estos datos (si no, se mezclarían dos Drive)
+        if (!doc.cuenta || !cuentaVerificada) {
           const sobre = await (await drive("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)")).json();
-          doc.cuenta = sobre.user.emailAddress;
+          const de = sobre.user.emailAddress;
+          if (doc.cuenta && de && de.toLowerCase() !== doc.cuenta.toLowerCase()) {
+            tokenMem = null; guardarToken();
+            anotar(`Se ingresó con ${de}, pero los datos de este dispositivo son de ${doc.cuenta}`);
+            throw Object.assign(new Error(`Entraste a Google con ${de}, pero tus datos están en ${doc.cuenta}. Volvé a ingresar con esa cuenta: no se mezcló nada.`), { otraCuenta: true });
+          }
+          if (!doc.cuenta) doc.cuenta = de;
+          cuentaVerificada = true;
         }
         if (cuentaPlano !== doc.cuenta) { cuentaPlano = doc.cuenta; await idbEscribir({ cuenta: doc.cuenta }); }
         const cambiosAlEmpezar = cambios;
@@ -483,7 +502,8 @@ const Almacen = (() => {
         else if (cambios === cambiosAlEmpezar) avisar("documentos sin subir");
         else { avisar("sincronizando…"); setTimeout(() => sincronizar().catch(() => {}), 500); }
       } catch (e) {
-        avisar(e.reconectar ? "cambios sin subir" : "sin conexión: se guarda en el celular");
+        avisar(e.reconectar ? "cambios sin subir" : e.otraCuenta ? "otra cuenta de Google: no se subió nada"
+          : e.status ? "no se pudo subir (" + e.message + "): queda guardado en el celular" : "sin conexión: se guarda en el celular");
         throw e;
       } finally { sincronizando = null; }
     })();
@@ -542,7 +562,11 @@ const Almacen = (() => {
   // Google esté vencido al guardar o no haya señal). Al subirse, el enlace queda en la prestación.
   let adjuntos = null, errorAdjuntos = "", errorPlanilla = "";
   async function leerAdjuntos() {
-    if (!adjuntos) { const s = await idbLeer("adjuntos"); adjuntos = s ? await descifrar(s) : []; }
+    if (!adjuntos) {
+      const s = await idbLeer("adjuntos");
+      try { adjuntos = s ? await descifrar(s) : []; }
+      catch { await idbEscribir({ ["ilegible_adjuntos_" + Date.now()]: s }); adjuntos = []; } // de otro PIN: se aparta, no se borra
+    }
     return adjuntos;
   }
   const guardarAdjuntos = async () => idbEscribir({ adjuntos: await cifrar(adjuntos) });
@@ -652,7 +676,7 @@ const Almacen = (() => {
   }
   async function subirPlanilla(bytes, nombre = PLANILLA, ruta = []) {
     const vieja = await buscar(PLANILLA_VIEJA);
-    if (vieja) await drive(`${API}/${vieja.id}`, { method: "DELETE" }).catch(() => {});
+    if (vieja) await papelera(vieja.id).catch(() => {});
     const padre = await carpetaRuta(ruta);
     const hoja = await buscar(nombre, HOJA_TIPO);
     if (hoja) {
@@ -661,9 +685,9 @@ const Almacen = (() => {
         await drive(`${SUBIR}/${hoja.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": XLSX_TIPO }, body: bytes });
         return hoja;
       } catch (e) {
-        if (e.reconectar) throw e;
+        if (e.status !== 400) throw e; // un error pasajero no cambia la planilla de lugar (el enlace del contador sigue sirviendo)
         const nueva = await crearHoja(bytes, nombre, padre);
-        await drive(`${API}/${hoja.id}`, { method: "DELETE" }).catch(() => {});
+        await papelera(hoja.id).catch(() => {}); // a la papelera del Drive, no borrada
         return nueva;
       }
     }
