@@ -206,6 +206,7 @@ function ir(vista) {
   $$("main > section").forEach((s) => (s.hidden = s.id !== "v-" + vista));
   $$("nav.abajo button").forEach((b) => b.classList.toggle("activa", b.dataset.vista === vista));
   const afuera = ["bienvenida", "pin"].includes(vista);
+  document.body.classList.toggle("en-acceso", afuera);
   if (!afuera) recordarVista();
   $("nav.abajo").hidden = afuera;
   $("#bloquear").hidden = afuera;
@@ -410,8 +411,11 @@ async function esAdmin() {
   const cuenta = (Almacen.doc.cuenta || "").trim().toLowerCase();
   if (!cuenta || !crypto.subtle) return false;
   if (estado.admin?.cuenta === cuenta) return estado.admin.es;
-  const huella = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cuenta)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  estado.admin = { cuenta, es: (CONFIG.ADMINS_SHA256 || []).includes(huella) };
+  const huella = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  // Gmail no distingue puntos («dr.corteggiano@gmail.com» es la misma cuenta que «drcorteggiano@gmail.com»)
+  const [u, dom] = cuenta.split("@"), gmail = /^(gmail|googlemail)\.com$/.test(dom || "") ? u.replace(/\./g, "") + "@gmail.com" : cuenta;
+  const lista = CONFIG.ADMINS_SHA256 || [];
+  estado.admin = { cuenta, es: lista.includes(await huella(cuenta)) || lista.includes(await huella(gmail)) };
   return estado.admin.es;
 }
 
@@ -3399,7 +3403,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "92"; // igual que VERSION en sw.js
+const VERSION_APP = "93"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
@@ -3459,7 +3463,20 @@ function bienvenida(mensaje) {
 }
 
 // Ya desbloqueada (o con el PIN recién creado)
+async function cambiarDeCuenta() {
+  try { if (Almacen.tieneToken()) await Almacen.sincronizar(); } catch { /* se avisa abajo */ }
+  if (Almacen.pendiente || (await Almacen.adjuntosPendientes())) {
+    aviso("Hay cambios sin subir a tu Drive: no se cambia de cuenta para no perderlos. Sincronizá con señal y probá de nuevo.");
+    return false;
+  }
+  if (!confirm(`Tus datos están a salvo en el Drive de ${Almacen.cuenta}. Se quitan de este dispositivo y elegís otra cuenta de Google. ¿Seguir?`)) return false;
+  await Almacen.desconectar();
+  Almacen.conectar({ elegir: true });
+  return true;
+}
+
 function entrar() {
+  if (estado.cambiarCuenta) { estado.cambiarCuenta = false; cambiarDeCuenta().then((ok) => ok || entrar()); return; }
   $("#pin").value = $("#pin2").value = "";
   // v52: las pendientes se recalculan una vez (sin % general del módulo; la referencia cargada no la pisa un cobro) (el valor a mano no se toca)
   // Los arreglos de una vez corren con los datos al día (después de traer lo del Drive): así un celular con datos viejos
@@ -3499,15 +3516,15 @@ function entrar() {
 
 const minutosBloqueo = () => +ajuste("minutos_bloqueo", 15);
 const TEXTOS_PIN = {
-  crearNuevo: ["Creá el PIN de este celular", "Es un PIN nuevo, solo para este celular (puede ser distinto del que usás en otro). Tus datos vienen de tu Google Drive y acá quedan cifrados con este PIN. Mínimo 6 números: anotalo en un lugar seguro.", "Crear PIN"],
-  crear: ["Creá tu PIN", "Protege los datos de tus pacientes en este celular: quedan cifrados y solo se abren con el PIN. Mínimo 6 números. No se puede recuperar: anotalo en un lugar seguro.", "Crear PIN"],
+  crearNuevo: ["Creá el PIN de este celular", "Es nuevo, solo para este celular (puede ser distinto del de otro). De 6 a 12 números: anotalo, no se puede recuperar.", "Crear PIN"],
+  crear: ["Creá tu PIN", "Protege los datos de tus pacientes en este celular. De 6 a 12 números: anotalo, no se puede recuperar.", "Crear PIN"],
   desbloquear: ["Desbloquear", "Ingresá tu PIN.", "Entrar"],
   cambiar: ["Cambiar PIN", "Ingresá el PIN actual y el nuevo (mínimo 6 números).", "Cambiar"],
 };
 
 function pedirPin(modo) {
   estado.modoPin = modo;
-  const [titulo, ayuda, boton] = TEXTOS_PIN[modo === "crear" && Almacen.cuenta ? "crearNuevo" : modo];
+  const [titulo, ayuda, boton] = TEXTOS_PIN[modo === "crear" && (Almacen.cuenta || Almacen.tieneToken()) ? "crearNuevo" : modo];
   // Con qué cuenta está (o si está sin cuenta) y, sin cuenta, la forma de entrar con Google para traer los datos del Drive
   // (en un celular nuevo, si se entró «sin cuenta», solo quedaba el PIN y los datos de Google no aparecían)
   const cuenta = Almacen.cuenta, recienConectado = !cuenta && Almacen.tieneToken(); // volvió de Google: el correo se sabe al sincronizar
@@ -3516,6 +3533,10 @@ function pedirPin(modo) {
     : modo === "crear" ? "¿Ya usás la app en otro celular o en la computadora? Ingresá con Google para traer tus datos."
     : "Sin cuenta de Google: los datos están solo en este celular. Ingresá con Google para traer (y guardar) tus datos de Drive; lo de acá no se pierde.";
   $("#pin-google").hidden = !!cuenta || recienConectado || modo === "cambiar";
+  $("#pin-avatar").textContent = cuenta ? cuenta.trim()[0].toUpperCase() : "🔒";
+  $("#pin-cambiar").hidden = !cuenta || modo !== "desbloquear";
+  $("#pin-avatar").hidden = modo !== "desbloquear"; // al crear o cambiar el PIN, más lugar para los dos casilleros y el teclado
+  estado.cambiarCuenta = false;
   $("#pin-titulo").textContent = titulo; $("#pin-ayuda").textContent = ayuda; $("#pin-ok").textContent = boton;
   $("#pin2").hidden = modo === "desbloquear";
   $("#pin").placeholder = modo === "cambiar" ? "PIN actual" : "PIN";
@@ -3549,6 +3570,28 @@ function configurarSeguridad() {
     finally { boton.disabled = false; }
   });
   $("#pin-google").addEventListener("click", () => $("#conectar-inicio").click());
+  // Teclado propio (como las apps de los bancos): en el celular no se abre además el teclado del sistema
+  let campoPin = $("#pin");
+  ["#pin", "#pin2"].forEach((s) => $(s).addEventListener("focus", () => { campoPin = $(s); }));
+  if (matchMedia("(pointer: coarse)").matches) ["#pin", "#pin2"].forEach((s) => $(s).setAttribute("inputmode", "none"));
+  $("#teclado").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tecla]");
+    if (!b) return;
+    const c = campoPin.hidden ? $("#pin") : campoPin;
+    if (b.dataset.tecla === "borrar") c.value = c.value.slice(0, -1);
+    else if (c.value.length < 12) c.value += b.dataset.tecla;
+    // Al crear: con 6 números en el primero, sigue en el segundo (para uno más largo, tocar el primero)
+    if (c === $("#pin") && c.value.length === 6 && !$("#pin2").hidden && !$("#pin2").value) { campoPin = $("#pin2"); $("#pin2").focus(); }
+    $("#pin-error").hidden = true;
+  });
+  // Cambiar de cuenta: con el PIN se sube lo que falte y después Google deja elegir otra cuenta (los datos siguen en el Drive)
+  $("#pin-cambiar").addEventListener("click", (ev) => {
+    ev.preventDefault();
+    estado.cambiarCuenta = true;
+    $("#pin-titulo").textContent = "Cambiar de cuenta";
+    $("#pin-ayuda").textContent = "Ingresá tu PIN: primero se sube a tu Drive lo que falte y después elegís la otra cuenta de Google.";
+    $("#pin").focus();
+  });
   $("#olvide-pin").addEventListener("click", async (ev) => {
     ev.preventDefault();
     if (estado.modoPin === "cambiar") return entrar();

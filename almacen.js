@@ -321,15 +321,17 @@ const Almacen = (() => {
   }
   const marcarPendiente = async (v) => { pendiente = v; await idbEscribir({ pendiente: v || undefined }); };
 
-  function conectar({ silencioso = false } = {}) {
+  function conectar({ silencioso = false, elegir = false } = {}) {
     if (!CONFIG.GOOGLE_CLIENT_ID) throw new Error("Falta configurar GOOGLE_CLIENT_ID en config.js");
     const estado = nuevoId();
     sessionStorage.setItem("liq_estado", estado);
     const p = new URLSearchParams({ client_id: CONFIG.GOOGLE_CLIENT_ID, redirect_uri: location.origin + location.pathname,
       response_type: "token", scope: "https://www.googleapis.com/auth/drive.file", include_granted_scopes: "true", state: estado });
-    const cuenta = doc.cuenta || cuentaPlano;
+    const cuenta = elegir ? "" : doc.cuenta || cuentaPlano;
     if (cuenta) p.set("login_hint", cuenta);
     if (silencioso) p.set("prompt", "none");
+    // Sin cuenta todavía (o «Cambiar de cuenta»): Google muestra la lista para elegir, en vez de entrar con la abierta
+    else if (!cuenta) p.set("prompt", "select_account");
     location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + p;
   }
 
