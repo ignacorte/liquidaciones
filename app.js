@@ -316,6 +316,7 @@ function verParaHacer() {
     ["", "-", "Obra social sin reconocer", lista.filter((p) => !p.obra_social && p.tipo !== "consulta")],
     ["debitada", "", "Debitadas sin motivo anotado", lista.filter((p) => p.estado === "debitada" && !p.motivo_debito)],
     ["revisar", "", "Cobros para revisar (no figuran en su liquidación)", lista.filter((p) => p.revisar_cobro)],
+    ["revisar_codigo", "", "Código para revisar (de otra vía que la cirugía: convencional / laparoscópica)", lista.filter((p) => ["pendiente", "presentada"].includes(p.estado) && codigoDeOtraVia(p))],
     ...(esAnestesia() ? [] : [["sin_parte", "", "Parte sin guardar en el Drive (adjuntá la foto desde la galería)", datos().prestaciones.filter(sinParte)]]),
     ["ayudantias", "", "💵 Ayudantías para pedirle al cirujano (tocá para ver)", ayudantiasParaCobrar().map((a) => a.p)],
   ].filter((x) => x[3].length);
@@ -1627,6 +1628,7 @@ function verPrestaciones() {
   if (est === "vencida") lista = lista.filter((p) => Motor.vencida(p, h));
   else if (est === "a_cobrar") lista = lista.filter((p) => ["pendiente", "presentada"].includes(p.estado));
   else if (est === "revisar") lista = lista.filter((p) => p.revisar_cobro);
+  else if (est === "revisar_codigo") lista = lista.filter((p) => ["pendiente", "presentada"].includes(p.estado) && codigoDeOtraVia(p));
   else if (est === "sin_parte") lista = lista.filter(sinParte);
   else if (est === "falta_doc") lista = lista.filter((p) => p.estado === "pendiente" && docFaltante(p).length);
   else if (est === "para_cargar") lista = lista.filter((p) => p.estado === "pendiente" && !docFaltante(p).length);
@@ -2473,11 +2475,21 @@ async function borrarLote(lote) {
   verValores();
 }
 
+// Código AAC guardado de otra vía que la cirugía (p. ej. eventroplastia convencional con «08.02.34 Eventroplastia
+// laparoscópica»): no se cambia solo (puede haberlo elegido el profesional); se avisa para revisarlo
+function codigoDeOtraVia(p) {
+  if (p.tipo === "consulta" || !p.codigo_aac || (p.especialidad || "cirugia") === "anestesia") return false;
+  const nombre = Motor.infoCodigo("AAC", p.codigo_aac)?.name || "";
+  const via = Motor.viaDe(nombre), cirugia = p.abordaje === "robotica" ? "laparoscopica" : p.abordaje || Motor.viaDe(p.procedimiento);
+  if (!via || ["endoscopica", "percutanea"].includes(via) || ["endoscopica", "percutanea"].includes(cirugia)) return false;
+  return cirugia === "laparoscopica" ? via === "convencional" : via === "laparoscopica";
+}
+
 async function recalcularPendientes() {
   const pend = datos().prestaciones.filter((p) => ["pendiente", "presentada"].includes(p.estado));
   // Una con un dato raro (fecha mal escrita…) no frena a las demás: queda como estaba
   // Solo se guardan las que cambian (guardar todas las marcaría como recién editadas y podría pisar lo de otro dispositivo)
-  const clave = (x) => JSON.stringify([x.valor_estimado, x.valor_bruto, x.valor_origen, x.fecha_presentacion, x.fecha_cobro_estimada, x.obra_social, x.codigo_aac, x.estado]);
+  const clave = (x) => JSON.stringify([x.valor_estimado, x.valor_bruto, x.valor_origen, x.fecha_presentacion, x.fecha_cobro_estimada, x.obra_social, x.codigo_aac, x.codigo_os, x.abordaje, x.estado]);
   await guardarEnLote(async () => { for (const p of pend) try {
     const nuevo = Motor.completar(datos(), { ...p });
     if (clave(nuevo) !== clave(p)) await guardarPrestacion(p);
@@ -3387,7 +3399,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "91"; // igual que VERSION en sw.js
+const VERSION_APP = "92"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)
@@ -3459,6 +3471,7 @@ function entrar() {
     .then(() => (ajuste("modulo_70_v69", false) ? null : (Number(ajuste("pct_modulo_general", 0)) > 0 ? null : Almacen.ajuste("pct_modulo_general", 70))
       .then(() => Almacen.ajuste("modulo_70_v69", true))));
   const arreglos = () => liq70().then(planillasActuales).then(() => ajuste("recalculo_v69", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v69", true)))
+    .then(() => ajuste("recalculo_v92", false) ? Promise.resolve() : recalcularPendientes().then(() => Almacen.ajuste("recalculo_v92", true)))
     .then(arreglarPlanillas).then(arreglarLiquidaciones).then(arreglarCobrosRepetidos).then(nombrarCirugiasDeLiquidacion).then(ordenarDrive)
     .then(() => refrescar()).catch((e) => aviso(e.message));
   Almacen.minutosBloqueo = minutosBloqueo();

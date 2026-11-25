@@ -457,15 +457,32 @@ const Motor = (() => {
     if ((p.especialidad || datos.especialidad) === "anestesia") return estimarAnestesia(datos, p);
     const os = p.obra_social || obraSocialCanonica(datos, p.obra_social_texto);
     const out = { obra_social: os, codigo_aac: p.codigo_aac || null, codigo_os: p.codigo_os || null, sugerencias: null };
+    // Abordaje sin elegir: el del nombre del procedimiento («apendicectomía laparoscópica» → laparoscópica, con su recargo
+    // de videolaparoscopía; antes valía lo mismo que la convencional)
+    if (!p.abordaje && p.tipo !== "consulta") {
+      const via = viaDe([p.procedimiento, ...(p.extras || []).map((x) => x.procedimiento)].join(" "));
+      if (via) { p = { ...p, abordaje: via }; out.abordaje = via; }
+    }
     const equivalente = equivalenteAAC(os, out.codigo_os);
     if (p.tipo === "consulta") out.codigo_aac = CONSULTA;
     else if (!out.codigo_aac && equivalente && equivalente !== CONSULTA) out.codigo_aac = equivalente;
     else if (!out.codigo_aac) {
       out.sugerencias = sugerencias(p);
-      if (out.sugerencias.aac.length) out.codigo_aac = out.sugerencias.aac[0].code;
+      // El código tiene que ser de la misma vía que la cirugía: una eventroplastia sin «laparoscópica» no es
+      // «08.02.34 Eventroplastia laparoscópica con malla» (es 08.02.35/36, convencional); y al revés
+      const viaCirugia = p.abordaje === "robotica" ? "laparoscopica" : p.abordaje || "";
+      const deOtraVia = (c) => { const v = viaDe(c.name); return v && v !== "endoscopica" && v !== "percutanea" && (viaCirugia === "laparoscopica" ? v === "convencional" : v === "laparoscopica"); };
+      const elegido = out.sugerencias.aac.find((c) => !deOtraVia(c)) || out.sugerencias.aac[0];
+      if (elegido) out.codigo_aac = elegido.code;
       if (!out.codigo_os && os === "PAMI" && out.sugerencias.pami.length) out.codigo_os = out.sugerencias.pami[0].code;
     }
     [out.valor_estimado, out.valor_origen] = valor(datos, p, os, out.codigo_aac, out.codigo_os);
+    // El valor salió de la lista o del módulo de la obra social: su código queda en la prestación (antes APROSS 080524 se
+    // usaba para el valor pero la prestación quedaba sin código de la obra social)
+    if (!out.codigo_os && os && os !== "PARTICULAR" && p.tipo !== "consulta") {
+      const f = valorOS(datos, os, out.codigo_aac, null, p.fecha, p.abordaje || "");
+      if (f && f.codigo) out.codigo_os = String(f.codigo);
+    }
     // Ayudantía (regla del usuario): se cobra en forma particular al cirujano, un monto fijo por ayudantía (Valores → Referencias),
     // con cualquier obra social; los otros procedimientos del mismo acto no suman
     const ayudantia = !p.valor_manual && (p.rol || "cirujano") === "ayudante" && p.tipo !== "consulta" && pctDe(p.pct) !== 0;
