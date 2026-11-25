@@ -2867,6 +2867,10 @@ function mostrarSync(e) {
     : "Solo en este dispositivo";
   Almacen.adjuntosPendientes().then((n) => { if (n) $("#sync").textContent += ` · ${n} ${n === 1 ? "documento" : "documentos"} por subir` +
     (Almacen.errorAdjuntos ? ` (${Almacen.errorAdjuntos})` : ""); }).catch(() => {});
+  if (cuenta && e === "al día" && Almacen.errorPlanilla) $("#sync").textContent += " · planilla sin actualizar (" + Almacen.errorPlanilla + ")";
+  // En un celular nuevo el correo llega con la primera sincronización: recién ahí se sabe si es el administrador
+  if (cuenta && estado.admin?.cuenta !== cuenta.trim().toLowerCase())
+    esAdmin().then((es) => { document.body.classList.toggle("admin", es); if (es && estado.vista === "valores") verAdministracion(); }).catch(() => {});
   // Cambios que no llegaron a Drive (venció el acceso de Google): botón para subirlos
   $("#subir-ahora").hidden = !(cuenta && Almacen.pendiente && !Almacen.tieneToken() && !Almacen.bloqueada());
   if (estado.vista === "valores") verValores();
@@ -3403,7 +3407,7 @@ function abrirNotificaciones() {
 }
 
 // ---------- Actualizaciones de la app ----------
-const VERSION_APP = "93"; // igual que VERSION en sw.js
+const VERSION_APP = "94"; // igual que VERSION en sw.js
 
 // Se busca la versión nueva al abrir la app, cada vez que se vuelve a ella (el celular la deja abierta en segundo plano por días)
 // y cada 30 minutos; se aplica sola salvo que haya algo a medio cargar (entonces, apenas se termina)

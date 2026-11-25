@@ -467,7 +467,14 @@ const Almacen = (() => {
         errorAdjuntos = "";
         await subirAdjuntos().catch((e) => { errorAdjuntos = e.message || "error al subir"; });
         // Planillas (cirugía en «Liquidaciones», anestesiología en «Liquidaciones/Anestesiología»); si fallan, queda el JSON (lo importante)
-        if (planilla) for (const x of await planilla()) await subirPlanilla(x.bytes, x.nombre, x.ruta).catch(() => {});
+        // El motivo queda a la vista (barra de estado y Valores › Mi cuenta) en vez de perderse
+        errorPlanilla = "";
+        if (planilla) {
+          try {
+            for (const x of await planilla()) await subirPlanilla(x.bytes, x.nombre, x.ruta).catch((e) => { if (e.reconectar) throw e; errorPlanilla = e.message || "error al subir la planilla"; });
+          } catch (e) { if (e.reconectar) throw e; errorPlanilla = e.message || "error al armar la planilla"; }
+          if (errorPlanilla) anotar("Planilla: " + errorPlanilla);
+        }
         doc.ultima_sync = Date.now();
         await escribirLocal();
         // Si hubo cambios mientras se subía, falta otra vuelta
@@ -533,7 +540,7 @@ const Almacen = (() => {
 
   // Fojas por subir: quedan CIFRADAS en el celular y se suben al Drive en la próxima sincronización (aunque el acceso de
   // Google esté vencido al guardar o no haya señal). Al subirse, el enlace queda en la prestación.
-  let adjuntos = null, errorAdjuntos = "";
+  let adjuntos = null, errorAdjuntos = "", errorPlanilla = "";
   async function leerAdjuntos() {
     if (!adjuntos) { const s = await idbLeer("adjuntos"); adjuntos = s ? await descifrar(s) : []; }
     return adjuntos;
@@ -676,7 +683,7 @@ const Almacen = (() => {
 
   return {
     iniciar, guardar, guardarVarios, guardarEnMemoria, confirmar, borrar, respaldos, recuperarRespaldo, encolarAdjunto, encolarRenombre, encolarMover, enlaceCarpeta, get registro() { return registro; },
-    venceEn: () => (tokenMem?.vence || venceToken) - Date.now(), get errorAdjuntos() { return errorAdjuntos; },
+    venceEn: () => (tokenMem?.vence || venceToken) - Date.now(), get errorAdjuntos() { return errorAdjuntos; }, get errorPlanilla() { return errorPlanilla; },
     adjuntosPendientes: async () => (await leerAdjuntos()).length, ajuste, tocar, exportarCopia, importarCopia, marcarCopia, subirPlanilla, tienePin, bloqueada, crearPin, secreto, guardarSecreto, secretoDeOtra, otraApp: OTRA.nombre, desbloquear, bloquear, olvidePin, cambiarPin, esperaRestante, sincronizar, conectar, recibirToken, conectado, guardarPlanilla, desconectar, combinar,
     get doc() { return doc; }, get cuenta() { return doc.cuenta || cuentaPlano; }, get pendiente() { return pendiente; },
     get local() { return local; }, usarLocal: async () => { local = true; await idbEscribir({ local: true }); },
